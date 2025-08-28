@@ -215,6 +215,8 @@ try {
         ['low_stock_threshold', '10'],
         ['backup_frequency', 'daily'],
         ['backup_retention_count', '10'],
+        ['backup_security_enabled', '1'],
+        ['backup_require_password', '1'],
         ['enable_sound', '1'],
         ['default_payment_method', 'cash'],
         ['allow_negative_stock', '0'],

@@ -1,0 +1,32 @@
+[2025-08-28 22:53:02] [ERROR] [Admin] Backup error: mysqldump not found. Please ensure MySQL is installed and mysqldump is accessible.
+[2025-08-28 22:53:02] [INFO] [Admin] mysqldump not available, trying PHP backup method
+[2025-08-28 22:53:02] [INFO] [Admin] Starting PHP-based backup: pos_system_backup_2025-08-28_22-53-02.sql
+[2025-08-28 22:53:02] [SUCCESS] [Admin] PHP backup created successfully: pos_system_backup_2025-08-28_22-53-02.sql (15.52 KB)
+[2025-08-28 22:58:06] [ERROR] [Admin] Backup error: mysqldump not found. Please ensure MySQL is installed and mysqldump is accessible.
+[2025-08-28 22:58:06] [INFO] [Admin] mysqldump not available, trying PHP backup method
+[2025-08-28 22:58:06] [INFO] [Admin] Starting PHP-based backup: pos_system_backup_2025-08-28_22-58-06.sql
+[2025-08-28 22:58:06] [SUCCESS] [Admin] PHP backup created successfully: pos_system_backup_2025-08-28_22-58-06.sql (15.71 KB)
+[2025-08-28 23:01:47] [ERROR] [Admin] Backup error: mysqldump not found. Please ensure MySQL is installed and mysqldump is accessible.
+[2025-08-28 23:01:47] [INFO] [Admin] mysqldump not available, trying PHP backup method
+[2025-08-28 23:01:47] [INFO] [Admin] Starting PHP-based backup: pos_system_backup_2025-08-28_23-01-47.sql
+[2025-08-28 23:01:47] [SUCCESS] [Admin] PHP backup created successfully: pos_system_backup_2025-08-28_23-01-47.sql (15.71 KB)
+[2025-08-28 23:02:55] [ERROR] [Admin] Backup error: mysqldump not found. Please ensure MySQL is installed and mysqldump is accessible.
+[2025-08-28 23:02:55] [INFO] [Admin] mysqldump not available, trying PHP backup method
+[2025-08-28 23:02:55] [INFO] [Admin] Starting PHP-based backup: pos_system_backup_2025-08-28_23-02-55.sql
+[2025-08-28 23:02:55] [SUCCESS] [Admin] PHP backup created successfully: pos_system_backup_2025-08-28_23-02-55.sql (15.71 KB)
+[2025-08-28 23:07:16] [INFO] [Admin] Found working mysqldump at: C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe
+[2025-08-28 23:07:16] [INFO] [Admin] Starting backup: pos_system_backup_2025-08-28_23-07-16.sql
+[2025-08-28 23:07:16] [INFO] [Admin] Command: "C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe" --opt --single-transaction --routines --triggers --host="localhost" --user="root" "pos_system" > "C:\laragon\www\pointofsale\admin\backup/../../backups/database/pos_system_backup_2025-08-28_23-07-16.sql"
+[2025-08-28 23:07:16] [SUCCESS] [Admin] Backup created successfully: pos_system_backup_2025-08-28_23-07-16.sql (14.45 KB)
+[2025-08-28 23:32:58] [INFO] [Admin] Found working mysqldump at: C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe
+[2025-08-28 23:32:58] [INFO] [Admin] Starting backup: pos_system_backup_2025-08-28_23-32-58.sql
+[2025-08-28 23:32:58] [INFO] [Admin] Command: "C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe" --opt --single-transaction --routines --triggers --host="localhost" --user="root" "pos_system" > "C:\laragon\www\pointofsale\admin\backup/../../backups/database/pos_system_backup_2025-08-28_23-32-58.sql"
+[2025-08-28 23:32:58] [SUCCESS] [Admin] Backup created successfully: pos_system_backup_2025-08-28_23-32-58.sql (14.61 KB)
+[2025-08-28 23:44:44] [INFO] [Admin] Found working mysqldump at: C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe
+[2025-08-28 23:44:44] [INFO] [Admin] Starting backup: pos_system_backup_2025-08-28_23-44-44.sql
+[2025-08-28 23:44:44] [INFO] [Admin] Command: "C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe" --opt --single-transaction --routines --triggers --host="localhost" --user="root" "pos_system" > "C:\laragon\www\pointofsale\admin\backup/../../backups/database/pos_system_backup_2025-08-28_23-44-44.sql"
+[2025-08-28 23:44:44] [SUCCESS] [Admin] Backup created successfully: pos_system_backup_2025-08-28_23-44-44.sql (14.61 KB)
+[2025-08-28 23:49:03] [INFO] [Admin] Found working mysqldump at: C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe
+[2025-08-28 23:49:03] [INFO] [Admin] Starting backup: pos_system_backup_2025-08-28_23-49-03.sql
+[2025-08-28 23:49:03] [INFO] [Admin] Command: "C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe" --opt --single-transaction --routines --triggers --host="localhost" --user="root" "pos_system" > "C:\laragon\www\pointofsale\admin\backup/../../backups/database/pos_system_backup_2025-08-28_23-49-03.sql"
+[2025-08-28 23:49:03] [SUCCESS] [Admin] Backup created successfully: pos_system_backup_2025-08-28_23-49-03.sql (14.61 KB)
