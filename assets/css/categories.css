@@ -34,7 +34,7 @@ body {
     left: 0;
     width: 260px;
     height: 100vh;
-    background: linear-gradient(135deg, var(--primary-color) 0%, #4f46e5 100%);
+    background: var(--sidebar-color, #1e293b);
     color: white;
     overflow-y: auto;
     z-index: 1000;
@@ -76,12 +76,13 @@ body {
 .nav-link:hover {
     color: white;
     background-color: rgba(255, 255, 255, 0.1);
+    border-right: 3px solid var(--primary-color, transparent);
 }
 
 .nav-link.active {
     color: white;
     background-color: rgba(255, 255, 255, 0.15);
-    border-right: 3px solid white;
+    border-right: 3px solid var(--primary-color, white);
 }
 
 .nav-link i {
@@ -332,7 +333,8 @@ body {
 }
 
 .btn-primary:hover {
-    background: #4f46e5;
+    background: var(--primary-color);
+    opacity: 0.9;
     color: white;
 }
 

@@ -109,9 +109,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../assets/css/categories.css">
+    <!-- Debug: Current settings - Theme: <?php echo $settings['theme_color'] ?? 'not set'; ?>, Sidebar: <?php echo $settings['sidebar_color'] ?? 'not set'; ?> -->
     <style>
         :root {
             --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
+            --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
         }
     </style>
 </head>
