@@ -237,10 +237,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             </div>
 
             <div class="nav-item">
-                <a href="../reports/index.php" class="nav-link">
-                    <i class="bi bi-graph-up"></i>
-                    Reports
-                </a>
+
             </div>
 
             <?php if (hasPermission('manage_users', $permissions)): ?>
@@ -376,14 +373,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                                 <a href="edit.php?id=<?php echo $product_id; ?>" class="btn btn-primary btn-sm">Edit Product</a>
                             </div>
                         </div>
-                        <div class="col-md-4">
-                            <div class="text-center p-3">
-                                <i class="bi bi-graph-up" style="font-size: 2rem; color: var(--success-color);"></i>
-                                <h5 class="mt-2">View Sales Report</h5>
-                                <p class="text-muted">See detailed sales history and analytics</p>
-                                <a href="../reports/products.php?id=<?php echo $product_id; ?>" class="btn btn-success btn-sm">View Report</a>
-                            </div>
-                        </div>
+
                     </div>
                 </div>
 

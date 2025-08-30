@@ -240,10 +240,7 @@ function getSortIcon($column, $current_sort, $current_order) {
             </div>
 
             <div class="nav-item">
-                <a href="../reports/index.php" class="nav-link">
-                    <i class="bi bi-graph-up"></i>
-                    Reports
-                </a>
+
             </div>
 
             <?php if (hasPermission('manage_users', $permissions)): ?>

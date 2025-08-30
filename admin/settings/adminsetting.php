@@ -383,10 +383,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
 
             <div class="nav-item">
-                <a href="../../reports/index.php" class="nav-link">
-                    <i class="bi bi-graph-up"></i>
-                    Reports
-                </a>
+
             </div>
 
             <?php if (hasPermission('manage_users', $permissions)): ?>
@@ -500,7 +497,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <label for="company_name" class="form-label">Company Name *</label>
                             <input type="text" class="form-control" id="company_name" name="company_name" 
                                    value="<?php echo htmlspecialchars($settings['company_name']); ?>" required>
-                            <div class="form-text">This name will appear on receipts and reports.</div>
+                            <div class="form-text">This name will appear on receipts.</div>
                         </div>
                         
                         <div class="form-group">

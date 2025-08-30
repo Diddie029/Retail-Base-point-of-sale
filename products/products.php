@@ -364,10 +364,7 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
             </div>
 
             <div class="nav-item">
-                <a href="../reports/index.php" class="nav-link">
-                    <i class="bi bi-graph-up"></i>
-                    Reports
-                </a>
+
             </div>
 
             <?php if (hasPermission('manage_users', $permissions)): ?>

@@ -75,9 +75,9 @@ function isActiveMenu($page, $directory = '') {
             <!-- Sales -->
             <?php if (empty($permissions) || hasPermission('manage_sales', $permissions)): ?>
             <li class="nav-item">
-                <a class="nav-link <?php echo isActiveMenu('', 'reports') ? 'active' : ''; ?>" href="../reports/index.php">
-                    <i class="bi bi-graph-up me-2"></i>
-                    Reports
+                <a class="nav-link <?php echo isActiveMenu('', 'sales') ? 'active' : ''; ?>" href="../sales/index.php">
+                    <i class="bi bi-cart me-2"></i>
+                    Sales
                 </a>
             </li>
             <?php endif; ?>

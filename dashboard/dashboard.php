@@ -179,12 +179,7 @@ if (hasPermission('manage_products', $permissions)) {
                 </a>
             </div>
 
-            <div class="nav-item">
-                <a href="../reports/index.php" class="nav-link">
-                    <i class="bi bi-graph-up"></i>
-                    Reports
-                </a>
-            </div>
+
 
             <?php if (hasPermission('manage_users', $permissions)): ?>
             <div class="nav-item">
@@ -316,10 +311,7 @@ if (hasPermission('manage_products', $permissions)) {
                     <i class="bi bi-person-plus"></i>
                     Add Customer
                 </a>
-                <a href="../reports/daily.php" class="action-btn">
-                    <i class="bi bi-file-earmark-text"></i>
-                    Daily Report
-                </a>
+
             </div>
             <?php endif; ?>
 
@@ -364,7 +356,7 @@ if (hasPermission('manage_products', $permissions)) {
             <div class="data-section">
                 <div class="section-header">
                     <h3 class="section-title">Top Selling Products (Last 30 Days)</h3>
-                    <a href="../reports/products.php" class="btn btn-outline-primary btn-sm">View Report</a>
+
                 </div>
                 <div class="table-responsive">
                     <table class="table">

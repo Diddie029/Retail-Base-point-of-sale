@@ -249,12 +249,7 @@ $stats['by_status'] = $stmt->fetch(PDO::FETCH_ASSOC);
                 </a>
             </div>
 
-            <div class="nav-item">
-                <a href="../reports/index.php" class="nav-link">
-                    <i class="bi bi-graph-up"></i>
-                    Reports
-                </a>
-            </div>
+
 
             <?php if (hasPermission('manage_users', $permissions)): ?>
             <div class="nav-item">
@@ -541,7 +536,7 @@ $stats['by_status'] = $stmt->fetch(PDO::FETCH_ASSOC);
                         <ul>
                             <li>Backup your product data</li>
                             <li>Import to other systems</li>
-                            <li>Create reports in Excel</li>
+
                             <li>Share data with suppliers</li>
                             <li>Compliance and auditing</li>
                             <li>Data analysis and insights</li>
@@ -552,7 +547,7 @@ $stats['by_status'] = $stmt->fetch(PDO::FETCH_ASSOC);
                 <div class="alert alert-info mt-3">
                     <i class="bi bi-info-circle me-2"></i>
                     <strong>Note:</strong> The exported CSV file will include all current product information at the time of export. 
-                    For historical data or sales information, please use the Reports section.
+
                 </div>
             </div>
         </div>

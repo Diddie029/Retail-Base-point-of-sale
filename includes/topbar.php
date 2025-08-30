@@ -40,10 +40,7 @@ $role_id = $_SESSION['role_id'] ?? 0;
                 <i class="bi bi-box"></i>
                 <span class="ms-1">Products</span>
             </a>
-            <a href="../reports/index.php" title="Reports" style="text-decoration: none; color: #6b7280; padding: 0.5rem; border-radius: 0.375rem; transition: all 0.3s ease;">
-                <i class="bi bi-graph-up"></i>
-                <span class="ms-1">Reports</span>
-            </a>
+
         </div>
         
         <!-- Notifications -->

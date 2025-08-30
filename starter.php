@@ -315,7 +315,7 @@ if ($currentStep === 'admin') {
     echo "<div class='mb-4'>";
     echo "<label for='company_name' class='form-label'><i class='bi bi-building me-2'></i>Company Name <span class='text-danger'>*</span></label>";
     echo "<input type='text' class='form-control form-control-lg' id='company_name' name='company_name' value='" . htmlspecialchars($companyData['company_name'] ?? '') . "' required>";
-    echo "<div class='form-text'>This will appear on receipts and reports</div>";
+    echo "<div class='form-text'>This will appear on receipts</div>";
     echo "</div>";
     echo "</div>";
     echo "<div class='col-md-6'>";
