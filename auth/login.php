@@ -11,33 +11,205 @@ if(isset($_SESSION['user_id'])) {
 
 include '../include/db.php';
 
-if($_SERVER["REQUEST_METHOD"] == "POST") {
-    $email = $_POST['email'];
-    $password = $_POST['password'];
-    
-    $stmt = $conn->prepare("SELECT u.*, r.name as role_name FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.email = :email");
-    $stmt->bindParam(':email', $email);
-    $stmt->execute();
-    
-    if($stmt->rowCount() > 0) {
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        // Check password using proper verification
-        if(password_verify($password, $user['password']) || $password === 'Thiarara@123') {
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['username'] = $user['username'];
-            $_SESSION['role_id'] = $user['role_id'];
-            $_SESSION['role_name'] = $user['role_name'];
-            $_SESSION['login_success'] = true;
-            
-            // Redirect to dashboard
-            header("Location: ../dashboard/dashboard.php");
-            exit();
-        } else {
-            $error = "Invalid password";
-        }
+// Generate CSRF token
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Rate limiting for login attempts
+$max_attempts = 5;
+$time_window = 900; // 15 minutes
+$ip_address = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+$user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+
+// Check rate limiting
+$stmt = $conn->prepare("SELECT COUNT(*) as attempts FROM login_attempts WHERE ip_address = :ip AND created_at > DATE_SUB(NOW(), INTERVAL :window SECOND)");
+$stmt->bindParam(':ip', $ip_address);
+$stmt->bindParam(':window', $time_window);
+$stmt->execute();
+$attempts = $stmt->fetch(PDO::FETCH_ASSOC)['attempts'];
+
+if ($attempts >= $max_attempts) {
+    $error = "Too many login attempts. Please try again later.";
+    $show_form = false;
+} else {
+    $show_form = true;
+}
+
+$message = '';
+$messageType = '';
+
+if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
+    // Verify CSRF token
+    if (!isset($_POST['csrf_token']) || !isset($_SESSION['csrf_token']) ||
+        !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        $message = "Security validation failed. Please try again.";
+        $messageType = "danger";
     } else {
-        $error = "User not found";
+        // Sanitize and validate inputs
+        $identifier = trim($_POST['identifier'] ?? '');
+        $password = trim($_POST['password'] ?? '');
+        $remember_me = isset($_POST['remember_me']);
+
+        // Enhanced input validation
+        if(empty($identifier)) {
+            $message = "Please enter your username or email address";
+            $messageType = "danger";
+        } elseif(strlen($identifier) > 100) {
+            $message = "Identifier is too long";
+            $messageType = "danger";
+        } elseif(empty($password)) {
+            $message = "Please enter your password";
+            $messageType = "danger";
+        } elseif(strlen($password) > 255) {
+            $message = "Password is too long";
+            $messageType = "danger";
+        } else {
+            // Determine if identifier is email or username
+            $is_email = filter_var($identifier, FILTER_VALIDATE_EMAIL);
+            $attempt_type = $is_email ? 'email' : 'username';
+
+            // Prepare query based on identifier type
+            if($is_email) {
+                $stmt = $conn->prepare("
+                    SELECT u.*, r.name as role_name
+                    FROM users u
+                    LEFT JOIN roles r ON u.role_id = r.id
+                    WHERE u.email = :identifier
+                ");
+            } else {
+                $stmt = $conn->prepare("
+                    SELECT u.*, r.name as role_name
+                    FROM users u
+                    LEFT JOIN roles r ON u.role_id = r.id
+                    WHERE u.username = :identifier
+                ");
+            }
+
+            $stmt->bindParam(':identifier', $identifier);
+            $stmt->execute();
+
+            if($stmt->rowCount() > 0) {
+                $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                // Check if account is locked
+                if($user['account_locked'] == 1) {
+                    if($user['locked_until'] && strtotime($user['locked_until']) > time()) {
+                        $message = "Your account is temporarily locked due to multiple failed login attempts. Please try again later.";
+                        $messageType = "warning";
+                    } else {
+                        // Unlock account if lockout period has expired
+                        $stmt = $conn->prepare("UPDATE users SET account_locked = 0, locked_until = NULL, failed_login_attempts = 0 WHERE id = :user_id");
+                        $stmt->bindParam(':user_id', $user['id']);
+                        $stmt->execute();
+                        $user['account_locked'] = 0;
+                    }
+                }
+
+                if($user['account_locked'] == 0) {
+                    // Check password using proper verification
+                    if(password_verify($password, $user['password'])) {
+                        // Regenerate session ID to prevent session fixation
+                        session_regenerate_id(true);
+
+                        // Successful login
+                        $_SESSION['user_id'] = $user['id'];
+                        $_SESSION['username'] = $user['username'];
+                        $_SESSION['role_id'] = $user['role_id'];
+                        $_SESSION['role_name'] = $user['role_name'];
+                        $_SESSION['login_success'] = true;
+                        $_SESSION['last_activity'] = time();
+                        $_SESSION['login_time'] = time();
+                        $_SESSION['ip_address'] = $ip_address;
+                        $_SESSION['user_agent'] = $user_agent;
+
+                        // Set remember me cookie if requested
+                        if($remember_me) {
+                            $token = bin2hex(random_bytes(32));
+                            setcookie('remember_token', $token, time() + (30 * 24 * 60 * 60), '/', '', true, true); // 30 days
+
+                            // Store token in database (you might want to create a remember_tokens table)
+                            // For now, we'll just extend the session
+                            $_SESSION['remember_me'] = true;
+                        }
+
+                        // Update user login information
+                        $stmt = $conn->prepare("
+                            UPDATE users SET
+                                failed_login_attempts = 0,
+                                last_login = NOW(),
+                                login_count = login_count + 1,
+                                last_failed_login = NULL
+                            WHERE id = :user_id
+                        ");
+                        $stmt->bindParam(':user_id', $user['id']);
+                        $stmt->execute();
+
+                        // Log successful login attempt
+                        logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_type, true);
+
+                        // Redirect to dashboard
+                        header("Location: ../dashboard/dashboard.php");
+                        exit();
+                    } else {
+                        // Failed login - password incorrect
+                        $message = "Invalid username/email or password";
+                        $messageType = "danger";
+
+                        // Increment failed attempts
+                        $new_attempts = $user['failed_login_attempts'] + 1;
+                        $lock_account = false;
+
+                        if($new_attempts >= 5) {
+                            // Lock account for 30 minutes
+                            $locked_until = date('Y-m-d H:i:s', strtotime('+30 minutes'));
+                            $lock_account = true;
+                            $message = "Account locked due to multiple failed attempts. Try again in 30 minutes.";
+                        }
+
+                        $stmt = $conn->prepare("
+                            UPDATE users SET
+                                failed_login_attempts = :attempts,
+                                last_failed_login = NOW()
+                                " . ($lock_account ? ", account_locked = 1, locked_until = :locked_until" : "") . "
+                            WHERE id = :user_id
+                        ");
+                        $stmt->bindParam(':attempts', $new_attempts);
+                        $stmt->bindParam(':user_id', $user['id']);
+                        if($lock_account) {
+                            $stmt->bindParam(':locked_until', $locked_until);
+                        }
+                        $stmt->execute();
+                    }
+                }
+            } else {
+                // User not found
+                $message = "Invalid username/email or password";
+                $messageType = "danger";
+            }
+
+            // Log login attempt (failed or successful)
+            logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_type, false);
+        }
+    }
+}
+
+// Function to log login attempts
+function logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_type, $success) {
+    try {
+        $stmt = $conn->prepare("
+            INSERT INTO login_attempts (identifier, ip_address, user_agent, attempt_type, success)
+            VALUES (:identifier, :ip, :user_agent, :attempt_type, :success)
+        ");
+        $stmt->bindParam(':identifier', $identifier);
+        $stmt->bindParam(':ip', $ip_address);
+        $stmt->bindParam(':user_agent', $user_agent);
+        $stmt->bindParam(':attempt_type', $attempt_type);
+        $stmt->bindParam(':success', $success, PDO::PARAM_BOOL);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        // Log to error log if database logging fails
+        error_log("Failed to log login attempt: " . $e->getMessage());
     }
 }
 ?>
@@ -50,209 +222,9 @@ if($_SERVER["REQUEST_METHOD"] == "POST") {
     <title>Login - POS System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="../assets/css/auth.css">
     <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        
-        .login-container {
-            max-width: 450px;
-            width: 100%;
-            padding: 20px;
-        }
-        
-        .login-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-            transition: transform 0.3s ease;
-        }
-        
-        .login-card:hover {
-            transform: translateY(-5px);
-        }
-        
-        .login-header {
-            background: linear-gradient(135deg, #0d6efd 0%, #0056b3 100%);
-            color: white;
-            padding: 40px 20px;
-            text-align: center;
-            position: relative;
-        }
-        
-        .login-header::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="50" cy="50" r="1" fill="%23ffffff" opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
-        }
-        
-        .login-header h3 {
-            position: relative;
-            z-index: 1;
-            margin: 0;
-            font-size: 2rem;
-            font-weight: 700;
-        }
-        
-        .login-header p {
-            position: relative;
-            z-index: 1;
-            margin: 10px 0 0 0;
-            opacity: 0.9;
-            font-size: 1rem;
-        }
-        
-        .login-body {
-            padding: 40px;
-        }
-        
-        .form-control {
-            border: 2px solid #e9ecef;
-            border-radius: 10px;
-            padding: 12px 15px;
-            font-size: 16px;
-            transition: all 0.3s ease;
-        }
-        
-        .form-control:focus {
-            border-color: #0d6efd;
-            box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-        }
-        
-        .form-label {
-            font-weight: 600;
-            color: #495057;
-            margin-bottom: 8px;
-        }
-        
-        .btn-login {
-            background: linear-gradient(135deg, #0d6efd 0%, #0056b3 100%);
-            border: none;
-            border-radius: 10px;
-            padding: 12px;
-            font-size: 16px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-        
-        .btn-login:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(13, 110, 253, 0.3);
-        }
-        
-        .alert {
-            border-radius: 10px;
-            border: none;
-        }
-        
-        .floating-icons {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            pointer-events: none;
-        }
-        
-        .floating-icon {
-            position: absolute;
-            font-size: 20px;
-            color: rgba(255, 255, 255, 0.1);
-            animation: float 6s ease-in-out infinite;
-        }
-        
-        .floating-icon:nth-child(1) { top: 20%; left: 10%; animation-delay: 0s; }
-        .floating-icon:nth-child(2) { top: 60%; left: 80%; animation-delay: 2s; }
-        .floating-icon:nth-child(3) { top: 80%; left: 20%; animation-delay: 4s; }
-        
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-20px); }
-        }
-        
-        .password-toggle {
-            position: absolute;
-            right: 15px;
-            top: 50%;
-            transform: translateY(-50%);
-            cursor: pointer;
-            color: #6c757d;
-        }
-        
-        .input-group {
-            position: relative;
-        }
-        
-        .connection-status {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-            border-radius: 25px;
-            padding: 8px 16px;
-            font-size: 14px;
-            font-weight: 600;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            backdrop-filter: blur(10px);
-        }
-        
-        .status-connected {
-            background: rgba(40, 167, 69, 0.9);
-            color: white;
-            border: 2px solid #28a745;
-        }
-        
-        .status-disconnected {
-            background: rgba(220, 53, 69, 0.9);
-            color: white;
-            border: 2px solid #dc3545;
-        }
-        
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 8px;
-        }
-        
-        .dot-connected {
-            background-color: #ffffff;
-            animation: pulse 2s infinite;
-        }
-        
-        .dot-disconnected {
-            background-color: #ffffff;
-            animation: none;
-        }
-        
-        @keyframes pulse {
-            0% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
-            }
-            
-            70% {
-                transform: scale(1);
-                box-shadow: 0 0 0 10px rgba(255, 255, 255, 0);
-            }
-            
-            100% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
-            }
-        }
+        /* Page-specific overrides if needed */
     </style>
 </head>
 <body>
@@ -275,16 +247,24 @@ if($_SERVER["REQUEST_METHOD"] == "POST") {
         <i class="bi bi-receipt floating-icon"></i>
     </div>
     
-    <div class="login-container">
-        <div class="login-card">
-            <div class="login-header">
+    <div class="auth-container login-container">
+        <div class="auth-card login-card">
+            <div class="auth-header login-header">
                 <h3><i class="bi bi-shop me-3"></i>POS System</h3>
-                <p>Welcome back! Please sign in to continue</p>
+                <p>Welcome back! Please sign in to your account</p>
             </div>
-            <div class="login-body">
+            <div class="auth-body login-body">
+                <?php if(!empty($message)): ?>
+                    <div class="alert alert-<?php echo $messageType; ?> alert-dismissible fade show" role="alert">
+                        <i class="bi bi-<?php echo $messageType === 'success' ? 'check-circle' : ($messageType === 'warning' ? 'exclamation-triangle' : 'exclamation-triangle'); ?> me-2"></i>
+                        <?php echo htmlspecialchars($message); ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                <?php endif; ?>
+
                 <?php if(isset($error)): ?>
                     <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        <i class="bi bi-exclamation-triangle me-2"></i><?php echo $error; ?>
+                        <i class="bi bi-exclamation-triangle me-2"></i><?php echo htmlspecialchars($error); ?>
                         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 <?php endif; ?>
@@ -299,32 +279,64 @@ if($_SERVER["REQUEST_METHOD"] == "POST") {
                 <?php endif; ?>
                 
                 <form method="POST" action="" id="loginForm">
+                    <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                     <div class="mb-4">
-                        <label for="email" class="form-label">
-                            <i class="bi bi-envelope me-2"></i>Email Address
+                        <label for="identifier" class="form-label">
+                            <i class="bi bi-person me-2"></i>Username or Email
                         </label>
-                        <input type="email" class="form-control" id="email" name="email" required autocomplete="email">
+                        <input type="text" class="form-control" id="identifier" name="identifier" required
+                               maxlength="100" autocomplete="username"
+                               value="<?php echo isset($_POST['identifier']) ? htmlspecialchars($_POST['identifier']) : ''; ?>"
+                               placeholder="Enter your username or email address">
+                        <div class="form-text">You can login with your username or email address</div>
                     </div>
                     <div class="mb-4">
                         <label for="password" class="form-label">
                             <i class="bi bi-lock me-2"></i>Password
                         </label>
                         <div class="input-group">
-                            <input type="password" class="form-control" id="password" name="password" required autocomplete="current-password">
+                            <input type="password" class="form-control" id="password" name="password" required
+                                   autocomplete="current-password" maxlength="255">
                             <span class="password-toggle" onclick="togglePassword()">
                                 <i class="bi bi-eye" id="toggleIcon"></i>
                             </span>
                         </div>
                     </div>
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="remember_me" name="remember_me" value="1">
+                            <label class="form-check-label" for="remember_me">
+                                <small>Remember me for 30 days</small>
+                            </label>
+                        </div>
+                    </div>
                     <div class="d-grid mb-3">
-                        <button type="submit" class="btn btn-primary btn-login">
+                        <button type="submit" class="btn btn-primary auth-btn btn-login" <?php echo !$show_form ? 'disabled' : ''; ?>>
                             <i class="bi bi-box-arrow-in-right me-2"></i>Sign In
                         </button>
+                        <?php if (!$show_form): ?>
+                            <div class="text-center mt-2">
+                                <small class="text-muted">
+                                    <i class="bi bi-clock me-1"></i>
+                                    Too many login attempts. Please wait before trying again.
+                                </small>
+                            </div>
+                        <?php endif; ?>
                     </div>
                     <div class="text-center">
+                        <div class="mb-2">
+                            <a href="forgot_password.php" class="text-decoration-none">
+                                <small class="text-muted">
+                                    <i class="bi bi-key me-1"></i>Forgot Password?
+                                </small>
+                            </a>
+                        </div>
                         <small class="text-muted">
                             <i class="bi bi-info-circle me-1"></i>
-                            Use your administrator credentials to login
+                            Don't have an account?
+                            <a href="signup.php" class="text-decoration-none fw-bold">
+                                <i class="bi bi-person-plus me-1"></i>Sign Up
+                            </a>
                         </small>
                     </div>
                 </form>
@@ -333,38 +345,6 @@ if($_SERVER["REQUEST_METHOD"] == "POST") {
     </div>
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        function togglePassword() {
-            const passwordInput = document.getElementById('password');
-            const toggleIcon = document.getElementById('toggleIcon');
-            
-            if (passwordInput.type === 'password') {
-                passwordInput.type = 'text';
-                toggleIcon.className = 'bi bi-eye-slash';
-            } else {
-                passwordInput.type = 'password';
-                toggleIcon.className = 'bi bi-eye';
-            }
-        }
-        
-        // Add form submission animation
-        document.getElementById('loginForm').addEventListener('submit', function(e) {
-            const submitBtn = this.querySelector('button[type="submit"]');
-            submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Signing In...';
-            submitBtn.disabled = true;
-        });
-        
-        // Auto-focus on password if email is already filled
-        document.addEventListener('DOMContentLoaded', function() {
-            const emailInput = document.getElementById('email');
-            const passwordInput = document.getElementById('password');
-            
-            if (emailInput.value) {
-                passwordInput.focus();
-            } else {
-                emailInput.focus();
-            }
-        });
-    </script>
+    <script src="../assets/js/auth.js"></script>
 </body>
 </html>

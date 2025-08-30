@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../include/db.php';
+require_once __DIR__ . '/../include/functions.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -26,11 +27,6 @@ if ($role_id) {
     $stmt->bindParam(':role_id', $role_id);
     $stmt->execute();
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
-}
-
-// Helper function to check permissions
-function hasPermission($permission, $userPermissions) {
-    return in_array($permission, $userPermissions);
 }
 
 // Check if user has permission to manage categories

@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../include/db.php';
+require_once __DIR__ . '/../include/functions.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -28,11 +29,6 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Helper function to check permissions
-function hasPermission($permission, $userPermissions) {
-    return in_array($permission, $userPermissions);
-}
-
 // Check if user has permission to manage products
 if (!hasPermission('manage_products', $permissions)) {
     header("Location: ../dashboard/dashboard.php");
@@ -53,11 +49,13 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
-// Get product data with category
+// Get product data with category, brand, and supplier
 $stmt = $conn->prepare("
-    SELECT p.*, c.name as category_name 
+    SELECT p.*, c.name as category_name, b.name as brand_name, s.name as supplier_name
     FROM products p 
     LEFT JOIN categories c ON p.category_id = c.id 
+    LEFT JOIN brands b ON p.brand_id = b.id
+    LEFT JOIN suppliers s ON p.supplier_id = s.id
     WHERE p.id = :id
 ");
 $stmt->bindParam(':id', $product_id);
@@ -125,95 +123,10 @@ unset($_SESSION['success']);
 </head>
 <body>
     <!-- Sidebar -->
-    <nav class="sidebar">
-        <div class="sidebar-header">
-            <h4><i class="bi bi-shop me-2"></i><?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></h4>
-            <small>Point of Sale System</small>
-        </div>
-        <div class="sidebar-nav">
-            <div class="nav-item">
-                <a href="../dashboard/dashboard.php" class="nav-link">
-                    <i class="bi bi-speedometer2"></i>
-                    Dashboard
-                </a>
-            </div>
-            
-            <?php if (hasPermission('process_sales', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../pos/index.php" class="nav-link">
-                    <i class="bi bi-cart-plus"></i>
-                    Point of Sale
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_products', $permissions)): ?>
-            <div class="nav-item">
-                <a href="index.php" class="nav-link active">
-                    <i class="bi bi-box"></i>
-                    Products
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="../categories/categories.php" class="nav-link">
-                    <i class="bi bi-tags"></i>
-                    Categories
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="../inventory/index.php" class="nav-link">
-                    <i class="bi bi-boxes"></i>
-                    Inventory
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_sales', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../sales/index.php" class="nav-link">
-                    <i class="bi bi-receipt"></i>
-                    Sales History
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <div class="nav-item">
-                <a href="../customers/index.php" class="nav-link">
-                    <i class="bi bi-people"></i>
-                    Customers
-                </a>
-            </div>
-
-            <div class="nav-item">
-
-            </div>
-
-            <?php if (hasPermission('manage_users', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../admin/users/index.php" class="nav-link">
-                    <i class="bi bi-person-gear"></i>
-                    User Management
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_settings', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../admin/settings/adminsetting.php" class="nav-link">
-                    <i class="bi bi-gear"></i>
-                    Settings
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <div class="nav-item">
-                <a href="../auth/logout.php" class="nav-link">
-                    <i class="bi bi-box-arrow-right"></i>
-                    Logout
-                </a>
-            </div>
-        </div>
-    </nav>
+    <?php
+    $current_page = 'products';
+    include __DIR__ . '/../include/navmenu.php';
+    ?>
 
     <!-- Main Content -->
     <div class="main-content">
@@ -282,8 +195,28 @@ unset($_SESSION['success']);
                             
                             <div class="col-md-6">
                                 <div class="stat-card">
-                                    <div class="stat-value currency"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?></div>
-                                    <div class="stat-label">Current Price</div>
+                                    <?php if (isProductOnSale($product)): ?>
+                                        <?php $sale_info = getProductSaleInfo($product); ?>
+                                        <div class="stat-value currency text-danger">
+                                            <?php echo $settings['currency_symbol']; ?> <?php echo number_format($sale_info['sale_price'], 2); ?>
+                                            <span class="badge badge-danger ms-2">ON SALE</span>
+                                        </div>
+                                        <div class="stat-label">
+                                            <del class="text-muted"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?></del>
+                                            <span class="text-success fw-bold ms-2">-<?php echo $sale_info['discount_percentage']; ?>%</span>
+                                        </div>
+                                        <div class="mt-1">
+                                            <small class="text-muted">
+                                                Save <?php echo $settings['currency_symbol']; ?> <?php echo number_format($sale_info['savings'], 2); ?>
+                                                <?php if (!empty($sale_info['end_date'])): ?>
+                                                    <br>Ends: <?php echo formatSaleDate($sale_info['end_date']); ?>
+                                                <?php endif; ?>
+                                            </small>
+                                        </div>
+                                    <?php else: ?>
+                                        <div class="stat-value currency"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?></div>
+                                        <div class="stat-label">Current Price</div>
+                                    <?php endif; ?>
                                 </div>
                                 
                                 <div class="stat-card mt-3">
@@ -317,6 +250,77 @@ unset($_SESSION['success']);
                     </div>
                 </div>
             </div>
+
+            <!-- Sale Information -->
+            <?php if (!empty($product['sale_price'])): ?>
+            <div class="data-section">
+                <div class="section-header">
+                    <h3 class="section-title">
+                        <i class="bi bi-tag me-2"></i>
+                        Sale Information
+                    </h3>
+                </div>
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="info-list">
+                            <div class="info-item">
+                                <div class="info-label">Sale Price:</div>
+                                <div class="info-value currency text-danger fw-bold">
+                                    <?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['sale_price'], 2); ?>
+                                </div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Regular Price:</div>
+                                <div class="info-value currency text-muted">
+                                    <del><?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?></del>
+                                </div>
+                            </div>
+                            <div class="info-item">
+                                <div class="info-label">Discount:</div>
+                                <div class="info-value text-success fw-bold">
+                                    -<?php echo number_format((($product['price'] - $product['sale_price']) / $product['price']) * 100, 1); ?>%
+                                    (Save <?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'] - $product['sale_price'], 2); ?>)
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="info-list">
+                            <div class="info-item">
+                                <div class="info-label">Sale Status:</div>
+                                <div class="info-value">
+                                    <?php if (isProductOnSale($product)): ?>
+                                        <span class="badge badge-success">Active</span>
+                                    <?php else: ?>
+                                        <span class="badge badge-secondary">
+                                            <?php if (!empty($product['sale_start_date']) && strtotime($product['sale_start_date']) > time()): ?>
+                                                Scheduled - Starts <?php echo formatSaleDate($product['sale_start_date']); ?>
+                                            <?php elseif (!empty($product['sale_end_date']) && strtotime($product['sale_end_date']) < time()): ?>
+                                                Expired - Ended <?php echo formatSaleDate($product['sale_end_date']); ?>
+                                            <?php else: ?>
+                                                Inactive
+                                            <?php endif; ?>
+                                        </span>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            <?php if (!empty($product['sale_start_date'])): ?>
+                            <div class="info-item">
+                                <div class="info-label">Sale Start:</div>
+                                <div class="info-value"><?php echo formatSaleDate($product['sale_start_date']); ?></div>
+                            </div>
+                            <?php endif; ?>
+                            <?php if (!empty($product['sale_end_date'])): ?>
+                            <div class="info-item">
+                                <div class="info-label">Sale End:</div>
+                                <div class="info-value"><?php echo formatSaleDate($product['sale_end_date']); ?></div>
+                            </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
 
             <!-- Sales Statistics -->
             <div class="stats-grid">
@@ -372,6 +376,18 @@ unset($_SESSION['success']);
                 <div class="row">
                     <div class="col-md-6">
                         <table class="table">
+                            <tr>
+                                <td><strong>Category:</strong></td>
+                                <td><?php echo htmlspecialchars($product['category_name'] ?? 'Uncategorized'); ?></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Brand:</strong></td>
+                                <td><?php echo htmlspecialchars($product['brand_name'] ?? 'Not specified'); ?></td>
+                            </tr>
+                            <tr>
+                                <td><strong>Supplier:</strong></td>
+                                <td><?php echo htmlspecialchars($product['supplier_name'] ?? 'Not specified'); ?></td>
+                            </tr>
                             <tr>
                                 <td><strong>Created Date:</strong></td>
                                 <td><?php echo date('F j, Y \a\t g:i A', strtotime($product['created_at'])); ?></td>

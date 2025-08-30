@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../include/db.php';
+require_once __DIR__ . '/../include/functions.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -26,11 +27,6 @@ if ($role_id) {
     $stmt->bindParam(':role_id', $role_id);
     $stmt->execute();
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
-}
-
-// Helper function to check permissions
-function hasPermission($permission, $userPermissions) {
-    return in_array($permission, $userPermissions);
 }
 
 // Check if user has permission to manage categories
@@ -151,95 +147,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
     <!-- Sidebar -->
-    <nav class="sidebar">
-        <div class="sidebar-header">
-            <h4><i class="bi bi-shop me-2"></i><?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></h4>
-            <small>Point of Sale System</small>
-        </div>
-        <div class="sidebar-nav">
-            <div class="nav-item">
-                <a href="../dashboard/dashboard.php" class="nav-link">
-                    <i class="bi bi-speedometer2"></i>
-                    Dashboard
-                </a>
-            </div>
-            
-            <?php if (hasPermission('process_sales', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../pos/index.php" class="nav-link">
-                    <i class="bi bi-cart-plus"></i>
-                    Point of Sale
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_products', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../products/products.php" class="nav-link">
-                    <i class="bi bi-box"></i>
-                    Products
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="categories.php" class="nav-link active">
-                    <i class="bi bi-tags"></i>
-                    Categories
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="../inventory/index.php" class="nav-link">
-                    <i class="bi bi-boxes"></i>
-                    Inventory
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_sales', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../sales/index.php" class="nav-link">
-                    <i class="bi bi-receipt"></i>
-                    Sales History
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <div class="nav-item">
-                <a href="../customers/index.php" class="nav-link">
-                    <i class="bi bi-people"></i>
-                    Customers
-                </a>
-            </div>
-
-            <div class="nav-item">
-
-            </div>
-
-            <?php if (hasPermission('manage_users', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../admin/users/index.php" class="nav-link">
-                    <i class="bi bi-person-gear"></i>
-                    User Management
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_settings', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../admin/settings/adminsetting.php" class="nav-link">
-                    <i class="bi bi-gear"></i>
-                    Settings
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <div class="nav-item">
-                <a href="../auth/logout.php" class="nav-link">
-                    <i class="bi bi-box-arrow-right"></i>
-                    Logout
-                </a>
-            </div>
-        </div>
-    </nav>
+    <?php
+    $current_page = 'categories';
+    include __DIR__ . '/../include/navmenu.php';
+    ?>
 
     <!-- Main Content -->
     <div class="main-content">

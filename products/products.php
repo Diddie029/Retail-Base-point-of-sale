@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../include/db.php';
+require_once __DIR__ . '/../include/functions.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -28,11 +29,6 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Helper function to check permissions
-function hasPermission($permission, $userPermissions) {
-    return in_array($permission, $userPermissions);
-}
-
 // Check if user has permission to manage products
 if (!hasPermission('manage_products', $permissions)) {
     header("Location: ../dashboard/dashboard.php");
@@ -51,7 +47,17 @@ $search = $_GET['search'] ?? '';
 $category_filter = $_GET['category'] ?? '';
 $status_filter = $_GET['status'] ?? '';
 $page = max(1, (int)($_GET['page'] ?? 1));
-$per_page = 20;
+
+// Get user preference for items per page, default to 50
+$per_page_options = [10, 20, 50, 100];
+$user_per_page = isset($_GET['per_page']) ? (int)$_GET['per_page'] : 50;
+
+// Validate per_page value
+if (!in_array($user_per_page, $per_page_options)) {
+    $user_per_page = 50;
+}
+
+$per_page = $user_per_page;
 $offset = ($page - 1) * $per_page;
 
 // Build WHERE clause
@@ -76,6 +82,16 @@ if ($status_filter === 'low_stock') {
     $where_conditions[] = "p.quantity > 10";
 }
 
+// Notice filter
+$notice_filter = $_GET['notice'] ?? '';
+if ($notice_filter === 'supplier_blocked') {
+    $where_conditions[] = "s.is_active = 0 AND s.supplier_block_note IS NOT NULL";
+} elseif ($notice_filter === 'supplier_notice') {
+    $where_conditions[] = "s.is_active = 1 AND s.supplier_block_note LIKE 'Notice Issued:%'";
+} elseif ($notice_filter === 'no_notices') {
+    $where_conditions[] = "(s.is_active = 1 AND (s.supplier_block_note IS NULL OR s.supplier_block_note = ''))";
+}
+
 $where_clause = !empty($where_conditions) ? 'WHERE ' . implode(' AND ', $where_conditions) : '';
 
 // Get total count for pagination
@@ -90,11 +106,14 @@ $total_pages = ceil($total_products / $per_page);
 
 // Get products
 $sql = "
-    SELECT p.*, c.name as category_name 
-    FROM products p 
-    LEFT JOIN categories c ON p.category_id = c.id 
-    $where_clause 
-    ORDER BY p.created_at DESC 
+    SELECT p.*, c.name as category_name, b.name as brand_name, s.name as supplier_name,
+           s.is_active as supplier_active, s.supplier_block_note
+    FROM products p
+    LEFT JOIN categories c ON p.category_id = c.id
+    LEFT JOIN brands b ON p.brand_id = b.id
+    LEFT JOIN suppliers s ON p.supplier_id = s.id
+    $where_clause
+    ORDER BY p.created_at DESC
     LIMIT :limit OFFSET :offset
 ";
 
@@ -107,112 +126,73 @@ $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
 $stmt->execute();
 $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Handle individual toggle actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_product'])) {
+    $product_id = intval($_POST['product_id']);
+
+    // Get current status
+    $stmt = $conn->prepare("SELECT status FROM products WHERE id = :id");
+    $stmt->bindParam(':id', $product_id);
+    $stmt->execute();
+    $current_status = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($current_status) {
+        $new_status = $current_status['status'] === 'active' ? 'inactive' : 'active';
+
+        // Update product status
+        $update_stmt = $conn->prepare("UPDATE products SET status = :status WHERE id = :id");
+        $update_stmt->bindParam(':status', $new_status);
+        $update_stmt->bindParam(':id', $product_id);
+
+        if ($update_stmt->execute()) {
+            $_SESSION['success'] = 'Product status updated successfully.';
+        } else {
+            $_SESSION['error'] = 'Failed to update product status.';
+        }
+    }
+
+    header("Location: products.php");
+    exit();
+}
+
 // Get categories for filter
 $categories_stmt = $conn->query("SELECT * FROM categories ORDER BY name");
 $categories = $categories_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Handle direct export requests (GET parameters)
-if (isset($_GET['action']) && $_GET['action'] === 'export') {
-    $export_type = $_GET['type'] ?? 'all';
-    $format = $_GET['format'] ?? 'csv';
-    
-    // Build query based on export type
-    $export_where_clause = '';
-    $export_params = [];
-    
-    switch ($export_type) {
-        case 'low_stock':
-            $export_where_clause = 'WHERE p.quantity <= 10 AND p.quantity > 0';
-            break;
-        case 'out_of_stock':
-            $export_where_clause = 'WHERE p.quantity = 0';
-            break;
-        case 'in_stock':
-            $export_where_clause = 'WHERE p.quantity > 10';
-            break;
-        case 'category':
-            if (isset($_GET['category_id'])) {
-                $export_where_clause = 'WHERE p.category_id = :category_id';
-                $export_params[':category_id'] = $_GET['category_id'];
+
+
+// Handle bulk actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
+    $action = sanitizeProductInput($_POST['bulk_action']);
+    $product_ids = $_POST['product_ids'] ?? [];
+
+    if (!empty($product_ids) && is_array($product_ids)) {
+        $placeholders = str_repeat('?,', count($product_ids) - 1) . '?';
+
+        if ($action === 'activate') {
+            $stmt = $conn->prepare("UPDATE products SET status = 'active' WHERE id IN ($placeholders)");
+            $stmt->execute($product_ids);
+            $_SESSION['success'] = 'Selected products have been activated.';
+        } elseif ($action === 'deactivate') {
+            $stmt = $conn->prepare("UPDATE products SET status = 'inactive' WHERE id IN ($placeholders)");
+            $stmt->execute($product_ids);
+            $_SESSION['success'] = 'Selected products have been deactivated.';
+        } elseif ($action === 'delete') {
+            // Check if products are being used in sales
+            $check_stmt = $conn->prepare("SELECT COUNT(*) as count FROM sale_items WHERE product_id IN ($placeholders)");
+            $check_stmt->execute($product_ids);
+            $usage_count = $check_stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+            if ($usage_count > 0) {
+                $_SESSION['error'] = 'Cannot delete products that are being used in sales.';
+            } else {
+                $stmt = $conn->prepare("DELETE FROM products WHERE id IN ($placeholders)");
+                $stmt->execute($product_ids);
+                $_SESSION['success'] = 'Selected products have been deleted.';
             }
-            break;
-        default:
-            $export_where_clause = '';
-            break;
-    }
-    
-    if ($format === 'csv') {
-        // Set headers for CSV download
-        $filename = 'products_' . $export_type . '_' . date('Y-m-d_H-i-s') . '.csv';
-        header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
-        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
-        header('Pragma: public');
-        
-        // Get products for export
-        $export_sql = "
-            SELECT p.*, c.name as category_name 
-            FROM products p 
-            LEFT JOIN categories c ON p.category_id = c.id 
-            $export_where_clause 
-            ORDER BY p.name
-        ";
-        
-        $export_stmt = $conn->prepare($export_sql);
-        foreach ($export_params as $key => $value) {
-            $export_stmt->bindValue($key, $value);
         }
-        $export_stmt->execute();
-        $export_products = $export_stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        $output = fopen('php://output', 'w');
-        
-        // Add BOM for proper UTF-8 handling in Excel
-        fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
-        
-        // CSV Headers
-        $headers = [
-            'ID',
-            'Name',
-            'Category',
-            'Price',
-            'Quantity',
-            'Barcode',
-            'Description',
-            'Created Date',
-            'Updated Date',
-            'Stock Status'
-        ];
-        
-        fputcsv($output, $headers);
-        
-        // CSV Data
-        foreach ($export_products as $product) {
-            // Determine stock status
-            $stock_status = 'In Stock';
-            if ($product['quantity'] == 0) {
-                $stock_status = 'Out of Stock';
-            } elseif ($product['quantity'] <= 10) {
-                $stock_status = 'Low Stock';
-            }
-            
-            $row = [
-                $product['id'],
-                $product['name'],
-                $product['category_name'] ?? 'Uncategorized',
-                number_format($product['price'], 2),
-                $product['quantity'],
-                $product['barcode'],
-                $product['description'] ?? '',
-                date('Y-m-d H:i:s', strtotime($product['created_at'])),
-                date('Y-m-d H:i:s', strtotime($product['updated_at'])),
-                $stock_status
-            ];
-            
-            fputcsv($output, $row);
-        }
-        
-        fclose($output);
+
+        header("Location: products.php");
         exit();
     }
 }
@@ -229,7 +209,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     $output = fopen('php://output', 'w');
     
     // CSV Headers
-    $headers = ['ID', 'Name', 'Category', 'Price', 'Quantity', 'Barcode', 'Description', 'Created Date', 'Updated Date'];
+    $headers = ['ID', 'Name', 'Category', 'Price', 'Sale Price', 'Sale Start Date', 'Sale End Date', 'Tax Rate', 'Quantity', 'Barcode', 'SKU', 'Description', 'Created Date', 'Updated Date'];
     fputcsv($output, $headers);
     
     // Get all products for export
@@ -251,13 +231,18 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
             $product['name'],
             $product['category_name'] ?? 'Uncategorized',
             $product['price'],
+            !empty($product['sale_price']) ? $product['sale_price'] : '',
+            $product['sale_start_date'] ?? '',
+            $product['sale_end_date'] ?? '',
+            !empty($product['tax_rate']) ? $product['tax_rate'] : '',
             $product['quantity'],
             $product['barcode'],
+            $product['sku'] ?? '',
             $product['description'] ?? '',
             $product['created_at'],
             $product['updated_at']
         ];
-        
+
         fputcsv($output, $row);
     }
     
@@ -283,6 +268,11 @@ $stats['out_of_stock'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
 // Total inventory value
 $stmt = $conn->query("SELECT SUM(price * quantity) as total FROM products");
 $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
+
+// Handle success/error messages
+$success = $_SESSION['success'] ?? '';
+$error = $_SESSION['error'] ?? '';
+unset($_SESSION['success'], $_SESSION['error']);
 ?>
 
 <!DOCTYPE html>
@@ -304,95 +294,10 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
 </head>
 <body>
     <!-- Sidebar -->
-    <nav class="sidebar">
-        <div class="sidebar-header">
-            <h4><i class="bi bi-shop me-2"></i><?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></h4>
-            <small>Point of Sale System</small>
-        </div>
-        <div class="sidebar-nav">
-            <div class="nav-item">
-                <a href="../dashboard/dashboard.php" class="nav-link">
-                    <i class="bi bi-speedometer2"></i>
-                    Dashboard
-                </a>
-            </div>
-            
-            <?php if (hasPermission('process_sales', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../pos/index.php" class="nav-link">
-                    <i class="bi bi-cart-plus"></i>
-                    Point of Sale
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_products', $permissions)): ?>
-            <div class="nav-item">
-                <a href="products.php" class="nav-link active">
-                    <i class="bi bi-box"></i>
-                    Products
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="../categories/categories.php" class="nav-link">
-                    <i class="bi bi-tags"></i>
-                    Categories
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="../inventory/index.php" class="nav-link">
-                    <i class="bi bi-boxes"></i>
-                    Inventory
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_sales', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../sales/index.php" class="nav-link">
-                    <i class="bi bi-receipt"></i>
-                    Sales History
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <div class="nav-item">
-                <a href="../customers/index.php" class="nav-link">
-                    <i class="bi bi-people"></i>
-                    Customers
-                </a>
-            </div>
-
-            <div class="nav-item">
-
-            </div>
-
-            <?php if (hasPermission('manage_users', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../admin/users/index.php" class="nav-link">
-                    <i class="bi bi-person-gear"></i>
-                    User Management
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_settings', $permissions)): ?>
-            <div class="nav-item">
-                <a href="../admin/settings/adminsetting.php" class="nav-link">
-                    <i class="bi bi-gear"></i>
-                    Settings
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <div class="nav-item">
-                <a href="../auth/logout.php" class="nav-link">
-                    <i class="bi bi-box-arrow-right"></i>
-                    Logout
-                </a>
-            </div>
-        </div>
-    </nav>
+    <?php
+    $current_page = 'products';
+    include __DIR__ . '/../include/navmenu.php';
+    ?>
 
     <!-- Main Content -->
     <div class="main-content">
@@ -414,6 +319,22 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
 
         <!-- Content -->
         <div class="content">
+            <?php if ($success): ?>
+            <div class="alert alert-success alert-dismissible fade show">
+                <i class="bi bi-check-circle me-2"></i>
+                <?php echo htmlspecialchars($success); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
+
+            <?php if ($error): ?>
+            <div class="alert alert-danger alert-dismissible fade show">
+                <i class="bi bi-exclamation-circle me-2"></i>
+                <?php echo htmlspecialchars($error); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
+
             <!-- Stats Cards -->
             <div class="stats-grid">
                 <div class="stat-card">
@@ -434,13 +355,6 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                     </div>
                     <div class="stat-value"><?php echo number_format($stats['low_stock']); ?></div>
                     <div class="stat-label">Low Stock</div>
-                    <?php if ($stats['low_stock'] > 0): ?>
-                    <div class="mt-2">
-                        <button class="btn btn-warning btn-sm export-low-stock">
-                            <i class="bi bi-download"></i> Export
-                        </button>
-                    </div>
-                    <?php endif; ?>
                 </div>
                 
                 <div class="stat-card">
@@ -451,13 +365,6 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                     </div>
                     <div class="stat-value"><?php echo number_format($stats['out_of_stock']); ?></div>
                     <div class="stat-label">Out of Stock</div>
-                    <?php if ($stats['out_of_stock'] > 0): ?>
-                    <div class="mt-2">
-                        <button class="btn btn-danger btn-sm export-out-stock">
-                            <i class="bi bi-download"></i> Export
-                        </button>
-                    </div>
-                    <?php endif; ?>
                 </div>
                 
                 <div class="stat-card">
@@ -479,34 +386,18 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                         <i class="bi bi-plus"></i>
                         Add Product
                     </a>
+                    <a href="blocked.php" class="btn btn-warning">
+                        <i class="bi bi-x-circle"></i>
+                        Blocked Products
+                    </a>
                     <a href="import.php" class="btn btn-success">
                         <i class="bi bi-upload"></i>
                         Import
                     </a>
-                    <div class="btn-group">
-                        <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                            <i class="bi bi-download"></i>
-                            Export
-                        </button>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item export-all" href="#">
-                                <i class="bi bi-file-spreadsheet me-2"></i>Export All Products
-                            </a></li>
-                            <li><a class="dropdown-item export-in-stock" href="#">
-                                <i class="bi bi-check-circle me-2"></i>Export In Stock
-                            </a></li>
-                            <li><a class="dropdown-item export-low-stock" href="#">
-                                <i class="bi bi-exclamation-triangle me-2"></i>Export Low Stock
-                            </a></li>
-                            <li><a class="dropdown-item export-out-stock" href="#">
-                                <i class="bi bi-x-circle me-2"></i>Export Out of Stock
-                            </a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="export.php">
-                                <i class="bi bi-gear me-2"></i>Advanced Export
-                            </a></li>
-                        </ul>
-                    </div>
+                    <a href="export_products.php" class="btn btn-info">
+                        <i class="bi bi-download"></i>
+                        Export Products
+                    </a>
                 </div>
             </div>
 
@@ -540,12 +431,31 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                             </select>
                         </div>
                         <div class="form-group">
+                            <label for="noticeFilter" class="form-label">Notice Status</label>
+                            <select class="form-control" id="noticeFilter" name="notice">
+                                <option value="">All Products</option>
+                                <option value="supplier_blocked" <?php echo ($_GET['notice'] ?? '') == 'supplier_blocked' ? 'selected' : ''; ?>>Supplier Blocked</option>
+                                <option value="supplier_notice" <?php echo ($_GET['notice'] ?? '') == 'supplier_notice' ? 'selected' : ''; ?>>Supplier Notice</option>
+                                <option value="no_notices" <?php echo ($_GET['notice'] ?? '') == 'no_notices' ? 'selected' : ''; ?>>No Notices</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="perPage" class="form-label">Items per Page</label>
+                            <select class="form-control" id="perPage" name="per_page">
+                                <?php foreach ($per_page_options as $option): ?>
+                                <option value="<?php echo $option; ?>" <?php echo $per_page == $option ? 'selected' : ''; ?>>
+                                    <?php echo $option; ?> items
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="form-group">
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-search"></i>
                                 Filter
                             </button>
-                            <?php if (!empty($search) || !empty($category_filter) || !empty($status_filter)): ?>
-                            <a href="index.php" class="btn btn-outline-secondary">
+                            <?php if (!empty($search) || !empty($category_filter) || !empty($status_filter) || !empty($_GET['notice']) || $per_page != 50): ?>
+                            <a href="products.php" class="btn btn-outline-secondary">
                                 <i class="bi bi-x"></i>
                                 Clear
                             </a>
@@ -555,16 +465,79 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                 </form>
             </div>
 
-            <!-- Bulk Actions (hidden by default) -->
-            <div id="bulkActions" class="filter-section" style="display: none;">
-                <div class="d-flex align-items-center justify-content-between">
-                    <span><span class="selected-count">0</span> products selected</span>
-                    <div>
-                        <button type="button" id="bulkDelete" class="btn btn-danger btn-sm">
-                            <i class="bi bi-trash"></i>
-                            Delete Selected
+            <!-- Bulk Actions -->
+            <form method="POST" id="bulkForm">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div class="bulk-actions" id="bulkActions" style="display: none;">
+                        <select class="form-control d-inline-block w-auto" name="bulk_action" required>
+                            <option value="">Choose action</option>
+                            <option value="activate">Activate</option>
+                            <option value="deactivate">Deactivate</option>
+                            <option value="delete">Delete</option>
+                        </select>
+                        <button type="submit" class="btn btn-primary btn-sm">
+                            <i class="bi bi-check"></i>
+                            Apply
                         </button>
                     </div>
+                    <div class="text-muted">
+                        Showing <?php echo count($products); ?> of <?php echo $total_products; ?> products
+                    </div>
+                </div>
+
+            <!-- Column Visibility Controls -->
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div class="column-visibility">
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <span class="text-muted me-2 fw-bold">Columns:</span>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-category" checked>
+                            <label class="form-check-label small" for="col-category">Category</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-brand" checked>
+                            <label class="form-check-label small" for="col-brand">Brand</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-supplier" checked>
+                            <label class="form-check-label small" for="col-supplier">Supplier</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-notices" checked>
+                            <label class="form-check-label small" for="col-notices">Notices</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-price" checked>
+                            <label class="form-check-label small" for="col-price">Price</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-quantity" checked>
+                            <label class="form-check-label small" for="col-quantity">Quantity</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-stock-status" checked>
+                            <label class="form-check-label small" for="col-stock-status">Stock Status</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-product-status" checked>
+                            <label class="form-check-label small" for="col-product-status">Product Status</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-serial-number">
+                            <label class="form-check-label small" for="col-serial-number">Serial Number</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-barcode" checked>
+                            <label class="form-check-label small" for="col-barcode">Barcode</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-created" checked>
+                            <label class="form-check-label small" for="col-created">Created</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-muted">
+                    Showing <?php echo count($products); ?> of <?php echo $total_products; ?> products
                 </div>
             </div>
 
@@ -576,20 +549,25 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                             <th>
                                 <input type="checkbox" id="selectAll">
                             </th>
-                            <th>Product</th>
-                            <th>Category</th>
-                            <th>Price</th>
-                            <th>Quantity</th>
-                            <th>Status</th>
-                            <th>Barcode</th>
-                            <th>Created</th>
-                            <th>Actions</th>
+                            <th class="col-product">Product</th>
+                            <th class="col-category">Category</th>
+                            <th class="col-brand">Brand</th>
+                            <th class="col-supplier">Supplier</th>
+                            <th class="col-notices">Notices</th>
+                            <th class="col-price">Price</th>
+                            <th class="col-quantity">Quantity</th>
+                            <th class="col-stock-status">Stock Status</th>
+                            <th class="col-product-status">Product Status</th>
+                            <th class="col-serial-number" style="display: none;">Serial Number</th>
+                            <th class="col-barcode">Barcode</th>
+                            <th class="col-created">Created</th>
+                            <th class="col-actions">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($products)): ?>
                         <tr>
-                            <td colspan="9" class="text-center">
+                            <td colspan="13" class="text-center">
                                 <div class="py-4">
                                     <i class="bi bi-box" style="font-size: 3rem; color: #9ca3af;"></i>
                                     <p class="text-muted mt-2">No products found</p>
@@ -601,22 +579,81 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                         <?php foreach ($products as $product): ?>
                         <tr>
                             <td>
-                                <input type="checkbox" class="product-checkbox" value="<?php echo $product['id']; ?>">
+                                <input type="checkbox" name="product_ids[]" value="<?php echo $product['id']; ?>" class="product-checkbox">
                             </td>
-                            <td>
+                            <td class="col-product">
                                 <div class="d-flex align-items-center">
                                     <div class="product-image-placeholder me-3">
                                         <i class="bi bi-image"></i>
                                     </div>
                                     <div>
-                                        <div class="font-weight-bold"><?php echo htmlspecialchars($product['name']); ?></div>
+                                        <div class="font-weight-bold">
+                                            <?php echo htmlspecialchars($product['name']); ?>
+                                            <?php if (isProductOnSale($product)): ?>
+                                                <span class="badge badge-danger ms-2">ON SALE</span>
+                                            <?php endif; ?>
+                                            <?php if ($product['supplier_id'] && $product['supplier_active'] == 0): ?>
+                                                <span class="badge badge-warning ms-2" title="<?php echo htmlspecialchars($product['supplier_block_note'] ?? 'Supplier is blocked'); ?>">
+                                                    <i class="bi bi-exclamation-triangle"></i>
+                                                    Supplier Blocked
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
                                         <small class="text-muted">ID: <?php echo $product['id']; ?></small>
+                                        <?php if ($product['supplier_id'] && $product['supplier_active'] == 0): ?>
+                                            <br><small class="text-warning">
+                                                <i class="bi bi-info-circle"></i>
+                                                <?php echo htmlspecialchars($product['supplier_block_note'] ?? 'This product\'s supplier is currently blocked'); ?>
+                                            </small>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                             </td>
-                            <td><?php echo htmlspecialchars($product['category_name'] ?? 'Uncategorized'); ?></td>
-                            <td class="currency"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?></td>
-                            <td class="stock-quantity">
+                            <td class="col-category"><?php echo htmlspecialchars($product['category_name'] ?? 'Uncategorized'); ?></td>
+                            <td class="col-brand"><?php echo htmlspecialchars($product['brand_name'] ?? '-'); ?></td>
+                            <td class="col-supplier"><?php echo htmlspecialchars($product['supplier_name'] ?? '-'); ?></td>
+                            <td class="col-notices">
+                                <?php if ($product['supplier_id']): ?>
+                                    <?php if ($product['supplier_active'] == 0): ?>
+                                        <div class="notice-item">
+                                            <span class="badge badge-warning" title="<?php echo htmlspecialchars($product['supplier_block_note'] ?? 'Supplier is blocked'); ?>">
+                                                <i class="bi bi-exclamation-triangle"></i>
+                                                Supplier Blocked
+                                            </span>
+                                            <small class="text-warning d-block mt-1">
+                                                <i class="bi bi-info-circle"></i>
+                                                Product can still be sold
+                                            </small>
+                                        </div>
+                                    <?php elseif ($product['supplier_block_note'] && strpos($product['supplier_block_note'], 'Notice Issued:') !== false): ?>
+                                        <div class="notice-item">
+                                            <span class="badge badge-info" title="<?php echo htmlspecialchars($product['supplier_block_note']); ?>">
+                                                <i class="bi bi-exclamation-circle"></i>
+                                                Supplier Notice
+                                            </span>
+                                            <small class="text-info d-block mt-1">
+                                                <?php echo htmlspecialchars(substr($product['supplier_block_note'], 0, 50)) . (strlen($product['supplier_block_note']) > 50 ? '...' : ''); ?>
+                                            </small>
+                                        </div>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <span class="text-muted">-</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="col-price currency">
+                                <?php if (isProductOnSale($product)): ?>
+                                    <div class="d-flex flex-column">
+                                        <span class="text-danger fw-bold"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['sale_price'], 2); ?></span>
+                                        <small class="text-muted text-decoration-line-through"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?></small>
+                                        <small class="text-success">Save <?php echo number_format((($product['price'] - $product['sale_price']) / $product['price']) * 100, 1); ?>%</small>
+                                    </div>
+                                <?php else: ?>
+                                    <?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?>
+                                <?php endif; ?>
+                            </td>
+                            <td class="col-quantity stock-quantity">
                                 <?php echo number_format($product['quantity']); ?>
                                 <?php if ($product['quantity'] == 0): ?>
                                     <span class="badge badge-danger ms-1">Out of Stock</span>
@@ -626,7 +663,7 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                                     <span class="badge badge-success ms-1">In Stock</span>
                                 <?php endif; ?>
                             </td>
-                            <td>
+                            <td class="col-stock-status">
                                 <?php if ($product['quantity'] == 0): ?>
                                     <span class="badge badge-danger">Out of Stock</span>
                                 <?php elseif ($product['quantity'] <= 10): ?>
@@ -635,15 +672,30 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                                     <span class="badge badge-success">In Stock</span>
                                 <?php endif; ?>
                             </td>
-                            <td>
+                            <td class="col-product-status">
+                                <span class="badge <?php echo $product['status'] === 'active' ? 'badge-success' : ($product['status'] === 'inactive' ? 'badge-secondary' : 'badge-warning'); ?>">
+                                    <?php echo ucfirst($product['status']); ?>
+                                </span>
+                            </td>
+                            <td class="col-serial-number" style="display: none;">
+                                <?php if ($product['is_serialized']): ?>
+                                    <span class="badge badge-info">
+                                        <i class="bi bi-upc-scan"></i>
+                                        Serialized
+                                    </span>
+                                <?php else: ?>
+                                    <span class="text-muted">-</span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="col-barcode">
                                 <code><?php echo htmlspecialchars($product['barcode']); ?></code>
                             </td>
-                            <td>
+                            <td class="col-created">
                                 <small class="text-muted">
                                     <?php echo date('M j, Y', strtotime($product['created_at'])); ?>
                                 </small>
                             </td>
-                            <td>
+                            <td class="col-actions">
                                 <div class="d-flex gap-1">
                                     <a href="view.php?id=<?php echo $product['id']; ?>" class="btn btn-outline-secondary btn-sm" title="View">
                                         <i class="bi bi-eye"></i>
@@ -651,8 +703,14 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                                     <a href="edit.php?id=<?php echo $product['id']; ?>" class="btn btn-warning btn-sm" title="Edit">
                                         <i class="bi bi-pencil"></i>
                                     </a>
-                                    <a href="delete.php?id=<?php echo $product['id']; ?>" 
-                                       class="btn btn-danger btn-sm btn-delete" 
+                                    <button type="button" class="btn btn-sm <?php echo $product['status'] === 'active' ? 'btn-warning' : 'btn-success'; ?> toggle-status"
+                                            data-id="<?php echo $product['id']; ?>"
+                                            data-current-status="<?php echo $product['status']; ?>"
+                                            title="<?php echo $product['status'] === 'active' ? 'Deactivate Product' : 'Activate Product'; ?>">
+                                        <i class="bi <?php echo $product['status'] === 'active' ? 'bi-pause-fill' : 'bi-play-fill'; ?>"></i>
+                                    </button>
+                                    <a href="delete.php?id=<?php echo $product['id']; ?>"
+                                       class="btn btn-danger btn-sm btn-delete"
                                        data-product-name="<?php echo htmlspecialchars($product['name']); ?>"
                                        title="Delete">
                                         <i class="bi bi-trash"></i>
@@ -664,8 +722,9 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                         <?php endif; ?>
                     </tbody>
                 </table>
+            </form>
 
-                <!-- Pagination -->
+            <!-- Pagination -->
                 <?php if ($total_pages > 1): ?>
                 <div class="pagination-wrapper">
                     <div class="pagination-info">
@@ -676,7 +735,7 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                         <ul class="pagination">
                             <?php if ($page > 1): ?>
                             <li class="page-item">
-                                <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>">
+                                <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1, 'per_page' => $per_page])); ?>">
                                     <i class="bi bi-chevron-left"></i>
                                 </a>
                             </li>
@@ -685,11 +744,11 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
                             <?php
                             $start_page = max(1, $page - 2);
                             $end_page = min($total_pages, $page + 2);
-                            
+
                             for ($i = $start_page; $i <= $end_page; $i++):
                             ?>
                             <li class="page-item <?php echo $i == $page ? 'active' : ''; ?>">
-                                <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>">
+                                <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i, 'per_page' => $per_page])); ?>">
                                     <?php echo $i; ?>
                                 </a>
                             </li>
@@ -697,7 +756,7 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
 
                             <?php if ($page < $total_pages): ?>
                             <li class="page-item">
-                                <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>">
+                                <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1, 'per_page' => $per_page])); ?>">
                                     <i class="bi bi-chevron-right"></i>
                                 </a>
                             </li>
@@ -712,5 +771,163 @@ $stats['inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="../assets/js/products.js"></script>
+    <script>
+        // Toggle product status functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const toggleButtons = document.querySelectorAll('.toggle-status');
+
+            toggleButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const productId = this.getAttribute('data-id');
+                    const currentStatus = this.getAttribute('data-current-status');
+                    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+
+                    // Show loading state
+                    const originalIcon = this.innerHTML;
+                    this.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+                    this.disabled = true;
+
+                    // Create form data
+                    const formData = new FormData();
+                    formData.append('toggle_product', '1');
+                    formData.append('product_id', productId);
+
+                    // Send AJAX request
+                    fetch('products.php', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => {
+                        if (response.ok) {
+                            // Update button appearance
+                            if (newStatus === 'active') {
+                                this.className = 'btn btn-sm btn-warning toggle-status';
+                                this.setAttribute('data-current-status', 'active');
+                                this.setAttribute('title', 'Deactivate Product');
+                                this.innerHTML = '<i class="bi bi-pause-fill"></i>';
+                            } else {
+                                this.className = 'btn btn-sm btn-success toggle-status';
+                                this.setAttribute('data-current-status', 'inactive');
+                                this.setAttribute('title', 'Activate Product');
+                                this.innerHTML = '<i class="bi bi-play-fill"></i>';
+                            }
+
+                            // Update status badge in the same row
+                            const row = this.closest('tr');
+                            const statusBadge = row.querySelector('.col-product-status .badge');
+                            if (statusBadge) {
+                                if (newStatus === 'active') {
+                                    statusBadge.className = 'badge badge-success';
+                                    statusBadge.textContent = 'Active';
+                                } else {
+                                    statusBadge.className = 'badge badge-secondary';
+                                    statusBadge.textContent = 'Inactive';
+                                }
+                            }
+
+                            // Show success message
+                            showNotification('Product status updated successfully!', 'success');
+                        } else {
+                            // Revert button state on error
+                            this.innerHTML = originalIcon;
+                            showNotification('Failed to update product status.', 'error');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        // Revert button state on error
+                        this.innerHTML = originalIcon;
+                        showNotification('An error occurred while updating product status.', 'error');
+                    })
+                    .finally(() => {
+                        this.disabled = false;
+                    });
+                });
+            });
+
+            // Notification function
+            function showNotification(message, type) {
+                // Remove existing notifications
+                const existingNotifications = document.querySelectorAll('.alert');
+                existingNotifications.forEach(notification => notification.remove());
+
+                // Create new notification
+                const notification = document.createElement('div');
+                notification.className = `alert alert-${type === 'success' ? 'success' : 'danger'} alert-dismissible fade show`;
+                notification.innerHTML = `
+                    <i class="bi ${type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle'} me-2"></i>
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+
+                // Insert at the top of the content area
+                const content = document.querySelector('.content');
+                if (content) {
+                    content.insertBefore(notification, content.firstChild);
+                }
+
+                // Auto-dismiss after 3 seconds
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        notification.remove();
+                    }
+                }, 3000);
+            }
+
+            // Column visibility functionality
+            const columnCheckboxes = document.querySelectorAll('.column-visibility input[type="checkbox"]');
+
+            columnCheckboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const column = this.id.replace('col-', '');
+                    
+                    // Update column visibility
+                    toggleColumnVisibility(column, this.checked);
+                    
+                    // Save preferences
+                    saveColumnPreferences();
+                });
+            });
+
+            function toggleColumnVisibility(column, visible) {
+                const tableHeaders = document.querySelectorAll(`th.col-${column}`);
+                const tableCells = document.querySelectorAll(`td.col-${column}`);
+
+                tableHeaders.forEach(header => {
+                    header.style.display = visible ? '' : 'none';
+                });
+
+                tableCells.forEach(cell => {
+                    cell.style.display = visible ? '' : 'none';
+                });
+            }
+
+            // Load saved column preferences from localStorage
+            loadColumnPreferences();
+
+            function loadColumnPreferences() {
+                const preferences = localStorage.getItem('productColumns');
+                if (preferences) {
+                    const columns = JSON.parse(preferences);
+                    Object.keys(columns).forEach(column => {
+                        const checkbox = document.getElementById(`col-${column}`);
+                        if (checkbox) {
+                            checkbox.checked = columns[column];
+                            toggleColumnVisibility(column, columns[column]);
+                        }
+                    });
+                }
+            }
+
+            function saveColumnPreferences() {
+                const preferences = {};
+                document.querySelectorAll('.column-visibility input[type="checkbox"]').forEach(cb => {
+                    const column = cb.id.replace('col-', '');
+                    preferences[column] = cb.checked;
+                });
+                localStorage.setItem('productColumns', JSON.stringify(preferences));
+            }
+        });
+    </script>
 </body>
 </html>

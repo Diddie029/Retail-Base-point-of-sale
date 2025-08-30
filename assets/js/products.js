@@ -127,15 +127,90 @@ document.addEventListener('DOMContentLoaded', function() {
     // Auto-generate barcode
     const generateBarcodeBtn = document.getElementById('generateBarcode');
     const barcodeInput = document.getElementById('barcode');
-    
+
     if (generateBarcodeBtn && barcodeInput) {
         generateBarcodeBtn.addEventListener('click', function() {
-            const timestamp = Date.now();
-            const random = Math.floor(Math.random() * 1000);
-            const barcode = `${timestamp}${random}`.substring(0, 13);
-            barcodeInput.value = barcode;
-            barcodeInput.dispatchEvent(new Event('input'));
+            // Use AJAX to generate barcode from server
+            fetch('add.php?action=generate_barcode')
+                .then(response => response.json())
+                .then(data => {
+                    barcodeInput.value = data.barcode;
+                    barcodeInput.dispatchEvent(new Event('input'));
+                    showAlert('Barcode generated successfully!', 'success');
+                })
+                .catch(error => {
+                    console.error('Error generating barcode:', error);
+                    showAlert('Error generating barcode', 'danger');
+                });
         });
+    }
+
+    // Auto-generate SKU
+    const generateSKUBtn = document.getElementById('generateSKU');
+    const skuInput = document.getElementById('sku');
+
+    if (generateSKUBtn && skuInput) {
+        generateSKUBtn.addEventListener('click', function() {
+            // Get custom pattern from user
+            const pattern = prompt('Enter SKU pattern (e.g., PROD0000, LIZ000000, N000000).\nLeave empty for default pattern:', '');
+            let url = 'add.php?action=generate_sku';
+
+            if (pattern) {
+                url += '&pattern=' + encodeURIComponent(pattern);
+            }
+
+            // Use AJAX to generate SKU from server
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    skuInput.value = data.sku;
+                    skuInput.dispatchEvent(new Event('input'));
+                    showAlert('SKU generated successfully!', 'success');
+                })
+                .catch(error => {
+                    console.error('Error generating SKU:', error);
+                    showAlert('Error generating SKU', 'danger');
+                });
+        });
+    }
+
+    // Product type change handler
+    const productTypeSelect = document.getElementById('product_type');
+    const physicalProperties = document.getElementById('physicalProperties');
+
+    if (productTypeSelect && physicalProperties) {
+        productTypeSelect.addEventListener('change', function() {
+            if (this.value === 'physical') {
+                physicalProperties.style.display = 'block';
+            } else {
+                physicalProperties.style.display = 'none';
+            }
+        });
+
+        // Initial check
+        if (productTypeSelect.value === 'physical') {
+            physicalProperties.style.display = 'block';
+        }
+    }
+
+    // Cost price change handler for profit margin calculation
+    const costPriceInput = document.getElementById('cost_price');
+    const priceInput = document.getElementById('price');
+
+    if (costPriceInput && priceInput) {
+        const calculateProfitMargin = () => {
+            const cost = parseFloat(costPriceInput.value) || 0;
+            const price = parseFloat(priceInput.value) || 0;
+
+            if (cost > 0 && price > 0) {
+                const margin = ((price - cost) / cost * 100).toFixed(2);
+                // You can add a profit margin display here if desired
+                console.log(`Profit margin: ${margin}%`);
+            }
+        };
+
+        costPriceInput.addEventListener('input', calculateProfitMargin);
+        priceInput.addEventListener('input', calculateProfitMargin);
     }
     
     // Delete confirmation
@@ -183,19 +258,42 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Bulk delete
-    const bulkDeleteBtn = document.getElementById('bulkDelete');
-    if (bulkDeleteBtn) {
-        bulkDeleteBtn.addEventListener('click', function() {
+    // Bulk form submission
+    const bulkForm = document.getElementById('bulkForm');
+    if (bulkForm) {
+        bulkForm.addEventListener('submit', function(e) {
             const checkedProducts = document.querySelectorAll('.product-checkbox:checked');
+            const bulkAction = document.querySelector('select[name="bulk_action"]');
+
             if (checkedProducts.length === 0) {
-                showAlert('Please select products to delete', 'warning');
+                e.preventDefault();
+                showAlert('Please select products to perform this action', 'warning');
                 return;
             }
-            
-            if (confirm(`Are you sure you want to delete ${checkedProducts.length} selected products? This action cannot be undone.`)) {
-                const productIds = Array.from(checkedProducts).map(cb => cb.value);
-                bulkDeleteProducts(productIds);
+
+            if (!bulkAction || !bulkAction.value) {
+                e.preventDefault();
+                showAlert('Please select an action to perform', 'warning');
+                return;
+            }
+
+            const action = bulkAction.value;
+            const confirmMessages = {
+                'activate': `Are you sure you want to activate ${checkedProducts.length} selected products?`,
+                'deactivate': `Are you sure you want to deactivate ${checkedProducts.length} selected products?`,
+                'delete': `Are you sure you want to delete ${checkedProducts.length} selected products? This action cannot be undone.`
+            };
+
+            if (!confirm(confirmMessages[action])) {
+                e.preventDefault();
+                return;
+            }
+
+            // Show loading state
+            const submitBtn = bulkForm.querySelector('button[type="submit"]');
+            if (submitBtn) {
+                submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Processing...';
+                submitBtn.disabled = true;
             }
         });
     }
@@ -305,38 +403,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Quick export buttons
-    const quickExportBtns = [
-        { selector: '.export-all', type: 'all' },
-        { selector: '.export-low-stock', type: 'low_stock' },
-        { selector: '.export-out-stock', type: 'out_of_stock' },
-        { selector: '.export-in-stock', type: 'in_stock' }
-    ];
-    
-    quickExportBtns.forEach(config => {
-        const btns = document.querySelectorAll(config.selector);
-        btns.forEach(btn => {
-            btn.addEventListener('click', function(e) {
-                e.preventDefault();
-                
-                const originalText = this.innerHTML;
-                this.innerHTML = '<span class="spinner"></span> Exporting...';
-                this.disabled = true;
-                
-                // Use products.php with action parameter
-                const exportUrl = `products.php?action=export&type=${config.type}&format=csv`;
-                
-                // Trigger download
-                window.location.href = exportUrl;
-                
-                // Reset button state
-                setTimeout(() => {
-                    this.innerHTML = originalText;
-                    this.disabled = false;
-                }, 2000);
-            });
-        });
-    });
+
     
     // Stock level indicators
     updateStockIndicators();
@@ -433,28 +500,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    function bulkDeleteProducts(productIds) {
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = 'delete.php';
-        
-        productIds.forEach(id => {
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = 'product_ids[]';
-            input.value = id;
-            form.appendChild(input);
-        });
-        
-        const actionInput = document.createElement('input');
-        actionInput.type = 'hidden';
-        actionInput.name = 'bulk_delete';
-        actionInput.value = '1';
-        form.appendChild(actionInput);
-        
-        document.body.appendChild(form);
-        form.submit();
-    }
+
     
     function showAlert(message, type = 'info') {
         const alertContainer = document.getElementById('alertContainer') || document.querySelector('.content');
@@ -503,6 +549,31 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     
     console.log('Products module initialized successfully');
+    
+    // Column visibility functionality
+    const columnToggles = document.querySelectorAll('input[id^="col-"]');
+    columnToggles.forEach(toggle => {
+        toggle.addEventListener('change', function() {
+            const columnClass = this.id;
+            const columnElements = document.querySelectorAll('.' + columnClass);
+            const isVisible = this.checked;
+            
+            columnElements.forEach(element => {
+                if (isVisible) {
+                    element.style.display = '';
+                } else {
+                    element.style.display = 'none';
+                }
+            });
+            
+            // Update colspan for "no products" message
+            const noProductsRow = document.querySelector('td[colspan]');
+            if (noProductsRow) {
+                const visibleColumns = Array.from(columnToggles).filter(t => t.checked).length;
+                noProductsRow.setAttribute('colspan', visibleColumns);
+            }
+        });
+    });
     
     // Dropdown functionality (fallback if Bootstrap JS isn't loaded)
     const dropdownToggles = document.querySelectorAll('.dropdown-toggle');

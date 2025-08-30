@@ -329,6 +329,75 @@ body {
     margin-bottom: 0;
 }
 
+/* Form Sections */
+.form-section {
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.form-section:last-child {
+    margin-bottom: 0;
+}
+
+.section-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #1e293b;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--primary-color);
+}
+
+.section-title i {
+    margin-right: 0.5rem;
+    color: var(--primary-color);
+}
+
+/* Input Groups */
+.input-group {
+    display: flex;
+}
+
+.input-group .form-control {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    border-right: none;
+}
+
+.input-group .btn {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: none;
+}
+
+/* Checkboxes */
+.form-check-group {
+    margin-top: 1rem;
+}
+
+.form-check {
+    margin-bottom: 1rem;
+}
+
+.form-check-input {
+    margin-right: 0.75rem;
+    border-radius: 4px;
+}
+
+.form-check-label {
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+}
+
+/* Product Type Specific Styles */
+#physicalProperties {
+    border-left: 4px solid var(--success-color);
+}
+
 .form-control.is-invalid {
     border-color: var(--danger-color);
     box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
@@ -399,6 +468,47 @@ body {
 .badge-secondary {
     background: #f1f5f9;
     color: #475569;
+}
+
+.badge-info {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+/* Notice System Styles */
+.notice-item {
+    padding: 0.5rem;
+    border-radius: 0.375rem;
+    background: rgba(255, 255, 255, 0.8);
+    border-left: 3px solid var(--warning-color);
+}
+
+.notice-item .badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+}
+
+.notice-item small {
+    font-size: 0.7rem;
+    line-height: 1.3;
+}
+
+.col-notices {
+    min-width: 150px;
+    max-width: 200px;
+}
+
+.col-notices .badge-warning {
+    background-color: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fbbf24;
+}
+
+.col-notices .badge-info {
+    background-color: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #60a5fa;
 }
 
 /* Pagination */

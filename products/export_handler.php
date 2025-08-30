@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../include/db.php';
+require_once __DIR__ . '/../include/functions.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -23,10 +24,7 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Helper function to check permissions
-function hasPermission($permission, $userPermissions) {
-    return in_array($permission, $userPermissions);
-}
+// No duplicate function needed - using centralized function
 
 // Check if user has permission to manage products
 if (!hasPermission('manage_products', $permissions)) {
@@ -99,8 +97,13 @@ if ($format === 'csv') {
         'Name',
         'Category',
         'Price',
+        'Sale Price',
+        'Sale Start Date',
+        'Sale End Date',
+        'Tax Rate',
         'Quantity',
         'Barcode',
+        'SKU',
         'Description',
         'Created Date',
         'Updated Date',
@@ -124,8 +127,13 @@ if ($format === 'csv') {
             $product['name'],
             $product['category_name'] ?? 'Uncategorized',
             number_format($product['price'], 2),
+            !empty($product['sale_price']) ? number_format($product['sale_price'], 2) : '',
+            $product['sale_start_date'] ?? '',
+            $product['sale_end_date'] ?? '',
+            !empty($product['tax_rate']) ? number_format($product['tax_rate'], 2) : '',
             $product['quantity'],
             $product['barcode'],
+            $product['sku'] ?? '',
             $product['description'] ?? '',
             date('Y-m-d H:i:s', strtotime($product['created_at'])),
             date('Y-m-d H:i:s', strtotime($product['updated_at'])),
