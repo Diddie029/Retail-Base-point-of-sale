@@ -486,137 +486,24 @@ try {
         INDEX idx_created_at (created_at)
     )");
 
-    // Create expiry tracker tables
-    // Create product_expiry_dates table - tracks expiry dates for products
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS product_expiry_dates (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            product_id INT NOT NULL,
-            batch_number VARCHAR(100),
-            expiry_date DATE NOT NULL,
-            manufacturing_date DATE,
-            quantity INT NOT NULL DEFAULT 0,
-            remaining_quantity INT NOT NULL DEFAULT 0,
-            unit_cost DECIMAL(10,2) DEFAULT 0,
-            location VARCHAR(255),
-            supplier_id INT,
-            purchase_order_id INT,
-            alert_days_before INT DEFAULT 30 COMMENT 'Days before expiry to send alert',
-            alert_sent TINYINT(1) DEFAULT 0,
-            alert_sent_date DATETIME,
-            status ENUM('active', 'expired', 'disposed', 'returned') DEFAULT 'active',
-            notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-            FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
-
-            INDEX idx_product_id (product_id),
-            INDEX idx_expiry_date (expiry_date),
-            INDEX idx_batch_number (batch_number),
-            INDEX idx_status (status),
-            INDEX idx_alert_sent (alert_sent),
-            INDEX idx_supplier_id (supplier_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    ");
-
-    // Create expiry_alerts table - for notification settings and history
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS expiry_alerts (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            product_expiry_id INT NOT NULL,
-            alert_type ENUM('email', 'sms', 'dashboard', 'system') NOT NULL,
-            alert_days_before INT NOT NULL,
-            alert_date DATETIME NOT NULL,
-            recipient_user_id INT,
-            recipient_email VARCHAR(255),
-            recipient_phone VARCHAR(20),
-            alert_message TEXT,
-            sent_status ENUM('pending', 'sent', 'failed') DEFAULT 'pending',
-            sent_at DATETIME,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-            FOREIGN KEY (product_expiry_id) REFERENCES product_expiry_dates(id) ON DELETE CASCADE,
-            FOREIGN KEY (recipient_user_id) REFERENCES users(id) ON DELETE SET NULL,
-
-            INDEX idx_product_expiry_id (product_expiry_id),
-            INDEX idx_alert_type (alert_type),
-            INDEX idx_alert_date (alert_date),
-            INDEX idx_sent_status (sent_status)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    ");
-
-    // Create expiry_actions table - tracks actions taken on expired items
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS expiry_actions (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            product_expiry_id INT NOT NULL,
-            action_type ENUM('dispose', 'return', 'sell_at_discount', 'donate', 'recall', 'other') NOT NULL,
-            action_date DATETIME NOT NULL,
-            quantity_affected INT NOT NULL,
-            user_id INT NOT NULL,
-            reason TEXT,
-            cost DECIMAL(10,2) DEFAULT 0,
-            revenue DECIMAL(10,2) DEFAULT 0,
-            disposal_method VARCHAR(255),
-            return_reference VARCHAR(100),
-            notes TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-            FOREIGN KEY (product_expiry_id) REFERENCES product_expiry_dates(id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-
-            INDEX idx_product_expiry_id (product_expiry_id),
-            INDEX idx_action_type (action_type),
-            INDEX idx_action_date (action_date),
-            INDEX idx_user_id (user_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    ");
-
-    // Create expiry_alert_settings table - user preferences for alerts
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS expiry_alert_settings (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            user_id INT NOT NULL,
-            alert_days_before INT DEFAULT 30,
-            alert_types VARCHAR(255) DEFAULT 'email,dashboard' COMMENT 'Comma-separated alert types',
-            enable_email_alerts TINYINT(1) DEFAULT 1,
-            enable_sms_alerts TINYINT(1) DEFAULT 0,
-            enable_dashboard_alerts TINYINT(1) DEFAULT 1,
-            enable_system_alerts TINYINT(1) DEFAULT 1,
-            email_frequency ENUM('immediate', 'daily', 'weekly') DEFAULT 'daily',
-            sms_frequency ENUM('immediate', 'daily', 'weekly') DEFAULT 'immediate',
-            last_email_sent DATETIME,
-            last_sms_sent DATETIME,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-
-            UNIQUE KEY unique_user_settings (user_id),
-            INDEX idx_user_id (user_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    ");
-
-    // Create expiry_categories table - categorize products by expiry risk
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS expiry_categories (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            category_name VARCHAR(100) NOT NULL UNIQUE,
-            alert_threshold_days INT DEFAULT 30,
-            color_code VARCHAR(7) DEFAULT '#ff6b6b' COMMENT 'Hex color for UI display',
-            description TEXT,
-            is_active TINYINT(1) DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-            INDEX idx_is_active (is_active)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    ");
-
-    // Insert default expiry categories
+    // Create expiry tracker tables with improved error handling and foreign key management
     try {
+        // Create expiry_categories table first (referenced by others)
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS expiry_categories (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                category_name VARCHAR(100) NOT NULL UNIQUE,
+                alert_threshold_days INT DEFAULT 30,
+                color_code VARCHAR(7) DEFAULT '#ff6b6b' COMMENT 'Hex color for UI display',
+                description TEXT,
+                is_active TINYINT(1) DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_is_active (is_active)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Insert default expiry categories
         $expiry_categories = [
             ['Perishable Foods', 7, '#ff6b6b', 'Foods that spoil quickly (dairy, meat, etc.)'],
             ['Medications', 90, '#4ecdc4', 'Pharmaceutical products and medicines'],
@@ -630,27 +517,170 @@ try {
         foreach ($expiry_categories as $category) {
             $stmt->execute($category);
         }
-    } catch (PDOException $e) {
-        // Categories might already exist, continue silently
-    }
 
-    // Add expiry_category_id to products table if it doesn't exist
-    try {
-        $stmt = $conn->prepare("SHOW COLUMNS FROM products LIKE 'expiry_category_id'");
-        $stmt->execute();
-        $result = $stmt->fetch();
+        // Create product_expiry_dates table - tracks expiry dates for products
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS product_expiry_dates (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                product_id INT NOT NULL,
+                batch_number VARCHAR(100),
+                expiry_date DATE NOT NULL,
+                manufacturing_date DATE,
+                quantity INT NOT NULL DEFAULT 0,
+                remaining_quantity INT NOT NULL DEFAULT 0,
+                unit_cost DECIMAL(10,2) DEFAULT 0,
+                location VARCHAR(255),
+                supplier_id INT,
+                purchase_order_id INT,
+                alert_days_before INT DEFAULT 30 COMMENT 'Days before expiry to send alert',
+                alert_sent TINYINT(1) DEFAULT 0,
+                alert_sent_date DATETIME,
+                status ENUM('active', 'expired', 'disposed', 'returned') DEFAULT 'active',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_product_id (product_id),
+                INDEX idx_expiry_date (expiry_date),
+                INDEX idx_batch_number (batch_number),
+                INDEX idx_status (status),
+                INDEX idx_alert_sent (alert_sent),
+                INDEX idx_supplier_id (supplier_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
 
-        if (!$result) {
-            $conn->exec("ALTER TABLE products ADD COLUMN expiry_category_id INT DEFAULT NULL AFTER category_id");
-            $conn->exec("ALTER TABLE products ADD FOREIGN KEY (expiry_category_id) REFERENCES expiry_categories(id) ON DELETE SET NULL");
-            $conn->exec("CREATE INDEX idx_expiry_category_id ON products (expiry_category_id)");
+        // Create expiry_actions table - tracks actions taken on expired items
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS expiry_actions (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                product_expiry_id INT NOT NULL,
+                action_type ENUM('dispose', 'return', 'sell_at_discount', 'donate', 'recall', 'other') NOT NULL,
+                action_date DATETIME NOT NULL,
+                quantity_affected INT NOT NULL,
+                user_id INT NOT NULL,
+                reason TEXT,
+                cost DECIMAL(10,2) DEFAULT 0,
+                revenue DECIMAL(10,2) DEFAULT 0,
+                disposal_method VARCHAR(255),
+                return_reference VARCHAR(100),
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_product_expiry_id (product_expiry_id),
+                INDEX idx_action_type (action_type),
+                INDEX idx_action_date (action_date),
+                INDEX idx_user_id (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Create expiry_alerts table - for notification settings and history
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS expiry_alerts (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                product_expiry_id INT NOT NULL,
+                alert_type ENUM('email', 'sms', 'dashboard', 'system') NOT NULL,
+                alert_days_before INT NOT NULL,
+                alert_date DATETIME NOT NULL,
+                recipient_user_id INT,
+                recipient_email VARCHAR(255),
+                recipient_phone VARCHAR(20),
+                alert_message TEXT,
+                sent_status ENUM('pending', 'sent', 'failed') DEFAULT 'pending',
+                sent_at DATETIME,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_product_expiry_id (product_expiry_id),
+                INDEX idx_alert_type (alert_type),
+                INDEX idx_alert_date (alert_date),
+                INDEX idx_sent_status (sent_status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Create expiry_alert_settings table - user preferences for alerts
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS expiry_alert_settings (
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                user_id INT NOT NULL,
+                alert_days_before INT DEFAULT 30,
+                alert_types VARCHAR(255) DEFAULT 'email,dashboard' COMMENT 'Comma-separated alert types',
+                enable_email_alerts TINYINT(1) DEFAULT 1,
+                enable_sms_alerts TINYINT(1) DEFAULT 0,
+                enable_dashboard_alerts TINYINT(1) DEFAULT 1,
+                enable_system_alerts TINYINT(1) DEFAULT 1,
+                email_frequency ENUM('immediate', 'daily', 'weekly') DEFAULT 'daily',
+                sms_frequency ENUM('immediate', 'daily', 'weekly') DEFAULT 'immediate',
+                last_email_sent DATETIME,
+                last_sms_sent DATETIME,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY unique_user_settings (user_id),
+                INDEX idx_user_id (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Now add foreign key constraints (after all tables are created)
+        try {
+            // Add foreign key for product_expiry_dates.product_id
+            $conn->exec("ALTER TABLE product_expiry_dates ADD CONSTRAINT fk_product_expiry_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE");
+        } catch (PDOException $e) {
+            // Foreign key might already exist, continue silently
         }
-    } catch (PDOException $e) {
-        // Column might already exist, continue silently
-    }
 
-    // Add expiry tracker permissions
-    try {
+        try {
+            // Add foreign key for product_expiry_dates.supplier_id
+            $conn->exec("ALTER TABLE product_expiry_dates ADD CONSTRAINT fk_product_expiry_supplier_id FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL");
+        } catch (PDOException $e) {
+            // Foreign key might already exist, continue silently
+        }
+
+        try {
+            // Add foreign key for expiry_actions.product_expiry_id
+            $conn->exec("ALTER TABLE expiry_actions ADD CONSTRAINT fk_expiry_actions_product_expiry_id FOREIGN KEY (product_expiry_id) REFERENCES product_expiry_dates(id) ON DELETE CASCADE");
+        } catch (PDOException $e) {
+            // Foreign key might already exist, continue silently
+        }
+
+        try {
+            // Add foreign key for expiry_actions.user_id
+            $conn->exec("ALTER TABLE expiry_actions ADD CONSTRAINT fk_expiry_actions_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE");
+        } catch (PDOException $e) {
+            // Foreign key might already exist, continue silently
+        }
+
+        try {
+            // Add foreign key for expiry_alerts.product_expiry_id
+            $conn->exec("ALTER TABLE expiry_alerts ADD CONSTRAINT fk_expiry_alerts_product_expiry_id FOREIGN KEY (product_expiry_id) REFERENCES product_expiry_dates(id) ON DELETE CASCADE");
+        } catch (PDOException $e) {
+            // Foreign key might already exist, continue silently
+        }
+
+        try {
+            // Add foreign key for expiry_alerts.recipient_user_id
+            $conn->exec("ALTER TABLE expiry_alerts ADD CONSTRAINT fk_expiry_alerts_recipient_user_id FOREIGN KEY (recipient_user_id) REFERENCES users(id) ON DELETE SET NULL");
+        } catch (PDOException $e) {
+            // Foreign key might already exist, continue silently
+        }
+
+        try {
+            // Add foreign key for expiry_alert_settings.user_id
+            $conn->exec("ALTER TABLE expiry_alert_settings ADD CONSTRAINT fk_expiry_alert_settings_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE");
+        } catch (PDOException $e) {
+            // Foreign key might already exist, continue silently
+        }
+
+        // Add expiry_category_id to products table if it doesn't exist
+        try {
+            $stmt = $conn->prepare("SHOW COLUMNS FROM products LIKE 'expiry_category_id'");
+            $stmt->execute();
+            $result = $stmt->fetch();
+
+            if (!$result) {
+                $conn->exec("ALTER TABLE products ADD COLUMN expiry_category_id INT DEFAULT NULL AFTER category_id");
+                $conn->exec("ALTER TABLE products ADD FOREIGN KEY (expiry_category_id) REFERENCES expiry_categories(id) ON DELETE SET NULL");
+                $conn->exec("CREATE INDEX idx_expiry_category_id ON products (expiry_category_id)");
+            }
+        } catch (PDOException $e) {
+            // Column might already exist, continue silently
+        }
+
+        // Add expiry tracker permissions
         $expiry_permissions = [
             ['manage_expiry_tracker', 'Manage expiry tracker system'],
             ['view_expiry_alerts', 'View expiry alerts and notifications'],
@@ -674,7 +704,8 @@ try {
         $stmt->execute();
 
     } catch (PDOException $e) {
-        // Permissions might already exist, continue silently
+        // Log expiry tracker setup error but don't fail the entire database initialization
+        error_log("Warning: Expiry tracker setup failed: " . $e->getMessage());
     }
 
     // Create return_reasons table for predefined reasons

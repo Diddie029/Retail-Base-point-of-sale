@@ -151,10 +151,13 @@ $page_title = "Expiry Tracker";
                     <a href="add_expiry_date.php" class="btn btn-primary">
                         <i class="fas fa-plus"></i> Add Expiry Date
                     </a>
-                    <a href="setup_database.php" class="btn btn-warning">
-                        <i class="fas fa-database"></i> Setup Database
-                    </a>
                 <?php endif; ?>
+
+                <!-- Database is now automatically managed through include/db.php -->
+                <div class="alert alert-info" style="margin-top: 15px;">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Database Status:</strong> All expiry tracker tables are automatically managed.
+                </div>
             </div>
         </div>
 
