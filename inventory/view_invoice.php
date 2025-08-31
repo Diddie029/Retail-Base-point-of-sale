@@ -562,25 +562,39 @@ if ($invoice['status'] !== 'pending' && $invoice['updated_at'] !== $invoice['cre
 
         // Download invoice functionality
         window.downloadInvoice = function() {
-            const downloadUrl = 'generate_pdf.php?id=<?php echo urlencode($invoice_id); ?>&download=1';
-            
+            const downloadUrl = 'generate_pdf.php?id=<?php echo urlencode($invoice_id); ?>&download=1&type=invoice';
+
             try {
-                // Method 1: Create a hidden iframe for download (most reliable)
-                const iframe = document.createElement('iframe');
-                iframe.style.display = 'none';
-                iframe.src = downloadUrl;
-                document.body.appendChild(iframe);
-                
-                // Remove iframe after a short delay
+                // Create a temporary link element and trigger download
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.style.display = 'none';
+                link.target = '_blank'; // Open in new tab as fallback
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                // Show success message
+                const alertDiv = document.createElement('div');
+                alertDiv.className = 'alert alert-info alert-dismissible fade show position-fixed';
+                alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+                alertDiv.innerHTML = `
+                    <i class="bi bi-info-circle me-2"></i>
+                    Download started. If download doesn\'t start, check your popup blocker.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                document.body.appendChild(alertDiv);
+
+                // Auto-remove after 5 seconds
                 setTimeout(() => {
-                    if (document.body.contains(iframe)) {
-                        document.body.removeChild(iframe);
+                    if (document.body.contains(alertDiv)) {
+                        document.body.removeChild(alertDiv);
                     }
-                }, 2000);
-                
+                }, 5000);
+
             } catch (error) {
                 console.error('Download error:', error);
-                // Fallback: redirect to download URL
+                // Fallback: redirect to download URL in same window
                 window.location.href = downloadUrl;
             }
         };
@@ -603,10 +617,31 @@ if ($invoice['status'] !== 'pending' && $invoice['updated_at'] !== $invoice['cre
             }
         };
 
-        // View order print functionality
+                // View order print functionality
         window.viewOrderPrint = function() {
-            const printUrl = 'order_print_preview.php?id=<?php echo urlencode($invoice_id); ?>';
-            
+            <?php if ($invoice['status'] !== 'received'): ?>
+            // Show error message if order is not received
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-warning alert-dismissible fade show position-fixed';
+            alertDiv.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+            alertDiv.innerHTML = `
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                Order print is only available for received orders.
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(alertDiv);
+
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                if (document.body.contains(alertDiv)) {
+                    document.body.removeChild(alertDiv);
+                }
+            }, 5000);
+            return;
+            <?php endif; ?>
+
+            const printUrl = 'view_order.php?id=<?php echo urlencode($invoice_id); ?>';
+
             try {
                 // Open in new window for viewing
                 const printWindow = window.open(printUrl, '_blank');

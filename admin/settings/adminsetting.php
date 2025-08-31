@@ -1133,6 +1133,51 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <div class="form-text">Automatically generate SKU codes when adding new products.</div>
                         </div>
 
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="sku_prefix" class="form-label">SKU Prefix</label>
+                                    <input type="text" class="form-control" id="sku_prefix" name="sku_prefix" 
+                                           value="<?php echo htmlspecialchars($settings['sku_prefix'] ?? 'LIZ'); ?>" 
+                                           placeholder="LIZ" maxlength="10">
+                                    <div class="form-text">Prefix for all SKU codes (e.g., LIZ, MUS, PROD).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="sku_length" class="form-label">SKU Number Length</label>
+                                    <input type="number" min="3" max="10" class="form-control" id="sku_length" name="sku_length" 
+                                           value="<?php echo htmlspecialchars($settings['sku_length'] ?? '6'); ?>" 
+                                           placeholder="6">
+                                    <div class="form-text">Number of digits in the SKU code (3-10).</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="sku_format" class="form-label">SKU Display Format</label>
+                            <input type="text" class="form-control" id="sku_format" name="sku_format" 
+                                   value="<?php echo htmlspecialchars($settings['sku_format'] ?? 'SKU000001'); ?>" 
+                                   placeholder="SKU000001" maxlength="20">
+                            <div class="form-text">Format for displaying SKU codes. Use # for number placeholders (e.g., SKU000001, ITEM-000001).</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="sku_separator" class="form-label">SKU Separator</label>
+                            <input type="text" class="form-control" id="sku_separator" name="sku_separator" 
+                                   value="<?php echo htmlspecialchars($settings['sku_separator'] ?? ''); ?>" 
+                                   placeholder="-" maxlength="5">
+                            <div class="form-text">Optional separator between prefix and numbers (e.g., -, _, space).</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle me-2"></i>
+                                <strong>SKU Preview:</strong> 
+                                <span id="skuPreview"><?php echo htmlspecialchars($settings['sku_prefix'] ?? 'LIZ') . ($settings['sku_separator'] ?? '') . str_pad('1', intval($settings['sku_length'] ?? '6'), '0', STR_PAD_LEFT); ?></span>
+                            </div>
+                        </div>
+
                         <!-- Order Number Settings Section -->
                         <div class="form-group mt-4">
                             <h5 class="mb-3 text-primary">
@@ -1276,51 +1321,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <i class="bi bi-eye me-2"></i>
                                 <strong>Preview:</strong>
                                 <span id="invoiceNumberPreview"><?php echo generateInvoiceNumberPreview($settings); ?></span>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="sku_prefix" class="form-label">SKU Prefix</label>
-                                    <input type="text" class="form-control" id="sku_prefix" name="sku_prefix" 
-                                           value="<?php echo htmlspecialchars($settings['sku_prefix'] ?? 'LIZ'); ?>" 
-                                           placeholder="LIZ" maxlength="10">
-                                    <div class="form-text">Prefix for all SKU codes (e.g., LIZ, MUS, PROD).</div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="sku_length" class="form-label">SKU Number Length</label>
-                                    <input type="number" min="3" max="10" class="form-control" id="sku_length" name="sku_length" 
-                                           value="<?php echo htmlspecialchars($settings['sku_length'] ?? '6'); ?>" 
-                                           placeholder="6">
-                                    <div class="form-text">Number of digits in the SKU code (3-10).</div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="sku_format" class="form-label">SKU Display Format</label>
-                            <input type="text" class="form-control" id="sku_format" name="sku_format" 
-                                   value="<?php echo htmlspecialchars($settings['sku_format'] ?? 'SKU000001'); ?>" 
-                                   placeholder="SKU000001" maxlength="20">
-                            <div class="form-text">Format for displaying SKU codes. Use # for number placeholders (e.g., SKU000001, ITEM-000001).</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="sku_separator" class="form-label">SKU Separator</label>
-                            <input type="text" class="form-control" id="sku_separator" name="sku_separator" 
-                                   value="<?php echo htmlspecialchars($settings['sku_separator'] ?? ''); ?>" 
-                                   placeholder="-" maxlength="5">
-                            <div class="form-text">Optional separator between prefix and numbers (e.g., -, _, space).</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <div class="alert alert-info">
-                                <i class="bi bi-info-circle me-2"></i>
-                                <strong>SKU Preview:</strong> 
-                                <span id="skuPreview"><?php echo htmlspecialchars($settings['sku_prefix'] ?? 'LIZ') . ($settings['sku_separator'] ?? '') . str_pad('1', intval($settings['sku_length'] ?? '6'), '0', STR_PAD_LEFT); ?></span>
                             </div>
                         </div>
                         

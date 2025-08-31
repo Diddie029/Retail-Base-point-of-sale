@@ -69,6 +69,13 @@ if (!$order_id) {
     exit();
 }
 
+// Sanitize order ID - remove any potential harmful characters but keep alphanumeric and some special chars
+$order_id = filter_var($order_id, FILTER_SANITIZE_STRING);
+if (empty($order_id)) {
+    header("Location: inventory.php?error=invalid_order");
+    exit();
+}
+
 // Get system settings
 $settings = [];
 $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
@@ -79,7 +86,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 // Function to get order data
 function getOrderData($conn, $order_id) {
     try {
-        // Get order details
+        // Get order details - try multiple approaches to find the order
         $stmt = $conn->prepare("
             SELECT io.*,
                    s.name as supplier_name, s.contact_person, s.phone, s.email, s.address,
@@ -87,16 +94,41 @@ function getOrderData($conn, $order_id) {
             FROM inventory_orders io
             LEFT JOIN suppliers s ON io.supplier_id = s.id
             LEFT JOIN users u ON io.user_id = u.id
-            WHERE io.id = :order_id OR io.order_number = :order_number
+            WHERE (io.id = :order_id_numeric AND :order_id_numeric > 0)
+               OR io.order_number = :order_number
+               OR io.invoice_number = :invoice_number
         ");
         $stmt->execute([
-            ':order_id' => is_numeric($order_id) ? $order_id : 0,
-            ':order_number' => $order_id
+            ':order_id_numeric' => is_numeric($order_id) ? (int)$order_id : 0,
+            ':order_number' => $order_id,
+            ':invoice_number' => $order_id
         ]);
         $order = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$order) {
+            // Debug: Log what we're looking for
+            error_log("Order not found. Looking for: " . $order_id);
+            error_log("Query params - order_id_numeric: " . (is_numeric($order_id) ? (int)$order_id : 0) . ", order_number: " . $order_id . ", invoice_number: " . $order_id);
+
+            // Check if order exists with different criteria
+            $debug_stmt = $conn->prepare("SELECT COUNT(*) as count FROM inventory_orders WHERE id = ? OR order_number = ? OR invoice_number = ?");
+            $debug_stmt->execute([is_numeric($order_id) ? (int)$order_id : 0, $order_id, $order_id]);
+            $count = $debug_stmt->fetch(PDO::FETCH_ASSOC)['count'];
+            error_log("Total orders matching criteria: " . $count);
+
+            // Also check what orders actually exist
+            $debug_stmt2 = $conn->prepare("SELECT id, order_number, invoice_number, status FROM inventory_orders ORDER BY id DESC LIMIT 5");
+            $debug_stmt2->execute();
+            $recent_orders = $debug_stmt2->fetchAll(PDO::FETCH_ASSOC);
+            error_log("Recent orders in database: " . json_encode($recent_orders));
+
             return null;
+        }
+
+        // Check if this is a received order - if so, redirect to invoice view
+        if ($order['status'] === 'received') {
+            header("Location: view_invoice.php?id=" . urlencode($order_id));
+            exit();
         }
 
         // Get order items
@@ -401,7 +433,7 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
                     <p class="header-subtitle small">View order details and manage order status</p>
                 </div>
                 <div class="header-actions">
-                    <a href="order_print_preview.php?id=<?php echo urlencode($order_id); ?>" class="btn btn-outline-secondary" target="_blank">
+                    <a href="view_order.php?id=<?php echo urlencode($order_id); ?>" class="btn btn-outline-secondary" target="_blank">
                         <i class="bi bi-printer me-2"></i>Print Preview
                     </a>
                     <a href="create_order.php" class="btn btn-outline-primary">
@@ -684,7 +716,7 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
                                 <a href="generate_pdf.php?id=<?php echo urlencode($order_id); ?>&download=1" class="btn btn-success">
                                     <i class="bi bi-file-earmark-pdf me-2"></i><?php echo $order['status'] === 'received' ? 'Download Invoice' : 'Download PDF'; ?>
                                 </a>
-                                <a href="order_print_preview.php?id=<?php echo urlencode($order_id); ?>" class="btn btn-outline-secondary" target="_blank">
+                                <a href="view_order.php?id=<?php echo urlencode($order_id); ?>" class="btn btn-outline-secondary" target="_blank">
                                     <i class="bi bi-printer me-2"></i>Print Preview
                                 </a>
                             </div>

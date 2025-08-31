@@ -6,7 +6,7 @@
     </div>
     <div class="sidebar-nav">
         <div class="nav-item">
-            <a href="/dashboard/dashboard.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? 'active' : ''; ?>" style="background-color: <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="/pointofsale/dashboard/dashboard.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? 'active' : ''; ?>" style="background-color: <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-speedometer2"></i>
                 Dashboard
             </a>
@@ -14,7 +14,7 @@
 
         <?php if (hasPermission('process_sales', $permissions)): ?>
         <div class="nav-item">
-            <a href="/pos/index.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'index' && strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'index' && strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="/pointofsale/pos/index.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'index' && strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'index' && strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-cart-plus"></i>
                 Point of Sale
             </a>
@@ -28,33 +28,48 @@
                 Products
             </div>
             <div class="nav-item">
-                <a href="/products/products.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/products/products.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/products/products.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/products/products.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/products/products.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/products/products.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-list"></i>
                     All Products
                 </a>
             </div>
             <div class="nav-item">
-                <a href="/categories/categories.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/categories/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/categories/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/categories/categories.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/categories/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/categories/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-tags"></i>
                     Categories
                 </a>
             </div>
             <div class="nav-item">
-                <a href="/brands/brands.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/brands/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/brands/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/brands/brands.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/brands/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/brands/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-star"></i>
                     Brands
                 </a>
             </div>
             <div class="nav-item">
-                <a href="/suppliers/suppliers.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/suppliers/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/suppliers/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/suppliers/suppliers.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/suppliers/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/suppliers/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-truck"></i>
                     Suppliers
                 </a>
             </div>
             <div class="nav-item">
-                <a href="/inventory/inventory.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/inventory/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/inventory/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/inventory/inventory.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/inventory/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/inventory/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-boxes"></i>
                     Inventory
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if (hasPermission('view_expiry_alerts', $permissions) || hasPermission('manage_expiry_tracker', $permissions)): ?>
+        <div class="nav-section">
+            <div class="nav-section-title">
+                <i class="bi bi-clock-history me-2"></i>
+                Expiry Management
+            </div>
+            <div class="nav-item">
+                <a href="/pointofsale/expiry_tracker/expiry_tracker.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-clock-history"></i>
+                    Expiry Tracker
                 </a>
             </div>
         </div>
@@ -67,7 +82,7 @@
                 Sales
             </div>
             <div class="nav-item">
-                <a href="/sales/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/sales/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/sales/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/sales/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/sales/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/sales/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-receipt"></i>
                     Sales History
                 </a>
@@ -76,7 +91,7 @@
         <?php endif; ?>
 
         <div class="nav-item">
-            <a href="/customers/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="/pointofsale/customers/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-people"></i>
                 Customers
             </a>
@@ -84,7 +99,7 @@
 
         <?php if (hasPermission('view_analytics', $permissions)): ?>
         <div class="nav-item">
-            <a href="/analytics/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/analytics/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/analytics/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="/pointofsale/analytics/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/analytics/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/analytics/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-graph-up"></i>
                 Analytics
             </a>
@@ -100,7 +115,7 @@
 
             <?php if (hasPermission('manage_users', $permissions)): ?>
             <div class="nav-item">
-                <a href="/admin/users/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/users/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/users/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/admin/users/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/users/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/users/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-person-gear"></i>
                     User Management
                 </a>
@@ -109,7 +124,7 @@
 
             <?php if (hasPermission('manage_backup', $permissions)): ?>
             <div class="nav-item">
-                <a href="/admin/backup/manage_backups.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/backup/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/backup/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/admin/backup/manage_backups.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/backup/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/backup/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-server"></i>
                     Backup & Security
                 </a>
@@ -118,7 +133,7 @@
 
             <?php if (hasPermission('manage_settings', $permissions)): ?>
             <div class="nav-item">
-                <a href="/admin/settings/adminsetting.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/settings/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/settings/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/pointofsale/admin/settings/adminsetting.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/settings/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/settings/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-gear"></i>
                     Settings
                 </a>
@@ -128,7 +143,7 @@
         <?php endif; ?>
 
         <div class="nav-item mt-auto">
-            <a href="/auth/logout.php" class="nav-link text-danger">
+            <a href="/pointofsale/auth/logout.php" class="nav-link text-danger">
                 <i class="bi bi-box-arrow-right"></i>
                 Logout
             </a>
@@ -223,6 +238,9 @@
     font-size: 1.1rem;
     width: 1.25rem;
     text-align: center;
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
 }
 
 .nav-link:hover {
@@ -233,6 +251,13 @@
 .nav-link.active {
     background-color: var(--primary-color) !important;
     color: white !important;
+}
+
+.nav-link.active i {
+    color: white !important;
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
 }
 
 .nav-section {

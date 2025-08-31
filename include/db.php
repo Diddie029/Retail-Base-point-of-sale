@@ -402,6 +402,293 @@ try {
         INDEX idx_status (status)
     )");
 
+    // Create returns table for product returns
+    $conn->exec("CREATE TABLE IF NOT EXISTS returns (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        return_number VARCHAR(50) UNIQUE NOT NULL,
+        supplier_id INT NOT NULL,
+        user_id INT NOT NULL,
+        return_reason ENUM('defective', 'wrong_item', 'damaged', 'expired', 'overstock', 'quality', 'other') NOT NULL,
+        return_notes TEXT,
+        total_items INT NOT NULL DEFAULT 0,
+        total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        status ENUM('pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed') NOT NULL DEFAULT 'pending',
+        shipping_carrier VARCHAR(100),
+        tracking_number VARCHAR(100),
+        approved_by INT,
+        approved_at DATETIME,
+        shipped_at DATETIME,
+        completed_at DATETIME,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
+        INDEX idx_return_number (return_number),
+        INDEX idx_supplier_id (supplier_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
+    )");
+
+    // Create return_items table for return line items
+    $conn->exec("CREATE TABLE IF NOT EXISTS return_items (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        return_id INT NOT NULL,
+        product_id INT NOT NULL,
+        quantity INT NOT NULL,
+        cost_price DECIMAL(10, 2) NOT NULL,
+        return_reason VARCHAR(255),
+        notes TEXT,
+        condition_status ENUM('new', 'used', 'damaged', 'defective') DEFAULT 'new',
+        accepted_quantity INT DEFAULT 0 COMMENT 'Quantity of items accepted for return (0 = none, NULL = not processed)',
+        action_taken ENUM('pending', 'accepted', 'partial_accept', 'rejected', 'exchange', 'refund') DEFAULT 'pending' COMMENT 'Action taken on this return item',
+        action_notes TEXT COMMENT 'Notes about the action taken on this item',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'When this item was last updated',
+        FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+        INDEX idx_return_id (return_id),
+        INDEX idx_product_id (product_id),
+        INDEX idx_action_taken (action_taken),
+        INDEX idx_accepted_quantity (accepted_quantity),
+        INDEX idx_updated_at (updated_at)
+    )");
+
+    // Create return_attachments table for file attachments
+    $conn->exec("CREATE TABLE IF NOT EXISTS return_attachments (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        return_id INT NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_path VARCHAR(500) NOT NULL,
+        file_type VARCHAR(100),
+        file_size INT,
+        uploaded_by INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
+        FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_return_id (return_id)
+    )");
+
+    // Create return_status_history table for status tracking
+    $conn->exec("CREATE TABLE IF NOT EXISTS return_status_history (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        return_id INT NOT NULL,
+        old_status ENUM('pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed'),
+        new_status ENUM('pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed') NOT NULL,
+        changed_by INT NOT NULL,
+        change_reason TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
+        FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_return_id (return_id),
+        INDEX idx_changed_by (changed_by),
+        INDEX idx_created_at (created_at)
+    )");
+
+    // Create expiry tracker tables
+    // Create product_expiry_dates table - tracks expiry dates for products
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS product_expiry_dates (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            product_id INT NOT NULL,
+            batch_number VARCHAR(100),
+            expiry_date DATE NOT NULL,
+            manufacturing_date DATE,
+            quantity INT NOT NULL DEFAULT 0,
+            remaining_quantity INT NOT NULL DEFAULT 0,
+            unit_cost DECIMAL(10,2) DEFAULT 0,
+            location VARCHAR(255),
+            supplier_id INT,
+            purchase_order_id INT,
+            alert_days_before INT DEFAULT 30 COMMENT 'Days before expiry to send alert',
+            alert_sent TINYINT(1) DEFAULT 0,
+            alert_sent_date DATETIME,
+            status ENUM('active', 'expired', 'disposed', 'returned') DEFAULT 'active',
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+            FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
+
+            INDEX idx_product_id (product_id),
+            INDEX idx_expiry_date (expiry_date),
+            INDEX idx_batch_number (batch_number),
+            INDEX idx_status (status),
+            INDEX idx_alert_sent (alert_sent),
+            INDEX idx_supplier_id (supplier_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    // Create expiry_alerts table - for notification settings and history
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expiry_alerts (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            product_expiry_id INT NOT NULL,
+            alert_type ENUM('email', 'sms', 'dashboard', 'system') NOT NULL,
+            alert_days_before INT NOT NULL,
+            alert_date DATETIME NOT NULL,
+            recipient_user_id INT,
+            recipient_email VARCHAR(255),
+            recipient_phone VARCHAR(20),
+            alert_message TEXT,
+            sent_status ENUM('pending', 'sent', 'failed') DEFAULT 'pending',
+            sent_at DATETIME,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (product_expiry_id) REFERENCES product_expiry_dates(id) ON DELETE CASCADE,
+            FOREIGN KEY (recipient_user_id) REFERENCES users(id) ON DELETE SET NULL,
+
+            INDEX idx_product_expiry_id (product_expiry_id),
+            INDEX idx_alert_type (alert_type),
+            INDEX idx_alert_date (alert_date),
+            INDEX idx_sent_status (sent_status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    // Create expiry_actions table - tracks actions taken on expired items
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expiry_actions (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            product_expiry_id INT NOT NULL,
+            action_type ENUM('dispose', 'return', 'sell_at_discount', 'donate', 'recall', 'other') NOT NULL,
+            action_date DATETIME NOT NULL,
+            quantity_affected INT NOT NULL,
+            user_id INT NOT NULL,
+            reason TEXT,
+            cost DECIMAL(10,2) DEFAULT 0,
+            revenue DECIMAL(10,2) DEFAULT 0,
+            disposal_method VARCHAR(255),
+            return_reference VARCHAR(100),
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (product_expiry_id) REFERENCES product_expiry_dates(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+
+            INDEX idx_product_expiry_id (product_expiry_id),
+            INDEX idx_action_type (action_type),
+            INDEX idx_action_date (action_date),
+            INDEX idx_user_id (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    // Create expiry_alert_settings table - user preferences for alerts
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expiry_alert_settings (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            alert_days_before INT DEFAULT 30,
+            alert_types VARCHAR(255) DEFAULT 'email,dashboard' COMMENT 'Comma-separated alert types',
+            enable_email_alerts TINYINT(1) DEFAULT 1,
+            enable_sms_alerts TINYINT(1) DEFAULT 0,
+            enable_dashboard_alerts TINYINT(1) DEFAULT 1,
+            enable_system_alerts TINYINT(1) DEFAULT 1,
+            email_frequency ENUM('immediate', 'daily', 'weekly') DEFAULT 'daily',
+            sms_frequency ENUM('immediate', 'daily', 'weekly') DEFAULT 'immediate',
+            last_email_sent DATETIME,
+            last_sms_sent DATETIME,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+
+            UNIQUE KEY unique_user_settings (user_id),
+            INDEX idx_user_id (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    // Create expiry_categories table - categorize products by expiry risk
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expiry_categories (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            category_name VARCHAR(100) NOT NULL UNIQUE,
+            alert_threshold_days INT DEFAULT 30,
+            color_code VARCHAR(7) DEFAULT '#ff6b6b' COMMENT 'Hex color for UI display',
+            description TEXT,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+            INDEX idx_is_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+
+    // Insert default expiry categories
+    try {
+        $expiry_categories = [
+            ['Perishable Foods', 7, '#ff6b6b', 'Foods that spoil quickly (dairy, meat, etc.)'],
+            ['Medications', 90, '#4ecdc4', 'Pharmaceutical products and medicines'],
+            ['Cosmetics', 365, '#45b7d1', 'Beauty and personal care products'],
+            ['Electronics', 730, '#96ceb4', 'Electronic devices and components'],
+            ['Chemicals', 180, '#feca57', 'Cleaning supplies and chemicals'],
+            ['General', 30, '#ff9ff3', 'General products with standard expiry']
+        ];
+
+        $stmt = $conn->prepare("INSERT IGNORE INTO expiry_categories (category_name, alert_threshold_days, color_code, description) VALUES (?, ?, ?, ?)");
+        foreach ($expiry_categories as $category) {
+            $stmt->execute($category);
+        }
+    } catch (PDOException $e) {
+        // Categories might already exist, continue silently
+    }
+
+    // Add expiry_category_id to products table if it doesn't exist
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM products LIKE 'expiry_category_id'");
+        $stmt->execute();
+        $result = $stmt->fetch();
+
+        if (!$result) {
+            $conn->exec("ALTER TABLE products ADD COLUMN expiry_category_id INT DEFAULT NULL AFTER category_id");
+            $conn->exec("ALTER TABLE products ADD FOREIGN KEY (expiry_category_id) REFERENCES expiry_categories(id) ON DELETE SET NULL");
+            $conn->exec("CREATE INDEX idx_expiry_category_id ON products (expiry_category_id)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist, continue silently
+    }
+
+    // Add expiry tracker permissions
+    try {
+        $expiry_permissions = [
+            ['manage_expiry_tracker', 'Manage expiry tracker system'],
+            ['view_expiry_alerts', 'View expiry alerts and notifications'],
+            ['handle_expired_items', 'Handle expired items and take actions'],
+            ['configure_expiry_alerts', 'Configure expiry alert settings']
+        ];
+
+        $stmt = $conn->prepare("INSERT IGNORE INTO permissions (name, description) VALUES (?, ?)");
+        foreach ($expiry_permissions as $permission) {
+            $stmt->execute($permission);
+        }
+
+        // Assign expiry permissions to Admin role
+        $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
+                               SELECT 1, id FROM permissions WHERE name IN ('manage_expiry_tracker', 'view_expiry_alerts', 'handle_expired_items', 'configure_expiry_alerts')");
+        $stmt->execute();
+
+        // Assign limited expiry permissions to Cashier role
+        $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
+                               SELECT 2, id FROM permissions WHERE name IN ('view_expiry_alerts')");
+        $stmt->execute();
+
+    } catch (PDOException $e) {
+        // Permissions might already exist, continue silently
+    }
+
+    // Create return_reasons table for predefined reasons
+    $conn->exec("CREATE TABLE IF NOT EXISTS return_reasons (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        code VARCHAR(50) UNIQUE NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_code (code),
+        INDEX idx_is_active (is_active)
+    )");
+
     // Add account lockout fields to users table
     $stmt = $conn->prepare("SHOW COLUMNS FROM users LIKE 'account_locked'");
     $stmt->execute();
@@ -414,6 +701,83 @@ try {
         $conn->exec("ALTER TABLE users ADD COLUMN last_failed_login DATETIME DEFAULT NULL");
         $conn->exec("ALTER TABLE users ADD COLUMN last_login DATETIME DEFAULT NULL");
         $conn->exec("ALTER TABLE users ADD COLUMN login_count INT DEFAULT 0");
+    }
+
+    // Update returns table status enum if needed (for new 'processed' status)
+    try {
+        $stmt = $conn->query("DESCRIBE returns status");
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $current_enum = $result['Type'];
+
+        // Check if the enum includes our new 'processed' value
+        if (strpos($current_enum, 'processed') === false) {
+            try {
+                $conn->exec("ALTER TABLE returns MODIFY COLUMN status ENUM('pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed') DEFAULT 'pending'");
+                error_log("Updated returns status enum to include 'processed' status");
+            } catch (PDOException $alterError) {
+                error_log("Failed to alter returns status enum: " . $alterError->getMessage());
+            }
+        }
+    } catch (PDOException $e) {
+        // Table might not exist yet, that's okay
+        error_log("Could not update returns status enum: " . $e->getMessage());
+    }
+
+    // Update return_items table with new columns if they don't exist
+    try {
+        $stmt = $conn->query("DESCRIBE return_items");
+        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        if (!in_array('accepted_quantity', $columns)) {
+            $conn->exec("ALTER TABLE return_items ADD COLUMN accepted_quantity INT DEFAULT 0 COMMENT 'Quantity of items accepted for return (0 = none, NULL = not processed)'");
+            error_log("Added accepted_quantity column to return_items");
+        }
+
+        if (!in_array('action_taken', $columns)) {
+            $conn->exec("ALTER TABLE return_items ADD COLUMN action_taken ENUM('pending', 'accepted', 'partial_accept', 'rejected', 'exchange', 'refund') DEFAULT 'pending' COMMENT 'Action taken on this return item'");
+            error_log("Added action_taken column to return_items");
+        }
+
+        if (!in_array('action_notes', $columns)) {
+            $conn->exec("ALTER TABLE return_items ADD COLUMN action_notes TEXT COMMENT 'Notes about the action taken on this item'");
+            error_log("Added action_notes column to return_items");
+        }
+
+        if (!in_array('updated_at', $columns)) {
+            $conn->exec("ALTER TABLE return_items ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'When this item was last updated'");
+            error_log("Added updated_at column to return_items");
+        }
+
+        // Add indexes if they don't exist
+        try {
+            $conn->exec("ALTER TABLE return_items ADD INDEX idx_action_taken (action_taken)");
+        } catch (PDOException $e) {
+            // Index might already exist, that's okay
+        }
+
+        try {
+            $conn->exec("ALTER TABLE return_items ADD INDEX idx_accepted_quantity (accepted_quantity)");
+        } catch (PDOException $e) {
+            // Index might already exist, that's okay
+        }
+
+        try {
+            $conn->exec("ALTER TABLE return_items ADD INDEX idx_updated_at (updated_at)");
+        } catch (PDOException $e) {
+            // Index might already exist, that's okay
+        }
+
+        // Update existing records to have default values
+        $stmt = $conn->prepare("UPDATE return_items SET action_taken = 'pending', accepted_quantity = 0 WHERE action_taken IS NULL");
+        $stmt->execute();
+        $affected_rows = $stmt->rowCount();
+        if ($affected_rows > 0) {
+            error_log("Updated $affected_rows existing return_items records with default values");
+        }
+
+    } catch (PDOException $e) {
+        // Table might not exist yet, that's okay
+        error_log("Could not update return_items table: " . $e->getMessage());
     }
     
     // Add role_id to users table if it doesn't exist
@@ -459,7 +823,11 @@ try {
         ['manage_sales', 'View sales history and details'],
         ['process_sales', 'Process sales transactions'],
         ['manage_users', 'Add, edit, delete users'],
-        ['manage_roles', 'Add, edit, delete roles and assign permissions']
+        ['manage_roles', 'Add, edit, delete roles and assign permissions'],
+        ['manage_inventory', 'Manage inventory and orders'],
+        ['manage_returns', 'Create and manage product returns'],
+        ['approve_returns', 'Approve product returns'],
+        ['view_returns', 'View return history and details']
     ];
     
     $stmt = $conn->prepare("INSERT IGNORE INTO permissions (name, description) VALUES (:name, :description)");
@@ -474,18 +842,34 @@ try {
     
     // Assign permissions to Admin role (all permissions)
     $admin_role_id = 1;
-    $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id) 
+    $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id)
                             SELECT :role_id, id FROM permissions");
     $stmt->bindParam(':role_id', $admin_role_id);
     $stmt->execute();
-    
+
     // Assign permissions to Cashier role (limited permissions)
     $cashier_role_id = 2;
-    $cashier_permissions = ['view_dashboard', 'manage_sales', 'process_sales'];
-    $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id) 
+    $cashier_permissions = ['view_dashboard', 'manage_sales', 'process_sales', 'view_returns'];
+    $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id)
                             SELECT :role_id, id FROM permissions WHERE name IN ('" . implode("','", $cashier_permissions) . "')");
     $stmt->bindParam(':role_id', $cashier_role_id);
     $stmt->execute();
+
+    // Insert default return reasons
+    $return_reasons = [
+        ['defective', 'Defective Products', 'Products that are damaged or not working properly'],
+        ['wrong_item', 'Wrong Items Received', 'Received different products than ordered'],
+        ['damaged', 'Damaged in Transit', 'Products damaged during shipping'],
+        ['expired', 'Expired Products', 'Products that have passed their expiration date'],
+        ['overstock', 'Overstock/Excess Inventory', 'Too much inventory, need to return excess'],
+        ['quality', 'Quality Issues', 'Products do not meet quality standards'],
+        ['other', 'Other', 'Other reasons not listed above']
+    ];
+
+    $stmt = $conn->prepare("INSERT IGNORE INTO return_reasons (code, name, description) VALUES (?, ?, ?)");
+    foreach ($return_reasons as $reason) {
+        $stmt->execute($reason);
+    }
         // Update existing users to have role_id
     $conn->exec("UPDATE users SET role_id = 1 WHERE role = 'Admin' AND (role_id IS NULL OR role_id = 0)");
     $conn->exec("UPDATE users SET role_id = 2 WHERE role = 'Cashier' AND (role_id IS NULL OR role_id = 0)");
@@ -653,7 +1037,27 @@ try {
         ['order_show_cost_price', '1'],
         ['order_show_profit_margin', '0'],
         ['order_allow_partial_receipt', '1'],
-        ['order_auto_close_days', '90']
+        ['order_auto_close_days', '90'],
+        // Return settings
+        ['return_number_prefix', 'RTN'],
+        ['return_number_length', '6'],
+        ['return_number_separator', '-'],
+        ['return_auto_approval', '0'],
+        ['return_approval_required', '1'],
+        ['return_notification_email', ''],
+        ['return_allow_attachments', '1'],
+        ['return_max_attachment_size', '5242880'],
+        ['return_allowed_file_types', 'jpg,jpeg,png,pdf,doc,docx'],
+        ['return_auto_update_inventory', '1'],
+
+        // Add expiry tracker settings
+        ['expiry_alert_enabled', '1'],
+        ['expiry_default_alert_days', '30'],
+        ['expiry_email_template', 'Product {product_name} (Batch: {batch_number}) will expire on {expiry_date}. Please take necessary action.'],
+        ['expiry_sms_template', '{product_name} expires {expiry_date}. Action required.'],
+        ['expiry_auto_disposal', '0'],
+        ['expiry_disposal_method', 'incineration'],
+        ['expiry_tracker_enabled', '1']
     ];
     
     $stmt = $conn->prepare("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (:key, :value)");

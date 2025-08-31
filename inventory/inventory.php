@@ -55,8 +55,47 @@ $stats['out_of_stock'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
 $stmt = $conn->query("SELECT COALESCE(SUM(quantity * cost_price), 0) as total FROM products");
 $stats['total_inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
 
-// Pending Orders (we'll need to create orders table later)
-$stats['pending_orders'] = 0; // Placeholder
+// Pending Orders
+$stmt = $conn->query("SELECT COUNT(*) as count FROM inventory_orders WHERE status = 'pending'");
+$stats['pending_orders'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+// Received Orders/Invoices
+$stmt = $conn->query("SELECT COUNT(*) as count FROM inventory_orders WHERE status = 'received'");
+$stats['received_orders'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+// Total Invoice Value (sum of all received orders)
+$stmt = $conn->query("
+    SELECT COALESCE(SUM(ioi.received_quantity * ioi.cost_price), 0) as total
+    FROM inventory_order_items ioi
+    INNER JOIN inventory_orders io ON ioi.order_id = io.id
+    WHERE io.status = 'received'
+");
+$stats['total_invoice_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+// Return Statistics
+try {
+    $stmt = $conn->query("SELECT COUNT(*) as count FROM returns");
+    $stats['total_returns'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+    $stmt = $conn->query("SELECT COUNT(*) as count FROM returns WHERE status = 'pending'");
+    $stats['pending_returns'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+    $stmt = $conn->query("SELECT COUNT(*) as count FROM returns WHERE status = 'completed'");
+    $stats['completed_returns'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+    $stmt = $conn->query("SELECT COALESCE(SUM(total_amount), 0) as total FROM returns WHERE status = 'completed'");
+    $stats['total_return_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+    $stmt = $conn->query("SELECT COUNT(*) as count FROM returns WHERE status IN ('approved', 'shipped', 'received')");
+    $stats['active_returns'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+} catch (PDOException $e) {
+    // Return tables might not exist yet, set defaults
+    $stats['total_returns'] = 0;
+    $stats['pending_returns'] = 0;
+    $stats['completed_returns'] = 0;
+    $stats['total_return_value'] = 0;
+    $stats['active_returns'] = 0;
+}
 
 // Recent Inventory Activities (placeholder for now)
 $recent_activities = [];
@@ -94,6 +133,147 @@ if (hasPermission('manage_products', $permissions)) {
             --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
             --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
         }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e2e8f0;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .stat-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .stat-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            margin-right: 1rem;
+        }
+
+        .stat-primary { background: #dbeafe; color: #2563eb; }
+        .stat-warning { background: #fef3c7; color: #d97706; }
+        .stat-danger { background: #fee2e2; color: #dc2626; }
+        .stat-success { background: #d1fae5; color: #059669; }
+        .stat-info { background: #dbeafe; color: #2563eb; }
+        .stat-secondary { background: #f3f4f6; color: #374151; }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value.currency {
+            font-size: 1.5rem;
+        }
+
+        .stat-label {
+            color: #64748b;
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-change {
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .stat-change.positive { color: #059669; }
+        .stat-change.negative { color: #dc2626; }
+
+        /* Clickable stat card styling */
+        .stat-card[onclick] {
+            transition: all 0.3s ease;
+        }
+
+        .stat-card[onclick]:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            text-decoration: none;
+            color: #1e293b;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            text-align: center;
+        }
+
+        .action-btn:hover {
+            border-color: var(--primary-color);
+            background: var(--primary-color);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.3);
+        }
+
+        .action-btn i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 1rem;
+            }
+
+            .quick-actions {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.75rem;
+            }
+
+            .action-btn {
+                padding: 1rem;
+            }
+
+            .action-btn i {
+                font-size: 1.5rem;
+                margin-bottom: 0.25rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -127,8 +307,44 @@ if (hasPermission('manage_products', $permissions)) {
 
         <!-- Content -->
         <main class="content">
+            <?php if (isset($_GET['error'])): ?>
+            <div class="alert alert-<?php echo $_GET['error'] === 'order_not_found' ? 'warning' : 'danger'; ?> alert-dismissible fade show" role="alert">
+                <i class="bi bi-<?php echo $_GET['error'] === 'order_not_found' ? 'exclamation-triangle' : 'exclamation-triangle'; ?> me-2"></i>
+                <?php
+                switch ($_GET['error']) {
+                    case 'order_not_found':
+                        echo "The order you're looking for could not be found. ";
+                        echo "<strong>Possible causes:</strong><br>";
+                        echo "• The order may have been deleted<br>";
+                        echo "• You may not have permission to view this order<br>";
+                        echo "• The order ID or number may be incorrect<br>";
+                        echo "• <strong>If the order is RECEIVED</strong>: Try accessing it through the invoice view<br>";
+                        echo "<br><a href='view_orders.php' class='btn btn-sm btn-primary me-2'>View All Orders</a>";
+                        echo "<a href='view_invoices.php' class='btn btn-sm btn-success me-2'>View Invoices</a>";
+                        echo "<a href='create_order.php' class='btn btn-sm btn-outline-primary me-2'>Create New Order</a>";
+                        echo "<a href='debug_orders.php' class='btn btn-sm btn-outline-info'>Debug Orders</a>";
+                        echo "<br><br><small class='text-muted'>If you know the order number, try searching for it directly in the orders list or invoice list.</small>";
+                        break;
+                    case 'invalid_order':
+                        echo "Invalid order ID provided.";
+                        break;
+                    case 'permission_denied':
+                        echo "You don't have permission to access this resource.";
+                        break;
+                    case 'db_error':
+                        echo "Database error occurred. Please try again later.";
+                        break;
+                    default:
+                        echo "An error occurred: " . htmlspecialchars($_GET['error']);
+                }
+                ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
             <!-- Statistics Cards -->
-            <div class="stats-grid">
+            <div class="row">
+                <div class="col-12">
+                    <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-header">
                         <div class="stat-icon stat-primary">
@@ -192,9 +408,91 @@ if (hasPermission('manage_products', $permissions)) {
                         <i class="bi bi-arrow-up"></i> Current value
                     </div>
                 </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-info">
+                            <i class="bi bi-receipt"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($stats['received_orders']); ?></div>
+                    <div class="stat-label">Invoices</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-check-circle"></i> Received orders
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-primary">
+                            <i class="bi bi-cash-coin"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value currency"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($stats['total_invoice_value'], 2); ?></div>
+                    <div class="stat-label">Invoice Value</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-arrow-up"></i> Total received
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-secondary">
+                            <i class="bi bi-arrow-return-left"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($stats['total_returns']); ?></div>
+                    <div class="stat-label">Total Returns</div>
+                    <div class="stat-change <?php echo $stats['pending_returns'] > 0 ? 'negative' : 'positive'; ?>">
+                        <i class="bi bi-<?php echo $stats['pending_returns'] > 0 ? 'exclamation-triangle' : 'check-circle'; ?>"></i>
+                        <?php echo $stats['pending_returns']; ?> pending
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-warning">
+                            <i class="bi bi-clock-history"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($stats['active_returns']); ?></div>
+                    <div class="stat-label">Active Returns</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-arrow-right"></i> In progress
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-success">
+                            <i class="bi bi-check-circle"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($stats['completed_returns']); ?></div>
+                    <div class="stat-label">Completed Returns</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-check-circle"></i> Processed
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-info">
+                            <i class="bi bi-cash-coin"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value currency"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($stats['total_return_value'], 2); ?></div>
+                    <div class="stat-label">Return Value</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-arrow-down"></i> Returned value
+                    </div>
+                </div>
+
+                    </div>
+                </div>
             </div>
 
-            <!-- Quick Actions -->
+            <!-- Quick Actions Row 1 -->
             <div class="quick-actions">
                 <a href="create_order.php" class="action-btn">
                     <i class="bi bi-plus-circle"></i>
@@ -204,10 +502,18 @@ if (hasPermission('manage_products', $permissions)) {
                     <i class="bi bi-list-check"></i>
                     View Orders
                 </a>
+                <a href="view_invoices.php" class="action-btn">
+                    <i class="bi bi-receipt"></i>
+                    View Invoices
+                </a>
                 <a href="view_orders.php?filter=receivable" class="action-btn">
                     <i class="bi bi-box-arrow-in-down"></i>
                     Receive Order
                 </a>
+            </div>
+
+            <!-- Quick Actions Row 2 -->
+            <div class="quick-actions">
                 <a href="create_return.php" class="action-btn">
                     <i class="bi bi-arrow-return-left"></i>
                     Create Return
@@ -218,6 +524,10 @@ if (hasPermission('manage_products', $permissions)) {
                     Add Product
                 </a>
                 <?php endif; ?>
+                <div class="action-btn" onclick="window.location.href='returns_list.php'" style="cursor: pointer;">
+                    <i class="bi bi-arrow-return-left"></i>
+                    Returns Management
+                </div>
             </div>
 
             <!-- Low Stock Alert -->
@@ -269,6 +579,10 @@ if (hasPermission('manage_products', $permissions)) {
                 </div>
             </div>
             <?php endif; ?>
+
+
+
+
         </main>
     </div>
 
