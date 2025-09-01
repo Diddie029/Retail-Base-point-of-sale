@@ -64,13 +64,50 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 $errors = [];
 $success = '';
 
+// Function for sanitizing supplier input
+function sanitizeSupplierInput($input, $type = 'string') {
+    $input = trim($input);
+
+    switch ($type) {
+        case 'text':
+            $input = filter_var($input, FILTER_SANITIZE_STRING, FILTER_FLAG_NO_ENCODE_QUOTES);
+            break;
+        case 'email':
+            $input = filter_var($input, FILTER_SANITIZE_EMAIL);
+            break;
+        default:
+            $input = htmlspecialchars($input, ENT_QUOTES, 'UTF-8');
+    }
+
+    return $input;
+}
+
+// Enhanced validation function
+function validateSupplierUpdate($supplier_id, $expected_name) {
+    global $conn;
+    
+    // Double-check that we're updating the right supplier
+    $stmt = $conn->prepare("SELECT id, name FROM suppliers WHERE id = :id");
+    $stmt->bindParam(':id', $supplier_id);
+    $stmt->execute();
+    $current = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$current) {
+        throw new Exception("Supplier with ID $supplier_id not found");
+    }
+    
+    // Log the validation
+    error_log("Validating update for supplier ID: $supplier_id, Current name: '" . $current['name'] . "', Expected: '" . $expected_name . "'");
+    
+    return $current;
+}
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Debug logging
-    error_log("=== SUPPLIER EDIT DEBUG ===");
+    error_log("=== SUPPLIER UPDATE DEBUG ===");
     error_log("Supplier ID from URL: " . $supplier_id);
     error_log("Original supplier name: " . $supplier['name']);
-    error_log("POST data: " . print_r($_POST, true));
     
     // Basic supplier information
     $name = sanitizeSupplierInput($_POST['name'] ?? '');
@@ -133,20 +170,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Start transaction for safety
             $conn->beginTransaction();
             
-            // Double-check that we're updating the correct supplier
-            $verify_stmt = $conn->prepare("SELECT id, name FROM suppliers WHERE id = :id");
-            $verify_stmt->bindParam(':id', $supplier_id, PDO::PARAM_INT);
-            $verify_stmt->execute();
-            $current_supplier = $verify_stmt->fetch(PDO::FETCH_ASSOC);
+            // Validate we're updating the correct supplier
+            $current_supplier = validateSupplierUpdate($supplier_id, $supplier['name']);
             
-            if (!$current_supplier) {
-                throw new Exception("Supplier with ID $supplier_id not found during update");
-            }
-            
-            error_log("Verifying update - Current supplier: ID={$current_supplier['id']}, Name='{$current_supplier['name']}'");
-            error_log("Updating to: Name='$name'");
-            
-            // Prepare update with LIMIT 1 for extra safety
+            // Prepare update statement with explicit parameter types
             $update_stmt = $conn->prepare("
                 UPDATE suppliers
                 SET name = :name,
@@ -162,7 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 LIMIT 1
             ");
 
-            // Bind parameters with explicit types
+            // Bind parameters with explicit types where needed
             $update_stmt->bindParam(':name', $name, PDO::PARAM_STR);
             $update_stmt->bindParam(':contact_person', $contact_person, PDO::PARAM_STR);
             $update_stmt->bindParam(':email', $email, PDO::PARAM_STR);
@@ -176,12 +203,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($update_stmt->execute()) {
                 $affected_rows = $update_stmt->rowCount();
                 
-                // Safety check: ensure exactly one row was affected
+                // Safety check: ensure only one row was affected
                 if ($affected_rows !== 1) {
                     throw new Exception("Unexpected number of rows affected: $affected_rows (expected 1)");
                 }
                 
+                // Log the successful update
                 error_log("Successfully updated supplier ID: $supplier_id, affected rows: $affected_rows");
+                error_log("Updated to name: '$name'");
                 
                 // Log the activity
                 logActivity($conn, $user_id, 'supplier_updated', "Updated supplier: $name (ID: $supplier_id)");
@@ -203,26 +232,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $errors['general'] = 'An error occurred while updating the supplier. Please try again.';
             error_log("Supplier update error for ID $supplier_id: " . $e->getMessage());
+            
+            // Additional logging for debugging
+            error_log("POST data during error: " . print_r($_POST, true));
+            error_log("Current supplier data: " . print_r($supplier, true));
         }
     }
-}
-
-// Function for sanitizing supplier input
-function sanitizeSupplierInput($input, $type = 'string') {
-    $input = trim($input);
-
-    switch ($type) {
-        case 'text':
-            $input = filter_var($input, FILTER_SANITIZE_STRING, FILTER_FLAG_NO_ENCODE_QUOTES);
-            break;
-        case 'email':
-            $input = filter_var($input, FILTER_SANITIZE_EMAIL);
-            break;
-        default:
-            $input = htmlspecialchars($input, ENT_QUOTES, 'UTF-8');
-    }
-
-    return $input;
 }
 ?>
 
@@ -254,7 +269,7 @@ function sanitizeSupplierInput($input, $type = 'string') {
             <div class="header-content">
                 <div class="header-title">
                     <h1>Edit Supplier</h1>
-                    <div class="header-subtitle">Update supplier information for <?php echo htmlspecialchars($supplier['name']); ?></div>
+                    <div class="header-subtitle">Update supplier information for <?php echo htmlspecialchars($supplier['name']); ?> (ID: <?php echo $supplier_id; ?>)</div>
                 </div>
                 <div class="header-actions">
                     <a href="view.php?id=<?php echo $supplier_id; ?>" class="btn btn-outline-primary">
@@ -282,8 +297,24 @@ function sanitizeSupplierInput($input, $type = 'string') {
             </div>
             <?php endif; ?>
 
+            <?php if ($success): ?>
+            <div class="alert alert-success">
+                <i class="bi bi-check-circle me-2"></i>
+                <?php echo htmlspecialchars($success); ?>
+            </div>
+            <?php endif; ?>
+
+            <!-- Debug Info (remove in production) -->
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle me-2"></i>
+                <strong>Debug Info:</strong> Editing supplier ID: <?php echo $supplier_id; ?>, Current name: "<?php echo htmlspecialchars($supplier['name']); ?>"
+            </div>
+
             <div class="product-form">
                 <form method="POST" id="supplierForm">
+                    <!-- Hidden field to double-check supplier ID -->
+                    <input type="hidden" name="supplier_id_check" value="<?php echo $supplier_id; ?>">
+                    
                     <!-- Basic Information -->
                     <div class="form-section">
                         <h4 class="section-title">
@@ -299,15 +330,12 @@ function sanitizeSupplierInput($input, $type = 'string') {
                                 <?php if (isset($errors['name'])): ?>
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['name']); ?></div>
                                 <?php endif; ?>
-                                <div class="form-text">
-                                    The name of the company or supplier
-                                </div>
                             </div>
 
                             <div class="form-group">
                                 <label for="contact_person" class="form-label">Contact Person</label>
                                 <input type="text" class="form-control <?php echo isset($errors['contact_person']) ? 'is-invalid' : ''; ?>"
-                                       id="contact_person" name="contact_person" value="<?php echo htmlspecialchars($_POST['contact_person'] ?? $supplier['contact_person'] ?? ''); ?>"
+                                       id="contact_person" name="contact_person" value="<?php echo htmlspecialchars($_POST['contact_person'] ?? $supplier['contact_person']); ?>"
                                        placeholder="Primary contact person" maxlength="100">
                                 <?php if (isset($errors['contact_person'])): ?>
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['contact_person']); ?></div>
@@ -319,7 +347,7 @@ function sanitizeSupplierInput($input, $type = 'string') {
                             <div class="form-group">
                                 <label for="email" class="form-label">Email Address</label>
                                 <input type="email" class="form-control <?php echo isset($errors['email']) ? 'is-invalid' : ''; ?>"
-                                       id="email" name="email" value="<?php echo htmlspecialchars($_POST['email'] ?? $supplier['email'] ?? ''); ?>"
+                                       id="email" name="email" value="<?php echo htmlspecialchars($_POST['email'] ?? $supplier['email']); ?>"
                                        placeholder="supplier@example.com">
                                 <?php if (isset($errors['email'])): ?>
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['email']); ?></div>
@@ -329,7 +357,7 @@ function sanitizeSupplierInput($input, $type = 'string') {
                             <div class="form-group">
                                 <label for="phone" class="form-label">Phone Number</label>
                                 <input type="tel" class="form-control <?php echo isset($errors['phone']) ? 'is-invalid' : ''; ?>"
-                                       id="phone" name="phone" value="<?php echo htmlspecialchars($_POST['phone'] ?? $supplier['phone'] ?? ''); ?>"
+                                       id="phone" name="phone" value="<?php echo htmlspecialchars($_POST['phone'] ?? $supplier['phone']); ?>"
                                        placeholder="+1 (555) 123-4567">
                                 <?php if (isset($errors['phone'])): ?>
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['phone']); ?></div>
@@ -340,7 +368,7 @@ function sanitizeSupplierInput($input, $type = 'string') {
                         <div class="form-group">
                             <label for="address" class="form-label">Address</label>
                             <textarea class="form-control <?php echo isset($errors['address']) ? 'is-invalid' : ''; ?>" id="address" name="address" rows="3"
-                                      placeholder="Full address including street, city, state, postal code"><?php echo htmlspecialchars($_POST['address'] ?? $supplier['address'] ?? ''); ?></textarea>
+                                      placeholder="Full address including street, city, state, postal code"><?php echo htmlspecialchars($_POST['address'] ?? $supplier['address']); ?></textarea>
                             <?php if (isset($errors['address'])): ?>
                             <div class="invalid-feedback"><?php echo htmlspecialchars($errors['address']); ?></div>
                             <?php endif; ?>
@@ -350,7 +378,7 @@ function sanitizeSupplierInput($input, $type = 'string') {
                             <label for="is_active" class="form-label">Status</label>
                             <div class="form-check">
                                 <input class="form-check-input" type="checkbox" id="is_active" name="is_active"
-                                       value="1" <?php echo (isset($_POST['is_active']) ? $_POST['is_active'] : $supplier['is_active']) ? 'checked' : ''; ?>>
+                                       value="1" <?php echo (($_POST['is_active'] ?? $supplier['is_active']) ? 'checked' : ''); ?>>
                                 <label class="form-check-label" for="is_active">
                                     Active Supplier
                                 </label>
@@ -371,24 +399,18 @@ function sanitizeSupplierInput($input, $type = 'string') {
                             <div class="form-group">
                                 <label for="payment_terms" class="form-label">Payment Terms</label>
                                 <input type="text" class="form-control <?php echo isset($errors['payment_terms']) ? 'is-invalid' : ''; ?>"
-                                       id="payment_terms" name="payment_terms" value="<?php echo htmlspecialchars($_POST['payment_terms'] ?? $supplier['payment_terms'] ?? ''); ?>"
+                                       id="payment_terms" name="payment_terms" value="<?php echo htmlspecialchars($_POST['payment_terms'] ?? $supplier['payment_terms']); ?>"
                                        placeholder="e.g., Net 30, COD, Immediate" maxlength="100">
                                 <?php if (isset($errors['payment_terms'])): ?>
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['payment_terms']); ?></div>
                                 <?php endif; ?>
-                                <div class="form-text">
-                                    Payment terms and conditions
-                                </div>
                             </div>
                         </div>
 
                         <div class="form-group">
                             <label for="notes" class="form-label">Notes</label>
                             <textarea class="form-control" id="notes" name="notes" rows="3"
-                                      placeholder="Additional notes about this supplier"><?php echo htmlspecialchars($_POST['notes'] ?? $supplier['notes'] ?? ''); ?></textarea>
-                            <div class="form-text">
-                                Any additional information about this supplier
-                            </div>
+                                      placeholder="Additional notes about this supplier"><?php echo htmlspecialchars($_POST['notes'] ?? $supplier['notes']); ?></textarea>
                         </div>
                     </div>
 
@@ -398,12 +420,8 @@ function sanitizeSupplierInput($input, $type = 'string') {
                                 <i class="bi bi-check"></i>
                                 Update Supplier
                             </button>
-                            <a href="view.php?id=<?php echo $supplier_id; ?>" class="btn btn-outline-primary">
-                                <i class="bi bi-eye"></i>
-                                View Supplier
-                            </a>
-                            <a href="suppliers.php" class="btn btn-outline-secondary">
-                                <i class="bi bi-arrow-left"></i>
+                            <a href="view.php?id=<?php echo $supplier_id; ?>" class="btn btn-outline-secondary">
+                                <i class="bi bi-x"></i>
                                 Cancel
                             </a>
                         </div>
@@ -414,124 +432,24 @@ function sanitizeSupplierInput($input, $type = 'string') {
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="../assets/js/products.js"></script>
     <script>
-        // Form validation (same as add.php)
+        // Form validation
         document.addEventListener('DOMContentLoaded', function() {
             const supplierForm = document.getElementById('supplierForm');
             if (supplierForm) {
                 supplierForm.addEventListener('submit', function(e) {
-                    let isValid = true;
-                    const requiredFields = supplierForm.querySelectorAll('[required]');
-
-                    requiredFields.forEach(field => {
-                        const feedback = field.parentNode.querySelector('.invalid-feedback');
-                        if (!field.value.trim()) {
-                            field.classList.add('is-invalid');
-                            if (feedback) {
-                                feedback.textContent = 'This field is required';
-                            }
-                            isValid = false;
-                        } else {
-                            field.classList.remove('is-invalid');
-                            if (feedback) {
-                                feedback.textContent = '';
-                            }
-                        }
-                    });
-
-                    // Validate email
-                    const emailField = document.getElementById('email');
-                    if (emailField && emailField.value && !emailField.value.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
-                        emailField.classList.add('is-invalid');
-                        const feedback = emailField.parentNode.querySelector('.invalid-feedback');
-                        if (feedback) {
-                            feedback.textContent = 'Please enter a valid email address';
-                        }
-                        isValid = false;
-                    }
-
-                    // Validate name length
+                    // Log form submission for debugging
+                    console.log('Form submitted for supplier ID:', <?php echo $supplier_id; ?>);
+                    console.log('Supplier name:', document.getElementById('name').value);
+                    
+                    // Basic validation
                     const nameField = document.getElementById('name');
-                    if (nameField && nameField.value) {
-                        if (nameField.value.length < 2) {
-                            nameField.classList.add('is-invalid');
-                            const feedback = nameField.parentNode.querySelector('.invalid-feedback');
-                            if (feedback) {
-                                feedback.textContent = 'Supplier name must be at least 2 characters';
-                            }
-                            isValid = false;
-                        } else if (nameField.value.length > 255) {
-                            nameField.classList.add('is-invalid');
-                            const feedback = nameField.parentNode.querySelector('.invalid-feedback');
-                            if (feedback) {
-                                feedback.textContent = 'Supplier name cannot exceed 255 characters';
-                            }
-                            isValid = false;
-                        }
-                    }
-
-                    if (!isValid) {
+                    if (!nameField.value.trim()) {
                         e.preventDefault();
-                        showAlert('Please fix the errors below', 'danger');
-                    }
-                });
-
-                // Real-time validation
-                const inputs = supplierForm.querySelectorAll('input, textarea');
-                inputs.forEach(input => {
-                    input.addEventListener('blur', function() {
-                        validateField(this);
-                    });
-
-                    input.addEventListener('input', function() {
-                        if (this.classList.contains('is-invalid')) {
-                            validateField(this);
-                        }
-                    });
-                });
-            }
-
-            function validateField(field) {
-                const feedback = field.parentNode.querySelector('.invalid-feedback');
-
-                if (field.hasAttribute('required') && !field.value.trim()) {
-                    field.classList.add('is-invalid');
-                    if (feedback) {
-                        feedback.textContent = 'This field is required';
-                    }
-                    return false;
-                }
-
-                if (field.type === 'email' && field.value && !field.value.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
-                    field.classList.add('is-invalid');
-                    if (feedback) {
-                        feedback.textContent = 'Please enter a valid email address';
-                    }
-                    return false;
-                }
-
-                if (field.id === 'name' && field.value) {
-                    if (field.value.length < 2) {
-                        field.classList.add('is-invalid');
-                        if (feedback) {
-                            feedback.textContent = 'Supplier name must be at least 2 characters';
-                        }
-                        return false;
-                    } else if (field.value.length > 255) {
-                        field.classList.add('is-invalid');
-                        if (feedback) {
-                            feedback.textContent = 'Supplier name cannot exceed 255 characters';
-                        }
+                        alert('Supplier name is required');
                         return false;
                     }
-                }
-
-                field.classList.remove('is-invalid');
-                if (feedback) {
-                    feedback.textContent = '';
-                }
-                return true;
+                });
             }
         });
     </script>

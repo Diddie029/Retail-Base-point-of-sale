@@ -1792,6 +1792,35 @@ try {
         }
     }
     
+    // Migration: Ensure is_tax_deductible column exists in expense_categories table
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM expense_categories LIKE 'is_tax_deductible'");
+        $stmt->execute();
+        $result = $stmt->fetch();
+        
+        if (!$result) {
+            // Add missing is_tax_deductible column
+            $conn->exec("ALTER TABLE expense_categories ADD COLUMN is_tax_deductible TINYINT(1) DEFAULT 0 AFTER color_code");
+            
+            // Update existing categories with appropriate tax deductible status
+            $tax_deductible_categories = [
+                'Rent', 'Utilities', 'Marketing', 'Supplies', 'Maintenance', 
+                'Travel', 'Insurance', 'Professional Services', 'Equipment', 
+                'Software', 'Office Supplies', 'Cleaning Supplies', 'Equipment Repair',
+                'Facility Maintenance', 'Airfare', 'Hotel', 'Transportation'
+            ];
+            
+            // Set tax deductible for business-related categories
+            $placeholders = "'" . implode("','", $tax_deductible_categories) . "'";
+            $conn->exec("UPDATE expense_categories SET is_tax_deductible = 1 WHERE name IN ($placeholders)");
+            
+            error_log("Migration completed: Added is_tax_deductible column to expense_categories table");
+        }
+    } catch (PDOException $e) {
+        // Log migration error but don't fail the entire database initialization
+        error_log("Warning: Could not add is_tax_deductible column to expense_categories: " . $e->getMessage());
+    }
+    
 } catch(PDOException $e) {
     // Store connection error for login page
     $GLOBALS['db_connected'] = false;

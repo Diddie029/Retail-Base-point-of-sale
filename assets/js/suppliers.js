@@ -349,8 +349,190 @@ function showNotification(message, type) {
     }, 3000);
 }
 
+// Enhanced bulk action functions
+function showBulkProgress(totalItems, action) {
+    const progressContainer = document.createElement('div');
+    progressContainer.className = 'bulk-progress fade-in';
+    progressContainer.innerHTML = `
+        <div class="d-flex align-items-center justify-content-between mb-2">
+            <h6 class="mb-0">Processing ${action} for ${totalItems} suppliers...</h6>
+            <span class="text-muted"><span id="progressCurrent">0</span>/${totalItems}</span>
+        </div>
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+        </div>
+        <div class="text-center mt-2">
+            <small class="text-muted" id="progressStatus">Initializing...</small>
+        </div>
+    `;
+    
+    const bulkActionsContainer = document.querySelector('.bulk-actions-container');
+    if (bulkActionsContainer) {
+        bulkActionsContainer.appendChild(progressContainer);
+        progressContainer.style.display = 'block';
+    }
+    
+    return progressContainer;
+}
+
+function updateBulkProgress(current, total, status) {
+    const progressBar = document.getElementById('progressBar');
+    const progressCurrent = document.getElementById('progressCurrent');
+    const progressStatus = document.getElementById('progressStatus');
+    
+    if (progressBar && progressCurrent && progressStatus) {
+        const percentage = (current / total) * 100;
+        progressBar.style.width = percentage + '%';
+        progressCurrent.textContent = current;
+        progressStatus.textContent = status;
+    }
+}
+
+function hideBulkProgress() {
+    const progressContainer = document.querySelector('.bulk-progress');
+    if (progressContainer) {
+        progressContainer.style.display = 'none';
+    }
+}
+
+// Enhanced bulk operations with progress tracking
+function processBulkAction(action, supplierIds, reason = '') {
+    if (supplierIds.length === 0) {
+        showNotification('Please select suppliers to perform bulk action.', 'error');
+        return;
+    }
+    
+    // Show loading overlay
+    showLoadingOverlay();
+    
+    // Show progress bar
+    const progressContainer = showBulkProgress(supplierIds.length, action);
+    
+    // Process suppliers one by one for better user feedback
+    let processed = 0;
+    let successful = 0;
+    let failed = 0;
+    
+    function processNext() {
+        if (processed >= supplierIds.length) {
+            // All done
+            hideLoadingOverlay();
+            hideBulkProgress();
+            
+            if (successful > 0) {
+                showNotification(`Successfully ${action}d ${successful} supplier(s).`, 'success');
+            }
+            if (failed > 0) {
+                showNotification(`Failed to ${action} ${failed} supplier(s).`, 'error');
+            }
+            
+            // Reload page to show updated data
+            setTimeout(() => location.reload(), 1500);
+            return;
+        }
+        
+        const supplierId = supplierIds[processed];
+        updateBulkProgress(processed + 1, supplierIds.length, `Processing supplier ${processed + 1}...`);
+        
+        // Create form data for this supplier
+        const formData = new FormData();
+        formData.append('bulk_action', action);
+        formData.append('supplier_ids[]', supplierId);
+        formData.append('bulk_confirm_action', 'on');
+        if (reason) {
+            formData.append('supplier_block_note', reason);
+        }
+        
+        // Send request
+        fetch('suppliers.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            if (response.ok) {
+                successful++;
+            } else {
+                failed++;
+            }
+        })
+        .catch(error => {
+            console.error('Bulk action error:', error);
+            failed++;
+        })
+        .finally(() => {
+            processed++;
+            // Small delay for better user experience
+            setTimeout(processNext, 200);
+        });
+    }
+    
+    processNext();
+}
+
+// Show/hide loading overlay
+function showLoadingOverlay() {
+    const overlay = document.createElement('div');
+    overlay.className = 'loading-overlay';
+    overlay.id = 'loadingOverlay';
+    overlay.innerHTML = `
+        <div class="loading-spinner"></div>
+    `;
+    document.body.appendChild(overlay);
+}
+
+function hideLoadingOverlay() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) {
+        overlay.remove();
+    }
+}
+
+// Enhanced selection management
+function updateSupplierRowSelection() {
+    const supplierCheckboxes = document.querySelectorAll('.supplier-checkbox');
+    supplierCheckboxes.forEach(checkbox => {
+        const row = checkbox.closest('tr');
+        if (checkbox.checked) {
+            row.classList.add('supplier-row', 'selected');
+        } else {
+            row.classList.remove('supplier-row', 'selected');
+        }
+    });
+}
+
+// Advanced search functionality
+function setupAdvancedSearch() {
+    const searchInput = document.getElementById('searchInput');
+    const filterToggle = document.querySelector('.filter-toggle');
+    const advancedFilters = document.querySelector('.advanced-filters');
+    
+    // Real-time search with debounce
+    if (searchInput) {
+        let searchTimeout;
+        searchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                // Add search suggestions or live filtering here
+                console.log('Search term:', this.value);
+            }, 300);
+        });
+    }
+    
+    // Toggle advanced filters
+    if (filterToggle && advancedFilters) {
+        filterToggle.addEventListener('click', function() {
+            advancedFilters.classList.toggle('show');
+            this.textContent = advancedFilters.classList.contains('show') ? 
+                'Hide Advanced Filters' : 'Show Advanced Filters';
+        });
+    }
+}
+
 // Document ready function
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize advanced search
+    setupAdvancedSearch();
+    
     // Toggle supplier status functionality
     const toggleButtons = document.querySelectorAll('.toggle-status');
 
@@ -369,12 +551,13 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Bulk selection functionality
+    // Enhanced bulk selection functionality
     const selectAllCheckbox = document.getElementById('selectAll');
     const supplierCheckboxes = document.querySelectorAll('.supplier-checkbox');
     const bulkActions = document.getElementById('bulkActions');
     const bulkActionSelect = document.getElementById('bulkAction');
     const bulkBlockNote = document.getElementById('bulkBlockNote');
+    const selectionCountElement = document.querySelector('.selection-count');
 
     if (selectAllCheckbox && supplierCheckboxes.length > 0) {
         selectAllCheckbox.addEventListener('change', function() {
@@ -382,48 +565,180 @@ document.addEventListener('DOMContentLoaded', function() {
                 checkbox.checked = this.checked;
             });
             updateBulkActions();
+            updateSupplierRowSelection();
         });
 
         supplierCheckboxes.forEach(checkbox => {
             checkbox.addEventListener('change', function() {
                 updateBulkActions();
+                updateSupplierRowSelection();
 
                 // Update select all checkbox
                 const checkedCount = document.querySelectorAll('.supplier-checkbox:checked').length;
                 selectAllCheckbox.checked = checkedCount === supplierCheckboxes.length;
                 selectAllCheckbox.indeterminate = checkedCount > 0 && checkedCount < supplierCheckboxes.length;
+                
+                // Update selection count
+                if (selectionCountElement) {
+                    selectionCountElement.textContent = checkedCount;
+                }
             });
         });
     }
 
-         // Show/hide block note and confirmation based on bulk action
-     if (bulkActionSelect) {
-         bulkActionSelect.addEventListener('change', function() {
-             const bulkConfirmationSection = document.getElementById('bulkConfirmationSection');
-             
-             if (this.value === 'deactivate') {
-                 if (bulkBlockNote) bulkBlockNote.style.display = 'inline-block';
-                 if (bulkConfirmationSection) bulkConfirmationSection.style.display = 'inline-block';
-             } else if (this.value === 'activate' || this.value === 'delete') {
-                 // Show confirmation for activate and delete actions
-                 if (bulkBlockNote) bulkBlockNote.style.display = 'none';
-                 if (bulkConfirmationSection) bulkConfirmationSection.style.display = 'inline-block';
-             } else {
-                 // Hide all sections for no action
-                 if (bulkBlockNote) bulkBlockNote.style.display = 'none';
-                 if (bulkConfirmationSection) bulkConfirmationSection.style.display = 'none';
-             }
-         });
-     }
+    // Enhanced bulk action handling
+    if (bulkActionSelect) {
+        bulkActionSelect.addEventListener('change', function() {
+            const bulkConfirmationSection = document.getElementById('bulkConfirmationSection');
+            
+            if (this.value === 'deactivate') {
+                if (bulkBlockNote) {
+                    bulkBlockNote.style.display = 'inline-block';
+                    bulkBlockNote.required = true;
+                }
+                if (bulkConfirmationSection) bulkConfirmationSection.style.display = 'inline-block';
+            } else if (this.value === 'activate' || this.value === 'delete' || this.value === 'export') {
+                if (bulkBlockNote) {
+                    bulkBlockNote.style.display = 'none';
+                    bulkBlockNote.required = false;
+                }
+                if (bulkConfirmationSection) bulkConfirmationSection.style.display = 'inline-block';
+            } else {
+                if (bulkBlockNote) {
+                    bulkBlockNote.style.display = 'none';
+                    bulkBlockNote.required = false;
+                }
+                if (bulkConfirmationSection) bulkConfirmationSection.style.display = 'none';
+            }
+        });
+    }
 
     function updateBulkActions() {
         const checkedCount = document.querySelectorAll('.supplier-checkbox:checked').length;
+        const bulkActionsContainer = document.querySelector('.bulk-actions-container');
+        
+        if (bulkActionsContainer) {
+            if (checkedCount > 0) {
+                bulkActionsContainer.style.display = 'block';
+                bulkActionsContainer.classList.add('slide-down');
+            } else {
+                bulkActionsContainer.style.display = 'none';
+                bulkActionsContainer.classList.remove('slide-down');
+            }
+        }
+        
+        // Legacy support for old bulk actions element
         if (bulkActions) {
             if (checkedCount > 0) {
                 bulkActions.style.display = 'block';
             } else {
                 bulkActions.style.display = 'none';
             }
+        }
+        
+        // Update selection count in header
+        const selectionInfo = document.querySelector('.bulk-selection-info');
+        if (selectionInfo) {
+            selectionInfo.innerHTML = `
+                <span class="selection-count">${checkedCount}</span>
+                <span>supplier${checkedCount !== 1 ? 's' : ''} selected</span>
+            `;
+        }
+    }
+    
+    // Enhanced form submission with validation
+    const bulkForm = document.getElementById('bulkForm');
+    if (bulkForm) {
+        bulkForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const selectedSuppliers = document.querySelectorAll('.supplier-checkbox:checked');
+            const action = bulkActionSelect ? bulkActionSelect.value : '';
+            const reason = bulkBlockNote ? bulkBlockNote.value.trim() : '';
+            const confirmCheckbox = document.getElementById('bulkConfirmAction');
+            
+            // Validation
+            if (selectedSuppliers.length === 0) {
+                showNotification('Please select at least one supplier.', 'error');
+                return;
+            }
+            
+            if (!action) {
+                showNotification('Please select an action to perform.', 'error');
+                return;
+            }
+            
+            if (action === 'deactivate' && !reason) {
+                showNotification('Please provide a reason for deactivation.', 'error');
+                return;
+            }
+            
+            if (!confirmCheckbox || !confirmCheckbox.checked) {
+                showNotification('Please confirm the action by checking the confirmation box.', 'error');
+                return;
+            }
+            
+            // Show confirmation dialog for destructive actions
+            if (action === 'delete') {
+                const confirmed = confirm(`Are you sure you want to delete ${selectedSuppliers.length} supplier(s)? This action cannot be undone.`);
+                if (!confirmed) return;
+            }
+            
+            // Get supplier IDs
+            const supplierIds = Array.from(selectedSuppliers).map(cb => cb.value);
+            
+            // Process bulk action with enhanced feedback
+            processBulkAction(action, supplierIds, reason);
+        });
+    }
+    
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        // Ctrl+A to select all (when not in input field)
+        if (e.ctrlKey && e.key === 'a' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) {
+            e.preventDefault();
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.dispatchEvent(new Event('change'));
+            }
+        }
+        
+        // Escape to clear selection
+        if (e.key === 'Escape') {
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.dispatchEvent(new Event('change'));
+            }
+        }
+    });
+    
+    // Auto-save filter preferences
+    const filterInputs = document.querySelectorAll('.filter-section input, .filter-section select');
+    filterInputs.forEach(input => {
+        input.addEventListener('change', function() {
+            const filterData = {
+                search: document.querySelector('input[name="search"]')?.value || '',
+                status: document.querySelector('select[name="status"]')?.value || 'all',
+                sort: document.querySelector('select[name="sort"]')?.value || 'name'
+            };
+            localStorage.setItem('supplierFilters', JSON.stringify(filterData));
+        });
+    });
+    
+    // Load saved filter preferences
+    const savedFilters = localStorage.getItem('supplierFilters');
+    if (savedFilters) {
+        try {
+            const filters = JSON.parse(savedFilters);
+            const searchInput = document.querySelector('input[name="search"]');
+            const statusSelect = document.querySelector('select[name="status"]');
+            const sortSelect = document.querySelector('select[name="sort"]');
+            
+            if (searchInput && !searchInput.value) searchInput.value = filters.search;
+            if (statusSelect && statusSelect.value === 'all') statusSelect.value = filters.status;
+            if (sortSelect && sortSelect.value === 'name') sortSelect.value = filters.sort;
+        } catch (e) {
+            console.log('Could not load saved filters:', e);
         }
     }
 });

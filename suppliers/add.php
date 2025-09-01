@@ -88,13 +88,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors['name'] = 'Supplier name cannot exceed 255 characters';
     }
 
-    // Check if supplier name already exists
+    // Check if supplier name already exists (case-insensitive)
     if (!empty($name)) {
-        $stmt = $conn->prepare("SELECT COUNT(*) as count FROM suppliers WHERE name = :name");
+        $stmt = $conn->prepare("SELECT COUNT(*) as count, GROUP_CONCAT(id) as existing_ids FROM suppliers WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name))");
         $stmt->bindParam(':name', $name);
         $stmt->execute();
-        if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
-            $errors['name'] = 'This supplier name already exists';
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($result['count'] > 0) {
+            $errors['name'] = 'This supplier name already exists (ID: ' . $result['existing_ids'] . '). Please use a different name.';
+            error_log("Duplicate supplier name attempted: '$name', existing IDs: " . $result['existing_ids']);
         }
     }
 
@@ -123,9 +125,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors['payment_terms'] = 'Payment terms cannot exceed 100 characters';
     }
 
-    // If no errors, save the supplier
+    // If no errors, save the supplier with additional safety checks
     if (empty($errors)) {
         try {
+            // Start transaction for safety
+            $conn->beginTransaction();
+            
+            // Final duplicate check before insert (race condition protection)
+            $final_check_stmt = $conn->prepare("SELECT COUNT(*) as count FROM suppliers WHERE LOWER(TRIM(name)) = LOWER(TRIM(:name))");
+            $final_check_stmt->bindParam(':name', $name);
+            $final_check_stmt->execute();
+            if ($final_check_stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+                throw new Exception("Supplier name already exists (race condition detected)");
+            }
+            
+            // Debug logging
+            error_log("=== SUPPLIER ADD DEBUG ===");
+            error_log("Creating supplier: '$name'");
+            error_log("POST data: " . print_r($_POST, true));
+            
             $insert_stmt = $conn->prepare("
                 INSERT INTO suppliers (
                     name, contact_person, email, phone, address, payment_terms, notes, is_active, created_at, updated_at
@@ -134,26 +152,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 )
             ");
 
-            $insert_stmt->bindParam(':name', $name);
-            $insert_stmt->bindParam(':contact_person', $contact_person);
-            $insert_stmt->bindParam(':email', $email);
-            $insert_stmt->bindParam(':phone', $phone);
-            $insert_stmt->bindParam(':address', $address);
-            $insert_stmt->bindParam(':payment_terms', $payment_terms);
-            $insert_stmt->bindParam(':notes', $notes);
+            // Bind parameters with explicit types
+            $insert_stmt->bindParam(':name', $name, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':contact_person', $contact_person, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':email', $email, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':phone', $phone, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':address', $address, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':payment_terms', $payment_terms, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':notes', $notes, PDO::PARAM_STR);
             $insert_stmt->bindParam(':is_active', $is_active, PDO::PARAM_INT);
 
             if ($insert_stmt->execute()) {
                 $supplier_id = $conn->lastInsertId();
+                
+                error_log("Successfully created supplier ID: $supplier_id, name: '$name'");
 
                 // Log the activity
-                logActivity($conn, $user_id, 'supplier_created', "Created supplier: $name");
+                logActivity($conn, $user_id, 'supplier_created', "Created supplier: $name (ID: $supplier_id)");
+                
+                // Commit transaction
+                $conn->commit();
 
                 $_SESSION['success'] = "Supplier '$name' has been added successfully!";
                 header("Location: view.php?id=$supplier_id");
                 exit();
+            } else {
+                throw new Exception("Insert statement failed to execute");
             }
-        } catch (PDOException $e) {
+        } catch (Exception $e) {
+            // Rollback transaction on any error
+            if ($conn->inTransaction()) {
+                $conn->rollBack();
+            }
+            
             $errors['general'] = 'An error occurred while saving the supplier. Please try again.';
             error_log("Supplier creation error: " . $e->getMessage());
         }

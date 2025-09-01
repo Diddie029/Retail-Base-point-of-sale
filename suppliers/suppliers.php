@@ -74,31 +74,15 @@ $status_filter = sanitizeProductInput($_GET['status'] ?? 'all');
 $sort_by = sanitizeProductInput($_GET['sort'] ?? 'name');
 $sort_order = sanitizeProductInput($_GET['order'] ?? 'ASC');
 
-// Build query with filters
+// No advanced filters needed for simplified view
+
+// Build simplified query - just basic supplier info and product count
 $query = "
     SELECT s.*,
            COUNT(p.id) as product_count,
-           COUNT(CASE WHEN p.status = 'active' THEN 1 END) as active_product_count,
-           COALESCE(spm.quality_score, 0) as performance_score,
-           COALESCE(spm.on_time_percentage, 0) as on_time_delivery_rate,
-           COALESCE(spm.return_rate, 0) as return_rate,
-           COALESCE(spm.average_delivery_days, 0) as avg_delivery_days,
-           COALESCE(spm.total_orders, 0) as total_orders_90days,
-           COALESCE(spm.total_order_value, 0) as order_value_90days
+           COUNT(CASE WHEN p.status = 'active' THEN 1 END) as active_product_count
     FROM suppliers s
     LEFT JOIN products p ON s.id = p.supplier_id
-    LEFT JOIN (
-        SELECT supplier_id,
-               quality_score,
-               ROUND((on_time_deliveries / NULLIF(total_orders, 0)) * 100, 2) as on_time_percentage,
-               return_rate,
-               average_delivery_days,
-               total_orders,
-               total_order_value
-        FROM supplier_performance_metrics
-        WHERE metric_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-        ORDER BY metric_date DESC
-    ) spm ON s.id = spm.supplier_id
     WHERE 1=1
 ";
 
@@ -114,10 +98,10 @@ if ($status_filter !== 'all') {
     $params[':is_active'] = ($status_filter === 'active') ? 1 : 0;
 }
 
-$query .= " GROUP BY s.id, spm.quality_score, spm.on_time_percentage, spm.return_rate, spm.average_delivery_days, spm.total_orders, spm.total_order_value";
+$query .= " GROUP BY s.id";
 
-// Add sorting
-$valid_sort_columns = ['name', 'contact_person', 'email', 'created_at', 'product_count', 'performance_score', 'on_time_delivery_rate', 'return_rate', 'avg_delivery_days', 'total_orders_90days', 'order_value_90days'];
+// Add simplified sorting
+$valid_sort_columns = ['name', 'contact_person', 'email', 'created_at', 'product_count'];
 if (in_array($sort_by, $valid_sort_columns)) {
     if ($sort_by === 'name') {
         $query .= " ORDER BY s.name " . ($sort_order === 'DESC' ? 'DESC' : 'ASC');
@@ -127,23 +111,11 @@ if (in_array($sort_by, $valid_sort_columns)) {
         $query .= " ORDER BY s.email " . ($sort_order === 'DESC' ? 'DESC' : 'ASC');
     } elseif ($sort_by === 'created_at') {
         $query .= " ORDER BY s.created_at " . ($sort_order === 'DESC' ? 'DESC' : 'ASC');
-    } elseif ($sort_by === 'performance_score') {
-        $query .= " ORDER BY performance_score " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
-    } elseif ($sort_by === 'on_time_delivery_rate') {
-        $query .= " ORDER BY on_time_delivery_rate " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
-    } elseif ($sort_by === 'return_rate') {
-        $query .= " ORDER BY return_rate " . ($sort_order === 'ASC' ? 'ASC' : 'DESC') . ", s.name ASC";
-    } elseif ($sort_by === 'avg_delivery_days') {
-        $query .= " ORDER BY avg_delivery_days " . ($sort_order === 'ASC' ? 'ASC' : 'DESC') . ", s.name ASC";
-    } elseif ($sort_by === 'total_orders_90days') {
-        $query .= " ORDER BY total_orders_90days " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
-    } elseif ($sort_by === 'order_value_90days') {
-        $query .= " ORDER BY order_value_90days " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
-    } else {
-        $query .= " ORDER BY " . $sort_by . " " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
+    } elseif ($sort_by === 'product_count') {
+        $query .= " ORDER BY product_count " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
     }
 } else {
-    $query .= " ORDER BY performance_score DESC, s.name ASC";
+    $query .= " ORDER BY s.name ASC";
 }
 
 // Get total count for pagination
@@ -179,53 +151,7 @@ foreach ($params as $key => $value) {
 $stmt->execute();
 $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Calculate performance ratings for each supplier
-foreach ($suppliers as &$supplier) {
-    $score = $supplier['performance_score'] ?? 0;
-    if ($score >= 90) {
-        $supplier['performance_rating'] = 'Excellent';
-        $supplier['rating_class'] = 'success';
-    } elseif ($score >= 80) {
-        $supplier['performance_rating'] = 'Very Good';
-        $supplier['rating_class'] = 'success';
-    } elseif ($score >= 70) {
-        $supplier['performance_rating'] = 'Good';
-        $supplier['rating_class'] = 'primary';
-    } elseif ($score >= 60) {
-        $supplier['performance_rating'] = 'Fair';
-        $supplier['rating_class'] = 'warning';
-    } elseif ($score >= 50) {
-        $supplier['performance_rating'] = 'Poor';
-        $supplier['rating_class'] = 'warning';
-    } else {
-        $supplier['performance_rating'] = 'Critical';
-        $supplier['rating_class'] = 'danger';
-    }
-
-    // Calculate delivery performance class
-    $on_time_rate = $supplier['on_time_delivery_rate'] ?? 0;
-    if ($on_time_rate >= 95) {
-        $supplier['delivery_class'] = 'success';
-    } elseif ($on_time_rate >= 85) {
-        $supplier['delivery_class'] = 'primary';
-    } elseif ($on_time_rate >= 75) {
-        $supplier['delivery_class'] = 'warning';
-    } else {
-        $supplier['delivery_class'] = 'danger';
-    }
-
-    // Calculate return rate class (lower is better)
-    $return_rate = $supplier['return_rate'] ?? 0;
-    if ($return_rate <= 2) {
-        $supplier['return_class'] = 'success';
-    } elseif ($return_rate <= 5) {
-        $supplier['return_class'] = 'primary';
-    } elseif ($return_rate <= 10) {
-        $supplier['return_class'] = 'warning';
-    } else {
-        $supplier['return_class'] = 'danger';
-    }
-}
+// No performance calculations needed for simplified view
 
 // Handle individual toggle actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_supplier'])) {
@@ -388,7 +314,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
             $usage_count = $check_stmt->fetch(PDO::FETCH_ASSOC)['count'];
 
             if ($usage_count > 0) {
-                $_SESSION['error'] = 'Cannot delete suppliers that are being used by products.';
+                $_SESSION['error'] = 'Cannot delete suppliers that are being used by products. Please deactivate them instead.';
             } else {
                 $stmt = $conn->prepare("DELETE FROM suppliers WHERE id IN ($placeholders)");
                 $stmt->execute($supplier_ids);
@@ -581,6 +507,479 @@ unset($_SESSION['success'], $_SESSION['error']);
                 display: none;
             }
         }
+
+        /* Bulk Actions Enhanced UI */
+        .bulk-actions-container {
+            position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .bulk-actions-panel {
+            background: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+            transition: all 0.3s ease;
+            min-width: 600px;
+            max-width: 800px;
+            flex: 1;
+        }
+
+        .bulk-actions-panel:hover {
+            box-shadow: 0 6px 25px rgba(0, 0, 0, 0.12);
+            transform: translateY(-2px);
+        }
+
+        .bulk-actions-header {
+            background: linear-gradient(135deg, var(--primary-color, #6366f1) 0%, #4f46e5 100%);
+            color: white;
+            padding: 0.75rem 1.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .bulk-actions-header i {
+            font-size: 1.1rem;
+            margin-right: 0.5rem;
+        }
+
+        .bulk-actions-title {
+            font-weight: 600;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .bulk-actions-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 0.25rem;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            opacity: 0.8;
+        }
+
+        .bulk-actions-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+            opacity: 1;
+            transform: scale(1.1);
+        }
+
+        .bulk-actions-content {
+            padding: 1.5rem;
+        }
+
+        .bulk-action-row {
+            display: grid;
+            grid-template-columns: 1fr 1.5fr;
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .bulk-action-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .bulk-action-label {
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #495057;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .bulk-action-group .form-select,
+        .bulk-action-group .form-control {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 0.75rem;
+            font-size: 0.95rem;
+            transition: all 0.2s ease;
+            background-color: #fff;
+        }
+
+        .bulk-action-group .form-select:focus,
+        .bulk-action-group .form-control:focus {
+            border-color: var(--primary-color, #6366f1);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+            outline: none;
+        }
+
+        .bulk-action-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 1rem;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .bulk-confirmation {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .bulk-confirmation .form-check-input {
+            margin: 0;
+            transform: scale(1.1);
+        }
+
+        .bulk-confirmation .form-check-label {
+            font-size: 0.9rem;
+            color: #495057;
+            cursor: pointer;
+        }
+
+        .bulk-confirmation #selectedCount {
+            font-weight: 600;
+            color: var(--primary-color, #6366f1);
+        }
+
+        .bulk-action-footer .btn {
+            padding: 0.75rem 1.5rem;
+            font-weight: 600;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            text-transform: none;
+        }
+
+        .bulk-action-footer .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .suppliers-count {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            font-size: 0.9rem;
+            color: #6c757d;
+            white-space: nowrap;
+        }
+
+        .suppliers-count i {
+            color: var(--primary-color, #6366f1);
+        }
+
+        /* Responsive adjustments for bulk actions */
+        @media (max-width: 992px) {
+            .bulk-actions-container {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .bulk-actions-panel {
+                min-width: auto;
+                max-width: none;
+            }
+            
+            .bulk-action-row {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+            
+            .bulk-action-footer {
+                flex-direction: column;
+                gap: 1rem;
+                align-items: stretch;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .bulk-actions-content {
+                padding: 1rem;
+            }
+            
+            .bulk-actions-header {
+                padding: 0.5rem 1rem;
+            }
+            
+            .bulk-action-footer .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        /* Animation for bulk actions panel */
+        @keyframes slideInFromTop {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .bulk-actions-panel[style*="display: block"] {
+            animation: slideInFromTop 0.3s ease-out;
+        }
+
+        /* Enhanced reason group styling */
+        #reasonGroup {
+            transition: all 0.3s ease;
+        }
+
+        #reasonGroup.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        #reasonGroup:not(.show) {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+
+        /* Action-specific styling */
+        .bulk-action-group .form-select[value="delete"] {
+            border-color: #dc3545;
+        }
+
+        .bulk-action-group .form-select[value="deactivate"] {
+            border-color: #fd7e14;
+        }
+
+        .bulk-action-group .form-select[value="activate"] {
+            border-color: #28a745;
+        }
+
+        /* Modern Stats Cards */
+        .stats-overview {
+            margin-bottom: 2rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 0;
+        }
+
+        .stat-card {
+            background: #fff;
+            border-radius: 16px;
+            padding: 0;
+            border: 1px solid #e5e7eb;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--card-color, #6366f1) 0%, var(--card-color-light, #8b5cf6) 100%);
+        }
+
+        .card-success {
+            --card-color: #10b981;
+            --card-color-light: #34d399;
+        }
+
+        .card-info {
+            --card-color: #3b82f6;
+            --card-color-light: #60a5fa;
+        }
+
+        .card-warning {
+            --card-color: #f59e0b;
+            --card-color-light: #fbbf24;
+        }
+
+        .card-primary {
+            --card-color: #6366f1;
+            --card-color-light: #8b5cf6;
+        }
+
+        .stat-content {
+            display: flex;
+            align-items: center;
+            padding: 1.5rem;
+            gap: 1rem;
+        }
+
+        .stat-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            background: linear-gradient(135deg, var(--card-color, #6366f1), var(--card-color-light, #8b5cf6));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.75rem;
+            flex-shrink: 0;
+            box-shadow: 0 4px 12px rgba(var(--card-color-rgb, 99, 102, 241), 0.3);
+        }
+
+        .card-success .stat-icon {
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+
+        .card-info .stat-icon {
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+
+        .card-warning .stat-icon {
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+        }
+
+        .stat-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #111827;
+            line-height: 1;
+            margin-bottom: 0.25rem;
+        }
+
+        .value-unit {
+            font-size: 1.25rem;
+            font-weight: 500;
+            color: #6b7280;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-trend {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .trend-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+
+        .trend-indicator.success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+
+        .trend-indicator.warning {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        .trend-indicator.neutral {
+            background-color: #e5e7eb;
+            color: #374151;
+        }
+
+        .trend-text {
+            font-size: 0.75rem;
+            color: #9ca3af;
+            font-weight: 500;
+        }
+
+        /* Responsive adjustments for stats */
+        @media (max-width: 1024px) {
+            .stats-grid {
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 1rem;
+            }
+            
+            .stat-content {
+                padding: 1.25rem;
+            }
+            
+            .stat-icon {
+                width: 56px;
+                height: 56px;
+                font-size: 1.5rem;
+            }
+            
+            .stat-value {
+                font-size: 2rem;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+            
+            .stat-content {
+                padding: 1rem;
+            }
+            
+            .stat-icon {
+                width: 48px;
+                height: 48px;
+                font-size: 1.25rem;
+            }
+            
+            .stat-value {
+                font-size: 1.75rem;
+            }
+        }
+
+        /* Animation for stats cards */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .stat-card {
+            animation: fadeInUp 0.6s ease-out forwards;
+        }
+
+        .stat-card:nth-child(1) { animation-delay: 0.1s; }
+        .stat-card:nth-child(2) { animation-delay: 0.2s; }
+        .stat-card:nth-child(3) { animation-delay: 0.3s; }
+        .stat-card:nth-child(4) { animation-delay: 0.4s; }
     </style>
 </head>
 <body>
@@ -601,6 +1000,10 @@ unset($_SESSION['success'], $_SESSION['error']);
                     <div class="header-subtitle">Manage your product suppliers and vendors</div>
                 </div>
                 <div class="header-actions">
+                    <a href="bulk_operations.php" class="btn btn-outline-primary me-2">
+                        <i class="bi bi-arrow-down-up"></i>
+                        Bulk Operations
+                    </a>
                     <a href="add.php" class="btn btn-primary">
                         <i class="bi bi-plus"></i>
                         Add Supplier
@@ -631,12 +1034,102 @@ unset($_SESSION['success'], $_SESSION['error']);
             </div>
             <?php endif; ?>
 
+            <!-- Stats Overview -->
+            <div class="stats-overview">
+                <div class="stats-grid">
+                    <div class="stat-card card-success">
+                        <div class="stat-content">
+                            <div class="stat-icon">
+                                <i class="bi bi-check-circle-fill"></i>
+                            </div>
+                            <div class="stat-info">
+                                <div class="stat-value"><?php 
+                                    $active_count = array_filter($suppliers, function($s) { return $s['is_active']; });
+                                    echo count($active_count);
+                                ?></div>
+                                <div class="stat-label">Active Suppliers</div>
+                                <div class="stat-trend">
+                                    <span class="trend-indicator success">
+                                        <i class="bi bi-arrow-up"></i>
+                                        <?php echo round((count($active_count) / max($total_suppliers, 1)) * 100, 1); ?>%
+                                    </span>
+                                    <span class="trend-text">of total suppliers</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card card-info">
+                        <div class="stat-content">
+                            <div class="stat-icon">
+                                <i class="bi bi-person-check-fill"></i>
+                            </div>
+                            <div class="stat-info">
+                                <div class="stat-value"><?php echo $total_suppliers; ?></div>
+                                <div class="stat-label">Total Suppliers</div>
+                                <div class="stat-trend">
+                                    <span class="trend-indicator neutral">
+                                        <i class="bi bi-building"></i>
+                                        Directory
+                                    </span>
+                                    <span class="trend-text">in your network</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card card-warning">
+                        <div class="stat-content">
+                            <div class="stat-icon">
+                                <i class="bi bi-pause-circle-fill"></i>
+                            </div>
+                            <div class="stat-info">
+                                <div class="stat-value"><?php 
+                                    $inactive_count = count($suppliers) - count($active_count);
+                                    echo $inactive_count;
+                                ?></div>
+                                <div class="stat-label">Inactive Suppliers</div>
+                                <div class="stat-trend">
+                                    <span class="trend-indicator <?php echo $inactive_count == 0 ? 'success' : 'warning'; ?>">
+                                        <i class="bi bi-<?php echo $inactive_count == 0 ? 'check' : 'exclamation-triangle'; ?>"></i>
+                                        <?php echo $inactive_count == 0 ? 'None' : 'Review'; ?>
+                                    </span>
+                                    <span class="trend-text">requires attention</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card card-primary">
+                        <div class="stat-content">
+                            <div class="stat-icon">
+                                <i class="bi bi-box-seam-fill"></i>
+                            </div>
+                            <div class="stat-info">
+                                <div class="stat-value"><?php echo array_sum(array_column($suppliers, 'product_count')); ?></div>
+                                <div class="stat-label">Total Products</div>
+                                <div class="stat-trend">
+                                    <span class="trend-indicator neutral">
+                                        <i class="bi bi-collection"></i>
+                                        Catalog
+                                    </span>
+                                    <span class="trend-text">across all suppliers</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Filters and Search -->
             <div class="filter-section">
                 <form method="GET" class="filter-row">
-                    <div class="form-group">
-                        <input type="text" class="form-control" id="searchInput" name="search"
-                               value="<?php echo htmlspecialchars($search); ?>" placeholder="Search suppliers...">
+                    <div class="form-group search-container">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" class="form-control" id="searchInput" name="search"
+                                   value="<?php echo htmlspecialchars($search); ?>" placeholder="Search suppliers...">
+                        </div>
                     </div>
                     <div class="form-group">
                         <select class="form-control" name="status">
@@ -652,12 +1145,6 @@ unset($_SESSION['success'], $_SESSION['error']);
                             <option value="email" <?php echo $sort_by === 'email' ? 'selected' : ''; ?>>Email</option>
                             <option value="created_at" <?php echo $sort_by === 'created_at' ? 'selected' : ''; ?>>Date Added</option>
                             <option value="product_count" <?php echo $sort_by === 'product_count' ? 'selected' : ''; ?>>Product Count</option>
-                            <option value="performance_score" <?php echo $sort_by === 'performance_score' ? 'selected' : ''; ?>>Performance Score</option>
-                            <option value="on_time_delivery_rate" <?php echo $sort_by === 'on_time_delivery_rate' ? 'selected' : ''; ?>>On-Time Delivery</option>
-                            <option value="return_rate" <?php echo $sort_by === 'return_rate' ? 'selected' : ''; ?>>Return Rate</option>
-                            <option value="avg_delivery_days" <?php echo $sort_by === 'avg_delivery_days' ? 'selected' : ''; ?>>Avg Delivery Days</option>
-                            <option value="total_orders_90days" <?php echo $sort_by === 'total_orders_90days' ? 'selected' : ''; ?>>Orders (90 Days)</option>
-                            <option value="order_value_90days" <?php echo $sort_by === 'order_value_90days' ? 'selected' : ''; ?>>Order Value (90 Days)</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -671,30 +1158,54 @@ unset($_SESSION['success'], $_SESSION['error']);
                         </a>
                     </div>
                 </form>
+                
+                <!-- Active Filter Tags -->
+                <?php if ($search || $status_filter !== 'all'): ?>
+                <div class="filter-tags">
+                    <?php if ($search): ?>
+                    <span class="filter-tag">
+                        Search: "<?php echo htmlspecialchars($search); ?>"
+                        <button type="button" class="remove-tag" onclick="removeFilter('search')">
+                            <i class="bi bi-x"></i>
+                        </button>
+                    </span>
+                    <?php endif; ?>
+                    
+                    <?php if ($status_filter !== 'all'): ?>
+                    <span class="filter-tag">
+                        Status: <?php echo ucfirst($status_filter); ?>
+                        <button type="button" class="remove-tag" onclick="removeFilter('status')">
+                            <i class="bi bi-x"></i>
+                        </button>
+                    </span>
+                    <?php endif; ?>
+                </div>
+                <?php endif; ?>
             </div>
 
             <!-- Bulk Actions -->
             <form method="POST" id="bulkForm">
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <div class="bulk-actions" id="bulkActions" style="display: none;">
-                        <select class="form-control d-inline-block w-auto" name="bulk_action" id="bulkAction" required>
-                            <option value="">Choose action</option>
-                            <option value="activate">Activate</option>
-                            <option value="deactivate">Deactivate</option>
-                            <option value="delete">Delete</option>
-                        </select>
-                        <textarea class="form-control d-inline-block w-auto ms-2" name="supplier_block_note" id="bulkBlockNote" rows="1" placeholder="Block reason..." style="display: none; min-width: 200px;" required></textarea>
-                        <textarea class="form-control d-inline-block w-auto ms-2" name="supplier_block_note" id="bulkBlockNote" rows="1" placeholder="Block reason..." style="display: none; min-width: 200px;" required></textarea>
-                        <div class="form-check d-inline-block ms-2" id="bulkConfirmationSection" style="display: none;">
-                            <input class="form-check-input" type="checkbox" id="bulkConfirmAction" name="bulk_confirm_action" required>
-                            <label class="form-check-label" for="bulkConfirmAction">
-                                Confirm action
-                            </label>
+                        <div class="d-flex align-items-center gap-3">
+                            <select class="form-select" name="bulk_action" id="bulkAction" required style="width: auto; min-width: 180px;">
+                                <option value="">Choose action</option>
+                                <option value="activate">Activate</option>
+                                <option value="deactivate">Deactivate</option>
+                                <option value="delete">Delete</option>
+                            </select>
+                            <textarea class="form-control" name="supplier_block_note" id="bulkBlockNote" rows="1" placeholder="Reason required..." style="display: none; min-width: 250px; resize: none;"></textarea>
+                            <div class="form-check" id="bulkConfirmationSection" style="display: none;">
+                                <input class="form-check-input" type="checkbox" id="bulkConfirmAction" name="bulk_confirm_action" required>
+                                <label class="form-check-label" for="bulkConfirmAction">
+                                    Confirm (<span id="selectedCount">0</span> selected)
+                                </label>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-sm">
+                                <i class="bi bi-check"></i>
+                                Apply
+                            </button>
                         </div>
-                        <button type="submit" class="btn btn-primary btn-sm">
-                            <i class="bi bi-check"></i>
-                            Apply
-                        </button>
                     </div>
                     <div class="text-muted">
                         Showing <?php echo count($suppliers); ?> of <?php echo $total_suppliers; ?> suppliers
@@ -715,10 +1226,6 @@ unset($_SESSION['success'], $_SESSION['error']);
                                     <th>Email</th>
                                     <th>Phone</th>
                                     <th>Products</th>
-                                    <th>Performance</th>
-                                    <th>Delivery</th>
-                                    <th>Quality</th>
-                                    <th>Orders (90d)</th>
                                     <th>Status</th>
                                     <th>Created</th>
                                     <th>Actions</th>
@@ -727,7 +1234,7 @@ unset($_SESSION['success'], $_SESSION['error']);
                             <tbody>
                                 <?php if (empty($suppliers)): ?>
                                 <tr>
-                                    <td colspan="13" class="text-center py-5">
+                                    <td colspan="9" class="text-center py-5">
                                         <i class="bi bi-truck text-muted" style="font-size: 3rem;"></i>
                                         <h5 class="mt-3 text-muted">No suppliers found</h5>
                                         <p class="text-muted">Start by adding your first supplier</p>
@@ -750,7 +1257,9 @@ unset($_SESSION['success'], $_SESSION['error']);
                                                     <i class="bi bi-truck"></i>
                                                 </div>
                                                 <div>
-                                                    <strong><?php echo htmlspecialchars($supplier['name']); ?></strong>
+                                                    <a href="view.php?id=<?php echo $supplier['id']; ?>" class="text-decoration-none text-dark">
+                                                        <strong><?php echo htmlspecialchars($supplier['name']); ?></strong>
+                                                    </a>
                                                 </div>
                                             </div>
                                         </td>
@@ -777,58 +1286,6 @@ unset($_SESSION['success'], $_SESSION['error']);
                                             <span class="badge badge-primary">
                                                 <?php echo $supplier['active_product_count']; ?>/<?php echo $supplier['product_count']; ?>
                                             </span>
-                                        </td>
-                                        <td>
-                                            <?php if ($supplier['performance_score'] > 0): ?>
-                                                <div class="text-center">
-                                                    <div class="fw-bold text-<?php echo $supplier['rating_class']; ?>">
-                                                        <?php echo round($supplier['performance_score'], 1); ?>/100
-                                                    </div>
-                                                    <small class="badge bg-<?php echo $supplier['rating_class']; ?>">
-                                                        <?php echo $supplier['performance_rating']; ?>
-                                                    </small>
-                                                </div>
-                                            <?php else: ?>
-                                                <span class="text-muted">No data</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if ($supplier['on_time_delivery_rate'] > 0): ?>
-                                                <div class="text-center">
-                                                    <div class="fw-bold text-<?php echo $supplier['delivery_class']; ?>">
-                                                        <?php echo round($supplier['on_time_delivery_rate'], 1); ?>%
-                                                    </div>
-                                                    <small class="text-muted">
-                                                        <?php echo round($supplier['avg_delivery_days'], 1); ?> days avg
-                                                    </small>
-                                                </div>
-                                            <?php else: ?>
-                                                <span class="text-muted">No data</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if ($supplier['return_rate'] >= 0): ?>
-                                                <div class="text-center">
-                                                    <div class="fw-bold text-<?php echo $supplier['return_class']; ?>">
-                                                        <?php echo round($supplier['return_rate'], 1); ?>%
-                                                    </div>
-                                                    <small class="text-muted">return rate</small>
-                                                </div>
-                                            <?php else: ?>
-                                                <span class="text-muted">No data</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if ($supplier['total_orders_90days'] > 0): ?>
-                                                <div class="text-center">
-                                                    <div class="fw-bold"><?php echo $supplier['total_orders_90days']; ?></div>
-                                                    <small class="text-muted">
-                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($supplier['order_value_90days'], 0); ?>
-                                                    </small>
-                                                </div>
-                                            <?php else: ?>
-                                                <span class="text-muted">No orders</span>
-                                            <?php endif; ?>
                                         </td>
                                         <td>
                                             <span class="badge <?php echo $supplier['is_active'] ? 'badge-success' : 'badge-secondary'; ?>">
@@ -1024,6 +1481,230 @@ unset($_SESSION['success'], $_SESSION['error']);
             
             // Initial hide delay
             hideScrollbarAfterDelay();
+        });
+        
+        // Filter management functions
+        function removeFilter(filterName) {
+            const url = new URL(window.location);
+            url.searchParams.delete(filterName);
+            window.location.href = url.toString();
+        }
+        
+        // Add Quick Actions Panel
+        const quickActionsPanel = document.createElement('div');
+        quickActionsPanel.className = 'quick-actions';
+        quickActionsPanel.innerHTML = `
+            <a href="add.php" class="quick-action-btn" title="Add New Supplier">
+                <i class="bi bi-plus"></i>
+            </a>
+            <a href="bulk_operations.php" class="quick-action-btn" title="Bulk Operations">
+                <i class="bi bi-arrow-down-up"></i>
+            </a>
+            <button type="button" class="quick-action-btn" onclick="exportSelected()" title="Export Selected">
+                <i class="bi bi-download"></i>
+            </button>
+            <button type="button" class="quick-action-btn" onclick="selectAll()" title="Select All">
+                <i class="bi bi-check2-all"></i>
+            </button>
+            <button type="button" class="quick-action-btn" onclick="clearSelection()" title="Clear Selection">
+                <i class="bi bi-x-square"></i>
+            </button>
+        `;
+        document.body.appendChild(quickActionsPanel);
+        
+        // Quick action functions
+        window.exportSelected = function() {
+            const selectedSuppliers = document.querySelectorAll('.supplier-checkbox:checked');
+            if (selectedSuppliers.length === 0) {
+                alert('Please select suppliers to export.');
+                return;
+            }
+            
+            // Create a form to submit selected supplier IDs to bulk operations
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = 'bulk_operations.php';
+            form.style.display = 'none';
+            
+            selectedSuppliers.forEach(checkbox => {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'supplier_ids[]';
+                input.value = checkbox.value;
+                form.appendChild(input);
+            });
+            
+            const exportInput = document.createElement('input');
+            exportInput.type = 'hidden';
+            exportInput.name = 'export_suppliers';
+            exportInput.value = '1';
+            form.appendChild(exportInput);
+            
+            const formatInput = document.createElement('input');
+            formatInput.type = 'hidden';
+            formatInput.name = 'export_format';
+            formatInput.value = 'csv';
+            form.appendChild(formatInput);
+            
+            document.body.appendChild(form);
+            form.submit();
+        };
+        
+        window.selectAll = function() {
+            const selectAllCheckbox = document.getElementById('selectAll');
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.dispatchEvent(new Event('change'));
+            }
+        };
+        
+        window.clearSelection = function() {
+            const selectAllCheckbox = document.getElementById('selectAll');
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.dispatchEvent(new Event('change'));
+            }
+        };
+        
+        // Enhanced search with debounce
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            let searchTimeout;
+            searchInput.addEventListener('input', function() {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    // Auto-submit form after 1 second of inactivity
+                    const form = this.closest('form');
+                    if (form && this.value.length >= 3) {
+                        // Only auto-search if user typed at least 3 characters
+                        form.submit();
+                    }
+                }, 1000);
+            });
+        }
+        
+        // Handle bulk actions UI - Simplified
+        const bulkActionSelect = document.getElementById('bulkAction');
+        const bulkBlockNote = document.getElementById('bulkBlockNote');
+        const bulkConfirmSection = document.getElementById('bulkConfirmationSection');
+        const reasonGroup = document.getElementById('reasonGroup');
+        const selectedCountSpan = document.getElementById('selectedCount');
+        
+        // Update selected count
+        function updateSelectedCount() {
+            const selectedSuppliers = document.querySelectorAll('.supplier-checkbox:checked');
+            const count = selectedSuppliers.length;
+            if (selectedCountSpan) {
+                selectedCountSpan.textContent = count;
+            }
+            return count;
+        }
+        
+        // Handle bulk action selection changes
+        if (bulkActionSelect) {
+            bulkActionSelect.addEventListener('change', function() {
+                const action = this.value;
+                
+                // Show/hide reason field only for deactivate
+                if (action === 'deactivate') {
+                    reasonGroup.style.display = 'block';
+                    bulkBlockNote.required = true;
+                    bulkBlockNote.placeholder = 'Enter deactivation reason...';
+                } else {
+                    reasonGroup.style.display = 'none';
+                    bulkBlockNote.required = false;
+                    bulkBlockNote.value = '';
+                }
+                
+                // Show confirmation section for any action
+                if (action && action !== '') {
+                    bulkConfirmSection.style.display = 'block';
+                    updateSelectedCount();
+                } else {
+                    bulkConfirmSection.style.display = 'none';
+                }
+            });
+        }
+        
+        // Enhanced bulk form validation
+        const bulkForm = document.getElementById('bulkForm');
+        if (bulkForm) {
+            bulkForm.addEventListener('submit', function(e) {
+                const action = bulkActionSelect.value;
+                const selectedSuppliers = document.querySelectorAll('.supplier-checkbox:checked');
+                const reason = bulkBlockNote.value.trim();
+                const confirmed = document.getElementById('bulkConfirmAction').checked;
+                
+                // Check if suppliers are selected
+                if (selectedSuppliers.length === 0) {
+                    e.preventDefault();
+                    alert('Please select at least one supplier.');
+                    return;
+                }
+                
+                // Check if action is selected
+                if (!action) {
+                    e.preventDefault();
+                    alert('Please select an action.');
+                    return;
+                }
+                
+                // Check reason only for deactivate (delete doesn't need reason)
+                if (action === 'deactivate' && reason === '') {
+                    e.preventDefault();
+                    alert('Please provide a reason for deactivating the selected suppliers.');
+                    bulkBlockNote.focus();
+                    return;
+                }
+                
+                // Check confirmation
+                if (!confirmed) {
+                    e.preventDefault();
+                    alert('Please confirm that you want to proceed with this action.');
+                    return;
+                }
+                
+                // Final confirmation for dangerous actions
+                if (action === 'delete') {
+                    const confirmDelete = confirm(`Are you sure you want to delete ${selectedSuppliers.length} supplier(s)?\n\nThis action cannot be undone.\n\nReason: ${reason}`);
+                    if (!confirmDelete) {
+                        e.preventDefault();
+                        return;
+                    }
+                } else if (action === 'deactivate') {
+                    const confirmDeactivate = confirm(`Are you sure you want to deactivate ${selectedSuppliers.length} supplier(s)?\n\nReason: ${reason}`);
+                    if (!confirmDeactivate) {
+                        e.preventDefault();
+                        return;
+                    }
+                }
+            });
+        }
+    </script>
+    
+    <!-- Quick Actions Panel -->
+    <div class="floating-actions">
+        <button type="button" class="fab fab-mini" onclick="scrollToTop()" title="Scroll to Top">
+            <i class="bi bi-arrow-up"></i>
+        </button>
+    </div>
+    
+    <script>
+        function scrollToTop() {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        }
+        
+        // Show/hide scroll to top button
+        window.addEventListener('scroll', function() {
+            const scrollButton = document.querySelector('.floating-actions .fab');
+            if (window.scrollY > 300) {
+                scrollButton.style.display = 'flex';
+            } else {
+                scrollButton.style.display = 'none';
+            }
         });
     </script>
 
