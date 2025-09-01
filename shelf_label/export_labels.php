@@ -9,6 +9,32 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Get user information
+$user_id = $_SESSION['user_id'];
+$username = $_SESSION['username'];
+$role_name = $_SESSION['role_name'] ?? 'User';
+$role_id = $_SESSION['role_id'] ?? 0;
+
+// Get user permissions
+$permissions = [];
+if ($role_id) {
+    $stmt = $conn->prepare("
+        SELECT p.name
+        FROM permissions p
+        JOIN role_permissions rp ON p.id = rp.permission_id
+        WHERE rp.role_id = :role_id
+    ");
+    $stmt->bindParam(':role_id', $role_id);
+    $stmt->execute();
+    $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
+}
+
+// Check if user has permission to manage products
+if (!hasPermission('manage_products', $permissions)) {
+    header("Location: ../dashboard/dashboard.php?error=access_denied");
+    exit();
+}
+
 // Get system settings
 $settings = [];
 $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");

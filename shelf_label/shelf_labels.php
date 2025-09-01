@@ -29,6 +29,12 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
+// Check if user has permission to manage products
+if (!hasPermission('manage_products', $permissions)) {
+    header("Location: ../dashboard/dashboard.php?error=access_denied");
+    exit();
+}
+
 // Get system settings
 $settings = [];
 $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");

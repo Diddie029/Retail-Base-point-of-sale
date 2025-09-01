@@ -63,6 +63,12 @@
                     Bulk Operations
                 </a>
             </div>
+            <div class="nav-item">
+                <a href="/shelf_label/shelf_labels.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/shelf_label/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/shelf_label/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-tags"></i>
+                    Shelf Labels
+                </a>
+            </div>
         </div>
         <?php endif; ?>
 

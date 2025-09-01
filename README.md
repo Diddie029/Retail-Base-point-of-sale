@@ -42,6 +42,7 @@ A comprehensive, web-based Point of Sale system built with PHP, MySQL, and moder
 - **Inventory Transfers**: Move stock between locations
 - **Stock Adjustments**: Manual stock corrections with audit trail
 - **Batch Tracking**: Track inventory by batch/lot numbers
+- **Shelf Labels**: Generate, print, and export professional shelf labels with barcodes
 
 ### Sales & Customer Features
 - **Customer Database**: Store customer information and purchase history
