@@ -55,9 +55,25 @@ $stats['out_of_stock'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
 $stmt = $conn->query("SELECT COALESCE(SUM(quantity * cost_price), 0) as total FROM products");
 $stats['total_inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
 
+// Enhanced Order Statistics
+// Orders Pending Reception
+$stmt = $conn->query("SELECT COUNT(*) as count FROM inventory_orders WHERE status IN ('sent', 'waiting_for_delivery')");
+$stats['orders_pending_reception'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+// Orders Received Today
+$stmt = $conn->query("SELECT COUNT(*) as count FROM inventory_orders WHERE status = 'received' AND DATE(updated_at) = CURDATE()");
+$stats['orders_received_today'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
 // Pending Orders
 $stmt = $conn->query("SELECT COUNT(*) as count FROM inventory_orders WHERE status = 'pending'");
 $stats['pending_orders'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+// All Orders by Status
+$stmt = $conn->query("SELECT COUNT(*) as count FROM inventory_orders WHERE status = 'sent'");
+$stats['sent_orders'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+$stmt = $conn->query("SELECT COUNT(*) as count FROM inventory_orders WHERE status = 'waiting_for_delivery'");
+$stats['waiting_orders'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
 
 // Received Orders/Invoices
 $stmt = $conn->query("SELECT COUNT(*) as count FROM inventory_orders WHERE status = 'received'");
@@ -71,6 +87,15 @@ $stmt = $conn->query("
     WHERE io.status = 'received'
 ");
 $stats['total_invoice_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+// Orders Value Today (received today)
+$stmt = $conn->query("
+    SELECT COALESCE(SUM(ioi.received_quantity * ioi.cost_price), 0) as total
+    FROM inventory_order_items ioi
+    INNER JOIN inventory_orders io ON ioi.order_id = io.id
+    WHERE io.status = 'received' AND DATE(io.updated_at) = CURDATE()
+");
+$stats['orders_value_today'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
 
 // Return Statistics
 try {
@@ -341,9 +366,60 @@ if (hasPermission('manage_products', $permissions)) {
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
             <?php endif; ?>
+            
+            <!-- Quick Actions -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <h3 class="section-title mb-3">Quick Actions</h3>
+                    
+                    <!-- Quick Actions Row 1: Product & Order Management -->
+                    <div class="quick-actions mb-3">
+                        <?php if (hasPermission('manage_products', $permissions)): ?>
+                        <a href="../products/add.php" class="action-btn">
+                            <i class="bi bi-box-seam"></i>
+                            Add Product
+                        </a>
+                        <?php endif; ?>
+                        <a href="create_order.php" class="action-btn">
+                            <i class="bi bi-plus-circle"></i>
+                            Create Order
+                        </a>
+                        <a href="view_orders.php?filter=receivable" class="action-btn">
+                            <i class="bi bi-box-arrow-in-down"></i>
+                            Receive Order
+                        </a>
+                        <a href="view_invoices.php" class="action-btn">
+                            <i class="bi bi-receipt"></i>
+                            View Invoices
+                        </a>
+                    </div>
+
+                    <!-- Quick Actions Row 2: Monitoring & Returns -->
+                    <div class="quick-actions">
+                        <a href="view_orders.php" class="action-btn">
+                            <i class="bi bi-list-check"></i>
+                            View Orders
+                        </a>
+                        <a href="create_return.php" class="action-btn">
+                            <i class="bi bi-arrow-return-left"></i>
+                            Create Return
+                        </a>
+                        <div class="action-btn" onclick="window.location.href='returns_list.php'" style="cursor: pointer;">
+                            <i class="bi bi-arrow-return-left"></i>
+                            Returns Management
+                        </div>
+                        <a href="../shelf_label/shelf_labels.php" class="action-btn">
+                            <i class="bi bi-tags"></i>
+                            Shelf Labels
+                        </a>
+                    </div>
+                </div>
+            </div>
+
             <!-- Statistics Cards -->
             <div class="row">
                 <div class="col-12">
+                    <h3 class="section-title mb-3">Inventory Statistics</h3>
                     <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-header">
@@ -488,45 +564,53 @@ if (hasPermission('manage_products', $permissions)) {
                     </div>
                 </div>
 
+                <!-- Enhanced Order Statistics -->
+                <div class="stat-card" onclick="window.location.href='view_orders.php?status=pending'" style="cursor: pointer;">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-warning">
+                            <i class="bi bi-hourglass-split"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($stats['orders_pending_reception']); ?></div>
+                    <div class="stat-label">Orders Pending Reception</div>
+                    <?php if ($stats['orders_pending_reception'] > 0): ?>
+                    <div class="stat-change negative">
+                        <i class="bi bi-clock"></i> Awaiting reception
+                    </div>
+                    <?php else: ?>
+                    <div class="stat-change positive">
+                        <i class="bi bi-check-circle"></i> All caught up
+                    </div>
+                    <?php endif; ?>
+                </div>
+
+                <div class="stat-card" onclick="window.location.href='view_orders.php?date=today'" style="cursor: pointer;">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-success">
+                            <i class="bi bi-calendar-check"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($stats['orders_received_today']); ?></div>
+                    <div class="stat-label">Orders Received Today</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-arrow-up"></i> Today's activity
                     </div>
                 </div>
-            </div>
 
-            <!-- Quick Actions Row 1 -->
-            <div class="quick-actions">
-                <a href="create_order.php" class="action-btn">
-                    <i class="bi bi-plus-circle"></i>
-                    Create Order
-                </a>
-                <a href="view_orders.php" class="action-btn">
-                    <i class="bi bi-list-check"></i>
-                    View Orders
-                </a>
-                <a href="view_invoices.php" class="action-btn">
-                    <i class="bi bi-receipt"></i>
-                    View Invoices
-                </a>
-                <a href="view_orders.php?filter=receivable" class="action-btn">
-                    <i class="bi bi-box-arrow-in-down"></i>
-                    Receive Order
-                </a>
-            </div>
+                <div class="stat-card" onclick="window.location.href='view_invoices.php?date=today'" style="cursor: pointer;">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-primary">
+                            <i class="bi bi-currency-dollar"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value currency"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($stats['orders_value_today'], 2); ?></div>
+                    <div class="stat-label">Orders Value Today</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-graph-up"></i> Today's total
+                    </div>
+                </div>
 
-            <!-- Quick Actions Row 2 -->
-            <div class="quick-actions">
-                <a href="create_return.php" class="action-btn">
-                    <i class="bi bi-arrow-return-left"></i>
-                    Create Return
-                </a>
-                <?php if (hasPermission('manage_products', $permissions)): ?>
-                <a href="../products/add.php" class="action-btn">
-                    <i class="bi bi-box-seam"></i>
-                    Add Product
-                </a>
-                <?php endif; ?>
-                <div class="action-btn" onclick="window.location.href='returns_list.php'" style="cursor: pointer;">
-                    <i class="bi bi-arrow-return-left"></i>
-                    Returns Management
+                    </div>
                 </div>
             </div>
 

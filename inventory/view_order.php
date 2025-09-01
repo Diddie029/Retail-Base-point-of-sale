@@ -70,7 +70,7 @@ if (!$order_id) {
 }
 
 // Sanitize order ID - remove any potential harmful characters but keep alphanumeric and some special chars
-$order_id = filter_var($order_id, FILTER_SANITIZE_STRING);
+$order_id = filter_var($order_id, FILTER_SANITIZE_FULL_SPECIAL_CHARS);
 if (empty($order_id)) {
     header("Location: inventory.php?error=invalid_order");
     exit();
@@ -415,6 +415,37 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
             font-weight: 600;
             color: #6c757d;
         }
+
+        .badge-outline-success {
+            color: #198754;
+            border: 1px solid #198754;
+            background-color: transparent;
+        }
+
+        .badge-outline-warning {
+            color: #ffc107;
+            border: 1px solid #ffc107;
+            background-color: transparent;
+        }
+
+        .badge-outline-secondary {
+            color: #6c757d;
+            border: 1px solid #6c757d;
+            background-color: transparent;
+        }
+
+        .breadcrumb-item a {
+            text-decoration: none;
+            color: var(--primary-color);
+        }
+
+        .breadcrumb-item a:hover {
+            color: #5a67d8;
+        }
+
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
     </style>
 </head>
 <body>
@@ -456,6 +487,81 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
             </div>
             <?php endif; ?>
 
+            <!-- Enhanced Navigation Breadcrumb -->
+            <div class="card mb-3">
+                <div class="card-body py-2">
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb mb-0">
+                            <li class="breadcrumb-item">
+                                <a href="inventory.php"><i class="bi bi-house-door me-1"></i>Inventory</a>
+                            </li>
+                            <li class="breadcrumb-item">
+                                <a href="view_orders.php">Orders</a>
+                            </li>
+                            <li class="breadcrumb-item active" aria-current="page">
+                                Order <?php echo htmlspecialchars($order['order_number']); ?>
+                            </li>
+                            <?php if ($order['status'] === 'received' && !empty($order['invoice_number'])): ?>
+                            <li class="breadcrumb-item">
+                                <i class="bi bi-arrow-right mx-2"></i>
+                                <a href="view_invoice.php?id=<?php echo urlencode($order['invoice_number']); ?>" class="text-success">
+                                    <i class="bi bi-receipt me-1"></i>Invoice <?php echo htmlspecialchars($order['invoice_number']); ?>
+                                </a>
+                            </li>
+                            <?php endif; ?>
+                        </ol>
+                    </nav>
+                </div>
+            </div>
+
+            <!-- Order Status Flow -->
+            <div class="card mb-3">
+                <div class="card-body py-2">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="d-flex align-items-center">
+                            <span class="badge bg-<?php echo $order['status'] === 'pending' ? 'warning' : ($order['status'] === 'received' ? 'success' : 'primary'); ?> me-2">
+                                <i class="bi bi-<?php echo $order['status'] === 'pending' ? 'clock' : ($order['status'] === 'received' ? 'check-circle' : 'arrow-right'); ?> me-1"></i>
+                                <?php echo ucfirst(str_replace('_', ' ', $order['status'])); ?>
+                            </span>
+                            
+                            <!-- Progress indicators -->
+                            <div class="d-flex align-items-center small text-muted">
+                                <span class="badge badge-outline-<?php echo in_array($order['status'], ['pending', 'sent', 'waiting_for_delivery', 'received']) ? 'success' : 'secondary'; ?>">Created</span>
+                                <i class="bi bi-arrow-right mx-2"></i>
+                                <span class="badge badge-outline-<?php echo in_array($order['status'], ['sent', 'waiting_for_delivery', 'received']) ? 'success' : 'secondary'; ?>">Sent</span>
+                                <i class="bi bi-arrow-right mx-2"></i>
+                                <span class="badge badge-outline-<?php echo in_array($order['status'], ['waiting_for_delivery', 'received']) ? 'warning' : 'secondary'; ?>">Awaiting</span>
+                                <i class="bi bi-arrow-right mx-2"></i>
+                                <span class="badge badge-outline-<?php echo $order['status'] === 'received' ? 'success' : 'secondary'; ?>">Received</span>
+                                <?php if ($order['status'] === 'received' && !empty($order['invoice_number'])): ?>
+                                <i class="bi bi-arrow-right mx-2"></i>
+                                <span class="badge badge-outline-success">
+                                    <i class="bi bi-receipt me-1"></i>Invoiced
+                                </span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        
+                        <small class="text-muted">
+                            <?php 
+                            $progress = 0;
+                            switch($order['status']) {
+                                case 'pending': $progress = 25; break;
+                                case 'sent': $progress = 50; break;
+                                case 'waiting_for_delivery': $progress = 75; break;
+                                case 'received': $progress = 100; break;
+                            }
+                            echo $progress . '% Complete';
+                            ?>
+                        </small>
+                    </div>
+                    <div class="progress mt-2" style="height: 4px;">
+                        <div class="progress-bar bg-<?php echo $order['status'] === 'received' ? 'success' : 'primary'; ?>" 
+                             style="width: <?php echo $progress; ?>%"></div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Order Header -->
             <div class="order-header">
                 <div class="row">
@@ -465,7 +571,7 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
                     </div>
                     <div class="col-md-6 text-end">
                         <span class="status-badge status-<?php echo $order['status']; ?>">
-                            <?php echo ucfirst($order['status']); ?>
+                            <?php echo ucfirst(str_replace('_', ' ', $order['status'])); ?>
                         </span>
                     </div>
                 </div>
@@ -666,6 +772,24 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
                             <h5 class="mb-0"><i class="bi bi-gear me-2"></i>Actions</h5>
                         </div>
                         <div class="card-body">
+                            <!-- Quick Reception Actions -->
+                            <?php if (in_array($order['status'], ['sent', 'waiting_for_delivery'])): ?>
+                            <div class="mb-3 p-3 bg-light rounded">
+                                <h6 class="text-primary mb-2"><i class="bi bi-lightning me-2"></i>Quick Reception</h6>
+                                <div class="d-grid gap-2 d-md-flex justify-content-md-start">
+                                    <button type="button" class="btn btn-success btn-sm" onclick="markAllItemsReceived()">
+                                        <i class="bi bi-check-all me-1"></i>Mark All Received
+                                    </button>
+                                    <button type="button" class="btn btn-warning btn-sm" onclick="showDiscrepancyModal()">
+                                        <i class="bi bi-exclamation-triangle me-1"></i>Receive with Discrepancies
+                                    </button>
+                                    <a href="receive_order.php?id=<?php echo urlencode($order_id); ?>" class="btn btn-info btn-sm">
+                                        <i class="bi bi-boxes me-1"></i>Partial Reception
+                                    </a>
+                                </div>
+                            </div>
+                            <?php endif; ?>
+                            
                             <div class="action-buttons">
                                 <?php if ($order['status'] === 'pending'): ?>
                                 <form method="POST" class="d-inline">
@@ -769,6 +893,125 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
                 } else {
                     alert('Please enter a valid quantity between 0 and ' + maxQuantity);
                 }
+            }
+        }
+
+        // Quick reception functions
+        function markAllItemsReceived() {
+            if (confirm('Mark all items as fully received? This will update the product stock and mark the order as received.')) {
+                const promises = [];
+                
+                <?php foreach ($order['items'] as $item): ?>
+                <?php if ($item['received_quantity'] < $item['quantity']): ?>
+                const form<?php echo $item['id']; ?> = document.createElement('form');
+                form<?php echo $item['id']; ?>.method = 'POST';
+                form<?php echo $item['id']; ?>.innerHTML = `
+                    <input type="hidden" name="action" value="update_received_quantity">
+                    <input type="hidden" name="item_id" value="<?php echo $item['id']; ?>">
+                    <input type="hidden" name="received_quantity" value="<?php echo $item['quantity']; ?>">
+                `;
+                document.body.appendChild(form<?php echo $item['id']; ?>);
+                form<?php echo $item['id']; ?>.submit();
+                return; // Submit first form and let page reload
+                <?php endif; ?>
+                <?php endforeach; ?>
+                
+                // If no items need updating, just reload
+                location.reload();
+            }
+        }
+        
+        function showDiscrepancyModal() {
+            // Create a simple modal for bulk discrepancy handling
+            const modalHtml = `
+                <div class="modal fade" id="discrepancyModal" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Receive with Discrepancies</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <form id="discrepancyForm">
+                                    <input type="hidden" name="action" value="bulk_receive_discrepancies">
+                                    <div class="table-responsive">
+                                        <table class="table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Product</th>
+                                                    <th>Ordered</th>
+                                                    <th>Received</th>
+                                                    <th>New Quantity</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($order['items'] as $item): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($item['product_name']); ?></td>
+                                                    <td><?php echo $item['quantity']; ?></td>
+                                                    <td><?php echo $item['received_quantity']; ?></td>
+                                                    <td>
+                                                        <input type="number" class="form-control" 
+                                                               name="item_<?php echo $item['id']; ?>" 
+                                                               value="<?php echo $item['received_quantity']; ?>"
+                                                               min="0" max="<?php echo $item['quantity']; ?>">
+                                                    </td>
+                                                </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </form>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-warning" onclick="submitDiscrepancies()">Update Quantities</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Remove existing modal if any
+            const existingModal = document.getElementById('discrepancyModal');
+            if (existingModal) {
+                existingModal.remove();
+            }
+            
+            // Add modal to DOM
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('discrepancyModal'));
+            modal.show();
+        }
+        
+        function submitDiscrepancies() {
+            const form = document.getElementById('discrepancyForm');
+            const formData = new FormData(form);
+            
+            // Process each item
+            let hasUpdates = false;
+            <?php foreach ($order['items'] as $item): ?>
+            const qty<?php echo $item['id']; ?> = parseInt(formData.get('item_<?php echo $item['id']; ?>')) || 0;
+            if (qty<?php echo $item['id']; ?> !== <?php echo $item['received_quantity']; ?>) {
+                hasUpdates = true;
+                // Submit individual update
+                const itemForm = document.createElement('form');
+                itemForm.method = 'POST';
+                itemForm.innerHTML = `
+                    <input type="hidden" name="action" value="update_received_quantity">
+                    <input type="hidden" name="item_id" value="<?php echo $item['id']; ?>">
+                    <input type="hidden" name="received_quantity" value="${qty<?php echo $item['id']; ?>}">
+                `;
+                document.body.appendChild(itemForm);
+                itemForm.submit();
+                return; // Submit first change and reload
+            }
+            <?php endforeach; ?>
+            
+            if (!hasUpdates) {
+                alert('No changes detected.');
             }
         }
 

@@ -57,6 +57,12 @@
                     Inventory
                 </a>
             </div>
+            <div class="nav-item">
+                <a href="/products/bulk_operations.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/products/bulk_operations.php') !== false || strpos($_SERVER['REQUEST_URI'], '/products/bulk_') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/products/bulk_operations.php') !== false || strpos($_SERVER['REQUEST_URI'], '/products/bulk_') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-lightning-charge"></i>
+                    Bulk Operations
+                </a>
+            </div>
         </div>
         <?php endif; ?>
 
@@ -103,6 +109,61 @@
                 <i class="bi bi-graph-up"></i>
                 Analytics
             </a>
+        </div>
+        <?php endif; ?>
+
+        <?php if (hasPermission('view_expense_reports', $permissions) || hasPermission('create_expenses', $permissions)): ?>
+        <div class="nav-section">
+            <div class="nav-section-title">
+                <i class="bi bi-cash-stack me-2"></i>
+                Expense Management
+            </div>
+            <div class="nav-item">
+                <a href="/expenses/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/') !== false && !strpos($_SERVER['REQUEST_URI'], '/expenses/categories.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/departments.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/vendors.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/reports.php') ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/') !== false && !strpos($_SERVER['REQUEST_URI'], '/expenses/categories.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/departments.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/vendors.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/reports.php') ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-list-ul"></i>
+                    All Expenses
+                </a>
+            </div>
+            <?php if (hasPermission('create_expenses', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/expenses/add.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/add.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/add.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-plus-circle"></i>
+                    Add Expense
+                </a>
+            </div>
+            <?php endif; ?>
+            <?php if (hasPermission('manage_expense_categories', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/expenses/categories.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/categories.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/categories.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-tags"></i>
+                    Categories
+                </a>
+            </div>
+            <?php endif; ?>
+            <?php if (hasPermission('manage_expense_departments', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/expenses/departments.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/departments.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/departments.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-building"></i>
+                    Departments
+                </a>
+            </div>
+            <?php endif; ?>
+            <?php if (hasPermission('manage_expense_vendors', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/expenses/vendors.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/vendors.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/vendors.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-shop"></i>
+                    Vendors
+                </a>
+            </div>
+            <?php endif; ?>
+            <?php if (hasPermission('view_expense_reports', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/expenses/reports.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/reports.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/reports.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-graph-up"></i>
+                    Reports
+                </a>
+            </div>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
 

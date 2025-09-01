@@ -724,7 +724,7 @@ function updateProductStock($conn, $product_id, $quantity_change) {
 
 /**
  * Get recent login attempts for monitoring
- * 
+ *
  * @param PDO $conn Database connection
  * @param string|null $identifier Filter by specific identifier (username/email)
  * @param string|null $ip_address Filter by specific IP address
@@ -733,26 +733,26 @@ function updateProductStock($conn, $product_id, $quantity_change) {
  */
 function getRecentLoginAttempts($conn, $identifier = null, $ip_address = null, $limit = 50) {
     try {
-        $sql = "SELECT identifier, attempt_type, ip_address, success, created_at 
-                FROM login_attempts 
+        $sql = "SELECT identifier, attempt_type, ip_address, success, created_at
+                FROM login_attempts
                 WHERE 1=1";
         $params = [];
-        
+
         if ($identifier !== null) {
             $sql .= " AND identifier = :identifier";
             $params[':identifier'] = $identifier;
         }
-        
+
         if ($ip_address !== null) {
             $sql .= " AND ip_address = :ip_address";
             $params[':ip_address'] = $ip_address;
         }
-        
+
         $sql .= " ORDER BY created_at DESC LIMIT :limit";
         $params[':limit'] = $limit;
-        
+
         $stmt = $conn->prepare($sql);
-        
+
         // Bind parameters
         foreach ($params as $key => $value) {
             if ($key === ':limit') {
@@ -761,11 +761,428 @@ function getRecentLoginAttempts($conn, $identifier = null, $ip_address = null, $
                 $stmt->bindValue($key, $value);
             }
         }
-        
+
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         return [];
+    }
+}
+
+/**
+ * SUPPLIER PERFORMANCE FUNCTIONS
+ */
+
+/**
+ * Calculate supplier delivery performance metrics
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @param string $start_date Start date for calculation (Y-m-d)
+ * @param string $end_date End date for calculation (Y-m-d)
+ * @return array Delivery performance metrics
+ */
+function calculateDeliveryPerformance($conn, $supplier_id, $start_date = null, $end_date = null) {
+    try {
+        $sql = "
+            SELECT
+                COUNT(*) as total_orders,
+                SUM(CASE WHEN io.received_date IS NOT NULL AND io.received_date <= io.expected_date THEN 1 ELSE 0 END) as on_time_deliveries,
+                SUM(CASE WHEN io.received_date IS NOT NULL AND io.received_date > io.expected_date THEN 1 ELSE 0 END) as late_deliveries,
+                AVG(CASE WHEN io.received_date IS NOT NULL THEN DATEDIFF(io.received_date, io.order_date) ELSE NULL END) as avg_delivery_days,
+                AVG(CASE WHEN io.received_date IS NOT NULL AND io.expected_date IS NOT NULL THEN DATEDIFF(io.received_date, io.expected_date) ELSE NULL END) as avg_delay_days
+            FROM inventory_orders io
+            WHERE io.supplier_id = :supplier_id
+            AND io.status IN ('received', 'completed')
+        ";
+
+        $params = [':supplier_id' => $supplier_id];
+
+        if ($start_date) {
+            $sql .= " AND io.order_date >= :start_date";
+            $params[':start_date'] = $start_date;
+        }
+
+        if ($end_date) {
+            $sql .= " AND io.order_date <= :end_date";
+            $params[':end_date'] = $end_date;
+        }
+
+        $stmt = $conn->prepare($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $total_orders = (int)($result['total_orders'] ?? 0);
+        $on_time = (int)($result['on_time_deliveries'] ?? 0);
+        $late = (int)($result['late_deliveries'] ?? 0);
+
+        return [
+            'total_orders' => $total_orders,
+            'on_time_deliveries' => $on_time,
+            'late_deliveries' => $late,
+            'on_time_percentage' => $total_orders > 0 ? round(($on_time / $total_orders) * 100, 2) : 0,
+            'average_delivery_days' => round($result['avg_delivery_days'] ?? 0, 2),
+            'average_delay_days' => round($result['avg_delay_days'] ?? 0, 2)
+        ];
+    } catch (PDOException $e) {
+        return [
+            'total_orders' => 0,
+            'on_time_deliveries' => 0,
+            'late_deliveries' => 0,
+            'on_time_percentage' => 0,
+            'average_delivery_days' => 0,
+            'average_delay_days' => 0
+        ];
+    }
+}
+
+/**
+ * Calculate supplier quality metrics
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @param string $start_date Start date for calculation (Y-m-d)
+ * @param string $end_date End date for calculation (Y-m-d)
+ * @return array Quality metrics
+ */
+function calculateQualityMetrics($conn, $supplier_id, $start_date = null, $end_date = null) {
+    try {
+        // Get total orders and returns
+        $sql = "
+            SELECT
+                COUNT(DISTINCT io.id) as total_orders,
+                COUNT(DISTINCT r.id) as total_returns,
+                COALESCE(SUM(r.total_amount), 0) as total_return_value,
+                COALESCE(SUM(io.total_amount), 0) as total_order_value
+            FROM inventory_orders io
+            LEFT JOIN returns r ON io.supplier_id = r.supplier_id
+            WHERE io.supplier_id = :supplier_id
+            AND io.status IN ('received', 'completed')
+        ";
+
+        $params = [':supplier_id' => $supplier_id];
+
+        if ($start_date) {
+            $sql .= " AND io.order_date >= :start_date";
+            $params[':start_date'] = $start_date;
+        }
+
+        if ($end_date) {
+            $sql .= " AND io.order_date <= :end_date";
+            $params[':end_date'] = $end_date;
+        }
+
+        $stmt = $conn->prepare($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $total_orders = (int)($result['total_orders'] ?? 0);
+        $total_returns = (int)($result['total_returns'] ?? 0);
+        $total_return_value = (float)($result['total_return_value'] ?? 0);
+        $total_order_value = (float)($result['total_order_value'] ?? 0);
+
+        // Calculate return rate and quality score
+        $return_rate = $total_orders > 0 ? ($total_returns / $total_orders) * 100 : 0;
+        $value_return_rate = $total_order_value > 0 ? ($total_return_value / $total_order_value) * 100 : 0;
+
+        // Quality score: 100 - (return_rate * 10) - (value_return_rate * 5)
+        // Higher score = better quality
+        $quality_score = max(0, min(100, 100 - ($return_rate * 10) - ($value_return_rate * 5)));
+
+        return [
+            'total_orders' => $total_orders,
+            'total_returns' => $total_returns,
+            'return_rate' => round($return_rate, 2),
+            'total_return_value' => $total_return_value,
+            'total_order_value' => $total_order_value,
+            'value_return_rate' => round($value_return_rate, 2),
+            'quality_score' => round($quality_score, 2)
+        ];
+    } catch (PDOException $e) {
+        return [
+            'total_orders' => 0,
+            'total_returns' => 0,
+            'return_rate' => 0,
+            'total_return_value' => 0,
+            'total_order_value' => 0,
+            'value_return_rate' => 0,
+            'quality_score' => 100
+        ];
+    }
+}
+
+/**
+ * Calculate supplier cost performance
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @param string $start_date Start date for calculation (Y-m-d)
+ * @param string $end_date End date for calculation (Y-m-d)
+ * @return array Cost performance metrics
+ */
+function calculateCostPerformance($conn, $supplier_id, $start_date = null, $end_date = null) {
+    try {
+        $sql = "
+            SELECT
+                AVG(ioi.cost_price) as avg_cost_per_unit,
+                MIN(ioi.cost_price) as min_cost_per_unit,
+                MAX(ioi.cost_price) as max_cost_per_unit,
+                SUM(ioi.total_amount) as total_order_value,
+                COUNT(DISTINCT ioi.product_id) as unique_products,
+                COUNT(ioi.id) as total_items_ordered
+            FROM inventory_order_items ioi
+            INNER JOIN inventory_orders io ON ioi.order_id = io.id
+            WHERE io.supplier_id = :supplier_id
+            AND io.status IN ('received', 'completed')
+        ";
+
+        $params = [':supplier_id' => $supplier_id];
+
+        if ($start_date) {
+            $sql .= " AND io.order_date >= :start_date";
+            $params[':start_date'] = $start_date;
+        }
+
+        if ($end_date) {
+            $sql .= " AND io.order_date <= :end_date";
+            $params[':end_date'] = $end_date;
+        }
+
+        $stmt = $conn->prepare($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return [
+            'average_cost_per_unit' => round($result['avg_cost_per_unit'] ?? 0, 2),
+            'min_cost_per_unit' => round($result['min_cost_per_unit'] ?? 0, 2),
+            'max_cost_per_unit' => round($result['max_cost_per_unit'] ?? 0, 2),
+            'total_order_value' => round($result['total_order_value'] ?? 0, 2),
+            'unique_products' => (int)($result['unique_products'] ?? 0),
+            'total_items_ordered' => (int)($result['total_items_ordered'] ?? 0)
+        ];
+    } catch (PDOException $e) {
+        return [
+            'average_cost_per_unit' => 0,
+            'min_cost_per_unit' => 0,
+            'max_cost_per_unit' => 0,
+            'total_order_value' => 0,
+            'unique_products' => 0,
+            'total_items_ordered' => 0
+        ];
+    }
+}
+
+/**
+ * Get supplier performance summary
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @param string $period Period for calculation ('30days', '90days', '1year', 'all')
+ * @return array Comprehensive performance metrics
+ */
+function getSupplierPerformance($conn, $supplier_id, $period = '90days') {
+    // Calculate date range based on period
+    $end_date = date('Y-m-d');
+    switch ($period) {
+        case '30days':
+            $start_date = date('Y-m-d', strtotime('-30 days'));
+            break;
+        case '90days':
+            $start_date = date('Y-m-d', strtotime('-90 days'));
+            break;
+        case '1year':
+            $start_date = date('Y-m-d', strtotime('-1 year'));
+            break;
+        case 'all':
+        default:
+            $start_date = null;
+            break;
+    }
+
+    $delivery = calculateDeliveryPerformance($conn, $supplier_id, $start_date, $end_date);
+    $quality = calculateQualityMetrics($conn, $supplier_id, $start_date, $end_date);
+    $cost = calculateCostPerformance($conn, $supplier_id, $start_date, $end_date);
+
+    // Calculate overall performance score (weighted average)
+    $delivery_weight = 0.4;
+    $quality_weight = 0.4;
+    $cost_weight = 0.2;
+
+    $delivery_score = $delivery['on_time_percentage'];
+    $quality_score = $quality['quality_score'];
+
+    // Cost score: higher is better (inverse relationship with cost)
+    $avg_cost = $cost['average_cost_per_unit'];
+    $cost_score = $avg_cost > 0 ? max(0, 100 - ($avg_cost / 10)) : 100;
+
+    $overall_score = round(
+        ($delivery_score * $delivery_weight) +
+        ($quality_score * $quality_weight) +
+        ($cost_score * $cost_weight),
+        2
+    );
+
+    return [
+        'period' => $period,
+        'start_date' => $start_date,
+        'end_date' => $end_date,
+        'delivery_performance' => $delivery,
+        'quality_metrics' => $quality,
+        'cost_performance' => $cost,
+        'overall_score' => $overall_score,
+        'performance_rating' => getPerformanceRating($overall_score)
+    ];
+}
+
+/**
+ * Get performance rating based on score
+ *
+ * @param float $score Performance score (0-100)
+ * @return string Performance rating
+ */
+function getPerformanceRating($score) {
+    if ($score >= 90) return 'Excellent';
+    if ($score >= 80) return 'Very Good';
+    if ($score >= 70) return 'Good';
+    if ($score >= 60) return 'Fair';
+    if ($score >= 50) return 'Poor';
+    return 'Critical';
+}
+
+/**
+ * Get supplier cost comparison with market averages
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @return array Cost comparison data
+ */
+function getSupplierCostComparison($conn, $supplier_id) {
+    try {
+        // Get supplier's average costs by product category
+        $sql = "
+            SELECT
+                c.name as category_name,
+                AVG(ioi.cost_price) as supplier_avg_cost,
+                COUNT(DISTINCT ioi.product_id) as products_count
+            FROM inventory_order_items ioi
+            INNER JOIN inventory_orders io ON ioi.order_id = io.id
+            INNER JOIN products p ON ioi.product_id = p.id
+            INNER JOIN categories c ON p.category_id = c.id
+            WHERE io.supplier_id = :supplier_id
+            AND io.status IN ('received', 'completed')
+            GROUP BY c.id, c.name
+            ORDER BY supplier_avg_cost DESC
+        ";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->execute([':supplier_id' => $supplier_id]);
+        $supplier_costs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Get market average costs (from all suppliers)
+        $market_sql = "
+            SELECT
+                c.name as category_name,
+                AVG(ioi.cost_price) as market_avg_cost
+            FROM inventory_order_items ioi
+            INNER JOIN inventory_orders io ON ioi.order_id = io.id
+            INNER JOIN products p ON ioi.product_id = p.id
+            INNER JOIN categories c ON p.category_id = c.id
+            WHERE io.status IN ('received', 'completed')
+            GROUP BY c.id, c.name
+        ";
+
+        $stmt = $conn->prepare($market_sql);
+        $stmt->execute();
+        $market_costs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Combine data
+        $comparison = [];
+        foreach ($supplier_costs as $supplier_cost) {
+            $category_name = $supplier_cost['category_name'];
+            $market_cost = 0;
+
+            foreach ($market_costs as $mc) {
+                if ($mc['category_name'] === $category_name) {
+                    $market_cost = $mc['market_avg_cost'];
+                    break;
+                }
+            }
+
+            $supplier_avg = $supplier_cost['supplier_avg_cost'];
+            $difference = $market_cost > 0 ? (($supplier_avg - $market_cost) / $market_cost) * 100 : 0;
+
+            $comparison[] = [
+                'category' => $category_name,
+                'supplier_avg_cost' => round($supplier_avg, 2),
+                'market_avg_cost' => round($market_cost, 2),
+                'difference_percentage' => round($difference, 2),
+                'products_count' => $supplier_cost['products_count'],
+                'cost_status' => $difference > 10 ? 'high' : ($difference < -10 ? 'low' : 'average')
+            ];
+        }
+
+        return $comparison;
+    } catch (PDOException $e) {
+        return [];
+    }
+}
+
+/**
+ * Update supplier performance metrics in database
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @param string $metric_date Date for metrics (Y-m-d)
+ * @return bool Success status
+ */
+function updateSupplierPerformanceMetrics($conn, $supplier_id, $metric_date = null) {
+    try {
+        if (!$metric_date) {
+            $metric_date = date('Y-m-d');
+        }
+
+        // Get performance data for last 90 days
+        $performance = getSupplierPerformance($conn, $supplier_id, '90days');
+
+        // Insert or update metrics
+        $sql = "
+            INSERT INTO supplier_performance_metrics
+            (supplier_id, metric_date, total_orders, on_time_deliveries, late_deliveries,
+             average_delivery_days, total_returns, quality_score, total_order_value,
+             average_cost_per_unit, total_return_value, return_rate)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                total_orders = VALUES(total_orders),
+                on_time_deliveries = VALUES(on_time_deliveries),
+                late_deliveries = VALUES(late_deliveries),
+                average_delivery_days = VALUES(average_delivery_days),
+                total_returns = VALUES(total_returns),
+                quality_score = VALUES(quality_score),
+                total_order_value = VALUES(total_order_value),
+                average_cost_per_unit = VALUES(average_cost_per_unit),
+                total_return_value = VALUES(total_return_value),
+                return_rate = VALUES(return_rate)
+        ";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->execute([
+            $supplier_id,
+            $metric_date,
+            $performance['delivery_performance']['total_orders'],
+            $performance['delivery_performance']['on_time_deliveries'],
+            $performance['delivery_performance']['late_deliveries'],
+            $performance['delivery_performance']['average_delivery_days'],
+            $performance['quality_metrics']['total_returns'],
+            $performance['quality_metrics']['quality_score'],
+            $performance['cost_performance']['total_order_value'],
+            $performance['cost_performance']['average_cost_per_unit'],
+            $performance['quality_metrics']['total_return_value'],
+            $performance['quality_metrics']['return_rate']
+        ]);
+
+        return true;
+    } catch (PDOException $e) {
+        return false;
     }
 }
 

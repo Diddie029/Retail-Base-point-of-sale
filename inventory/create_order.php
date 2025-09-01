@@ -103,15 +103,14 @@ function getNextOrderNumber($length) {
     global $conn;
 
     try {
-        $today = date('Y-m-d');
+        // Get the highest order number from all orders (not just today)
         $stmt = $conn->prepare("
             SELECT order_number
             FROM inventory_orders
-            WHERE DATE(created_at) = :today
             ORDER BY id DESC
             LIMIT 1
         ");
-        $stmt->execute([':today' => $today]);
+        $stmt->execute();
         $lastOrder = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($lastOrder) {
@@ -128,12 +127,51 @@ function getNextOrderNumber($length) {
         return str_pad($nextNumber, $length, '0', STR_PAD_LEFT);
 
     } catch (Exception $e) {
-        return str_pad(mt_rand(1, pow(10, $length) - 1), $length, '0', STR_PAD_LEFT);
+        // Use timestamp-based fallback for uniqueness
+        return str_pad(time() % pow(10, $length), $length, '0', STR_PAD_LEFT);
     }
 }
 
 // Get order creation status using db.php function
-$orderStatus = getOrderCreationStatus($conn);
+$orderStatus = [];
+if (function_exists('getOrderCreationStatus')) {
+    $orderStatus = getOrderCreationStatus($conn);
+} else {
+    // Fallback implementation if function not available
+    $orderStatus = [
+        'ready' => true,
+        'issues' => [],
+        'warnings' => [],
+        'supplier_count' => 0,
+        'product_count' => 0,
+        'category_count' => 0
+    ];
+    
+    try {
+        // Count active suppliers
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM suppliers WHERE is_active = 1");
+        $orderStatus['supplier_count'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+        
+        // Count products with suppliers
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM products WHERE supplier_id IS NOT NULL AND status = 'active'");
+        $orderStatus['product_count'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+        
+        // Count categories
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM categories");
+        $orderStatus['category_count'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+        
+        if ($orderStatus['supplier_count'] == 0) {
+            $orderStatus['issues'][] = "No active suppliers found. Add at least one active supplier to create orders.";
+        }
+        if ($orderStatus['product_count'] == 0) {
+            $orderStatus['issues'][] = "No products assigned to suppliers. Assign products to suppliers to create orders.";
+        }
+        
+        $orderStatus['ready'] = empty($orderStatus['issues']);
+    } catch (Exception $e) {
+        $orderStatus['issues'][] = "Database error: " . $e->getMessage();
+    }
+}
 
 // Determine current step
 $current_step = $_GET['step'] ?? 'supplier';
@@ -222,22 +260,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             throw new Exception('Missing required order information. Please complete all previous steps.');
                         }
 
-                // Use db.php validation function
-                $validation = validateOrderCreation($conn, $supplier_id, array_column($products, 'id'));
-                if (!$validation['valid']) {
-                    $error_details = implode('; ', $validation['errors']);
-                    if (!empty($validation['warnings'])) {
-                        $error_details .= '; Warnings: ' . implode('; ', $validation['warnings']);
+                // Use db.php validation function or fallback
+                if (function_exists('validateOrderCreation')) {
+                    $validation = validateOrderCreation($conn, $supplier_id, array_column($products, 'id'));
+                    if (!$validation['valid']) {
+                        $error_details = implode('; ', $validation['errors']);
+                        if (!empty($validation['warnings'])) {
+                            $error_details .= '; Warnings: ' . implode('; ', $validation['warnings']);
+                        }
+                        throw new Exception("Order validation failed: $error_details");
                     }
-                    throw new Exception("Order validation failed: $error_details");
+                } else {
+                    // Fallback validation
+                    $stmt = $conn->prepare("SELECT id, name, is_active FROM suppliers WHERE id = ?");
+                    $stmt->execute([$supplier_id]);
+                    $supplier = $stmt->fetch(PDO::FETCH_ASSOC);
+                    
+                    if (!$supplier) {
+                        throw new Exception("Supplier not found");
+                    }
+                    if (!$supplier['is_active']) {
+                        throw new Exception("Supplier '{$supplier['name']}' is inactive");
+                    }
+                    
+                    // Check products
+                    if (!empty($products)) {
+                        $placeholders = str_repeat('?,', count($products) - 1) . '?';
+                        $stmt = $conn->prepare(
+                            "SELECT p.id, p.name, p.status FROM products p WHERE p.id IN ($placeholders)"
+                        );
+                        $stmt->execute(array_column($products, 'id'));
+                        $db_products = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                        
+                        foreach ($db_products as $product) {
+                            if ($product['status'] === 'blocked') {
+                                throw new Exception("Product '{$product['name']}' is blocked");
+                            } elseif ($product['status'] === 'inactive') {
+                                throw new Exception("Product '{$product['name']}' is inactive");
+                            }
+                        }
+                    }
                 }
 
                 $conn->beginTransaction();
 
-                // Generate order number using settings
-        $order_number = generateOrderNumber($settings);
-
-                // Calculate totals
+                // Calculate totals first
         $total_items = 0;
         $total_amount = 0;
 
@@ -256,30 +323,97 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
-        // Insert order
-        $stmt = $conn->prepare("
-            INSERT INTO inventory_orders (
-                order_number, supplier_id, user_id, order_date, expected_date,
-                total_items, total_amount, status, notes, created_at
-            ) VALUES (
-                :order_number, :supplier_id, :user_id, :order_date, :expected_date,
-                :total_items, :total_amount, :status, :notes, NOW()
-            )
-        ");
+                // Retry logic for order number generation and insertion
+                $maxRetries = 5;
+                $retryCount = 0;
+                $order_id = null;
+                $order_number = null;
 
-        $stmt->execute([
-            ':order_number' => $order_number,
-            ':supplier_id' => $supplier_id,
-            ':user_id' => $user_id,
-            ':order_date' => $order_date,
-                    ':expected_date' => $expected_date ?: null,
-            ':total_items' => $total_items,
-            ':total_amount' => $total_amount,
-            ':status' => 'pending',
-            ':notes' => $notes
-        ]);
+                while ($retryCount < $maxRetries && $order_id === null) {
+                    try {
+                        // Generate unique order number
+                        $order_number = generateOrderNumber($settings);
+                        
+                        // Add timestamp suffix if this is a retry to ensure uniqueness
+                        if ($retryCount > 0) {
+                            $order_number .= '-R' . $retryCount . '-' . substr(microtime(true) * 1000, -4);
+                        }
 
-        $order_id = $conn->lastInsertId();
+                        // Insert order with retry logic
+                        $stmt = $conn->prepare("
+                            INSERT INTO inventory_orders (
+                                order_number, supplier_id, user_id, order_date, expected_date,
+                                total_items, total_amount, status, notes, created_at
+                            ) VALUES (
+                                :order_number, :supplier_id, :user_id, :order_date, :expected_date,
+                                :total_items, :total_amount, :status, :notes, NOW()
+                            )
+                        ");
+
+                        $stmt->execute([
+                            ':order_number' => $order_number,
+                            ':supplier_id' => $supplier_id,
+                            ':user_id' => $user_id,
+                            ':order_date' => $order_date,
+                            ':expected_date' => $expected_date ?: null,
+                            ':total_items' => $total_items,
+                            ':total_amount' => $total_amount,
+                            ':status' => 'pending',
+                            ':notes' => $notes
+                        ]);
+
+                        $order_id = $conn->lastInsertId();
+                        break; // Success, exit retry loop
+
+                    } catch (PDOException $e) {
+                        $retryCount++;
+                        error_log("Order creation attempt $retryCount failed: " . $e->getMessage());
+                        
+                        // Check if it's a duplicate key error
+                        if (strpos($e->getMessage(), '1062') !== false || strpos($e->getMessage(), 'Duplicate entry') !== false) {
+                            if ($retryCount >= $maxRetries) {
+                                // After max retries, try with a completely unique timestamp-based number
+                                $order_number = 'ORD-' . date('YmdHis') . '-' . uniqid();
+                                try {
+                                    $stmt = $conn->prepare("
+                                        INSERT INTO inventory_orders (
+                                            order_number, supplier_id, user_id, order_date, expected_date,
+                                            total_items, total_amount, status, notes, created_at
+                                        ) VALUES (
+                                            :order_number, :supplier_id, :user_id, :order_date, :expected_date,
+                                            :total_items, :total_amount, :status, :notes, NOW()
+                                        )
+                                    ");
+
+                                    $stmt->execute([
+                                        ':order_number' => $order_number,
+                                        ':supplier_id' => $supplier_id,
+                                        ':user_id' => $user_id,
+                                        ':order_date' => $order_date,
+                                        ':expected_date' => $expected_date ?: null,
+                                        ':total_items' => $total_items,
+                                        ':total_amount' => $total_amount,
+                                        ':status' => 'pending',
+                                        ':notes' => $notes
+                                    ]);
+                                    $order_id = $conn->lastInsertId();
+                                    break;
+                                } catch (PDOException $finalE) {
+                                    throw new Exception("Unable to generate unique order number after multiple attempts. Please try again in a moment.");
+                                }
+                            }
+                            // Continue retry loop for duplicate key errors
+                            continue;
+                        } else {
+                            // Re-throw non-duplicate errors immediately
+                            throw $e;
+                        }
+                    }
+                }
+
+                if ($order_id === null) {
+                    throw new Exception("Failed to create order after $maxRetries attempts. Please try again.");
+                }
 
                 // Insert order items
         $stmt = $conn->prepare("
@@ -530,6 +664,71 @@ if ($current_step === 'review' && (!isset($_SESSION['order_supplier_id']) || !is
             padding: 1rem;
             margin-bottom: 1rem;
         }
+
+        /* Search suggestions dropdown */
+        .search-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-top: none;
+            border-radius: 0 0 0.375rem 0.375rem;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            z-index: 1050;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .suggestion-item {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #f1f3f4;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .suggestion-item:hover,
+        .suggestion-item.active {
+            background-color: #f8f9fa;
+        }
+
+        .suggestion-item:last-child {
+            border-bottom: none;
+        }
+
+        .suggestion-name {
+            font-weight: 500;
+            color: #212529;
+        }
+
+        .suggestion-details {
+            font-size: 0.875rem;
+            color: #6c757d;
+            margin-top: 0.25rem;
+        }
+
+        .suggestion-price {
+            font-size: 0.875rem;
+            color: var(--primary-color);
+            font-weight: 500;
+        }
+
+        .stock-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.25rem;
+        }
+
+        .stock-indicator.ok {
+            background-color: #198754;
+        }
+
+        .stock-indicator.low {
+            background-color: #dc3545;
+        }
     </style>
 </head>
 <body>
@@ -759,11 +958,16 @@ if ($current_step === 'review' && (!isset($_SESSION['order_supplier_id']) || !is
                     </div>
                     <?php endif; ?>
 
-                            <!-- Product Search -->
+                            <!-- Product Search with Suggestions -->
                             <div class="row mb-3">
-                                <div class="col-md-8">
+                                <div class="col-md-8 position-relative">
                                     <input type="text" class="form-control" id="productSearch"
-                                           placeholder="Search products by name, SKU, or barcode...">
+                                           placeholder="Search products by name, SKU, or barcode..." 
+                                           autocomplete="off">
+                                    <!-- Search suggestions dropdown -->
+                                    <div id="searchSuggestions" class="search-suggestions" style="display: none;">
+                                        <!-- Suggestions will be populated here -->
+                                    </div>
                                 </div>
                                 <div class="col-md-4">
                                     <button type="button" class="btn btn-outline-primary" id="loadProducts">
@@ -881,12 +1085,49 @@ if ($current_step === 'review' && (!isset($_SESSION['order_supplier_id']) || !is
         </main>
     </div>
 
+    <!-- Quantity Input Modal -->
+    <div class="modal fade" id="quantityModal" tabindex="-1" aria-labelledby="quantityModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="quantityModalLabel">Add Product to Order</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="product-details mb-3">
+                        <h6 id="modalProductName">Product Name</h6>
+                        <div class="text-muted small">
+                            <span id="modalProductSKU">SKU: -</span> | 
+                            <span id="modalProductStock">Stock: 0</span>
+                        </div>
+                        <div class="mt-2">
+                            <span class="fw-semibold text-primary" id="modalProductPrice">Cost: KES 0.00</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="quantityInput" class="form-label">Quantity *</label>
+                        <input type="number" class="form-control" id="quantityInput" min="1" value="1" required>
+                        <div class="form-text">Enter the quantity you want to order</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirmAddProduct">Add to Order</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Global variables
         let selectedProducts = <?php echo json_encode($_SESSION['order_products'] ?? []); ?>;
         let currentSupplierId = <?php echo json_encode($_SESSION['order_supplier_id'] ?? null); ?>;
         let currencySymbol = '<?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?>';
+        let searchTimeout = null;
+        let selectedProductForModal = null;
+        let quantityModal = null;
+        let activeSearchIndex = -1;
 
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
@@ -902,6 +1143,12 @@ if ($current_step === 'review' && (!isset($_SESSION['order_supplier_id']) || !is
 
             // Update hidden inputs on page load
             updateHiddenProductInputs();
+            
+            // Initialize quantity modal
+            quantityModal = new bootstrap.Modal(document.getElementById('quantityModal'));
+            
+            // Real-time product search
+            initializeProductSearch();
         });
 
         function initializeEventListeners() {
@@ -1355,6 +1602,235 @@ if ($current_step === 'review' && (!isset($_SESSION['order_supplier_id']) || !is
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        // Real-time product search functionality
+        function initializeProductSearch() {
+            const searchInput = document.getElementById('productSearch');
+            const suggestionsDiv = document.getElementById('searchSuggestions');
+
+            // Search input event listeners
+            searchInput.addEventListener('input', function() {
+                const query = this.value.trim();
+                if (query.length >= 2) {
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(() => {
+                        fetchProductSuggestions(query);
+                    }, 300); // Debounce for 300ms
+                } else {
+                    hideSuggestions();
+                }
+            });
+
+            // Keyboard navigation for suggestions
+            searchInput.addEventListener('keydown', function(e) {
+                const suggestions = document.querySelectorAll('.suggestion-item');
+                const suggestionsVisible = suggestionsDiv.style.display !== 'none';
+
+                if (!suggestionsVisible || suggestions.length === 0) return;
+
+                switch (e.key) {
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        activeSearchIndex = Math.min(activeSearchIndex + 1, suggestions.length - 1);
+                        updateActiveSuggestion(suggestions);
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        activeSearchIndex = Math.max(activeSearchIndex - 1, -1);
+                        updateActiveSuggestion(suggestions);
+                        break;
+                    case 'Enter':
+                        e.preventDefault();
+                        if (activeSearchIndex >= 0 && suggestions[activeSearchIndex]) {
+                            selectSuggestion(suggestions[activeSearchIndex]);
+                        }
+                        break;
+                    case 'Escape':
+                        e.preventDefault();
+                        hideSuggestions();
+                        break;
+                }
+            });
+
+            // Hide suggestions when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!searchInput.contains(e.target) && !suggestionsDiv.contains(e.target)) {
+                    hideSuggestions();
+                }
+            });
+
+            // Modal event listeners
+            const confirmBtn = document.getElementById('confirmAddProduct');
+            const quantityInput = document.getElementById('quantityInput');
+
+            confirmBtn.addEventListener('click', function() {
+                if (selectedProductForModal) {
+                    const quantity = parseInt(quantityInput.value) || 1;
+                    addProductToOrderWithQuantity(
+                        selectedProductForModal.id,
+                        selectedProductForModal.name,
+                        selectedProductForModal.cost_price,
+                        quantity
+                    );
+                    quantityModal.hide();
+                    selectedProductForModal = null;
+                }
+            });
+
+            // Reset modal when hidden
+            document.getElementById('quantityModal').addEventListener('hidden.bs.modal', function() {
+                quantityInput.value = '1';
+                selectedProductForModal = null;
+            });
+        }
+
+        function fetchProductSuggestions(query) {
+            if (!currentSupplierId) {
+                hideSuggestions();
+                return;
+            }
+
+            fetch(`../api/search_products.php?search=${encodeURIComponent(query)}&supplier_id=${currentSupplierId}&limit=8`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displaySuggestions(data.suggestions || []);
+                    } else {
+                        console.error('Search error:', data.error);
+                        hideSuggestions();
+                    }
+                })
+                .catch(error => {
+                    console.error('Search request failed:', error);
+                    hideSuggestions();
+                });
+        }
+
+        function displaySuggestions(suggestions) {
+            const suggestionsDiv = document.getElementById('searchSuggestions');
+            activeSearchIndex = -1;
+
+            if (suggestions.length === 0) {
+                hideSuggestions();
+                return;
+            }
+
+            let html = '';
+            suggestions.forEach((product, index) => {
+                const isSelected = selectedProducts.find(p => p.id == product.id);
+                const stockIndicator = product.stock_status === 'low' ? 'low' : 'ok';
+                
+                html += `
+                    <div class="suggestion-item" 
+                         data-product-id="${product.id}"
+                         data-product-name="${sanitizeHtml(product.name)}"
+                         data-product-sku="${product.sku}"
+                         data-product-stock="${product.quantity}"
+                         data-cost-price="${product.cost_price}">
+                        <div class="suggestion-name">
+                            <span class="stock-indicator ${stockIndicator}"></span>
+                            ${sanitizeHtml(product.name)}
+                            ${isSelected ? '<span class="badge bg-success ms-2">Added</span>' : ''}
+                        </div>
+                        <div class="suggestion-details">
+                            ${product.sku ? 'SKU: ' + product.sku + ' | ' : ''}
+                            Stock: ${product.quantity} | 
+                            <span class="suggestion-price">Cost: ${currencySymbol} ${parseFloat(product.cost_price).toFixed(2)}</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            suggestionsDiv.innerHTML = html;
+            suggestionsDiv.style.display = 'block';
+
+            // Add click event listeners to suggestions
+            document.querySelectorAll('.suggestion-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    selectSuggestion(this);
+                });
+            });
+        }
+
+        function updateActiveSuggestion(suggestions) {
+            suggestions.forEach((item, index) => {
+                item.classList.toggle('active', index === activeSearchIndex);
+            });
+        }
+
+        function selectSuggestion(suggestionElement) {
+            const productId = suggestionElement.dataset.productId;
+            const productName = suggestionElement.dataset.productName;
+            const productSku = suggestionElement.dataset.productSku;
+            const productStock = suggestionElement.dataset.productStock;
+            const costPrice = parseFloat(suggestionElement.dataset.costPrice);
+
+            // Check if already selected
+            if (selectedProducts.find(p => p.id == productId)) {
+                hideSuggestions();
+                return;
+            }
+
+            // Show quantity input modal
+            showQuantityModal({
+                id: productId,
+                name: productName,
+                sku: productSku,
+                stock: productStock,
+                cost_price: costPrice
+            });
+
+            hideSuggestions();
+        }
+
+        function showQuantityModal(product) {
+            selectedProductForModal = product;
+
+            // Populate modal with product details
+            document.getElementById('modalProductName').textContent = product.name;
+            document.getElementById('modalProductSKU').textContent = `SKU: ${product.sku || 'N/A'}`;
+            document.getElementById('modalProductStock').textContent = `Stock: ${product.stock}`;
+            document.getElementById('modalProductPrice').textContent = `Cost: ${currencySymbol} ${parseFloat(product.cost_price).toFixed(2)}`;
+            
+            // Reset quantity input
+            document.getElementById('quantityInput').value = '1';
+
+            // Show modal
+            quantityModal.show();
+
+            // Focus quantity input
+            setTimeout(() => {
+                document.getElementById('quantityInput').focus();
+                document.getElementById('quantityInput').select();
+            }, 150);
+        }
+
+        function addProductToOrderWithQuantity(productId, productName, costPrice, quantity) {
+            if (selectedProducts.find(p => p.id == productId)) {
+                return; // Already added
+            }
+
+            selectedProducts.push({
+                id: productId,
+                name: productName,
+                cost_price: costPrice,
+                quantity: Math.max(1, quantity)
+            });
+
+            updateSelectedProductsUI();
+            updateProductItemUI(productId, true);
+            updateHiddenProductInputs();
+
+            // Clear search input
+            document.getElementById('productSearch').value = '';
+        }
+
+        function hideSuggestions() {
+            const suggestionsDiv = document.getElementById('searchSuggestions');
+            suggestionsDiv.style.display = 'none';
+            suggestionsDiv.innerHTML = '';
+            activeSearchIndex = -1;
         }
     </script>
 </body>

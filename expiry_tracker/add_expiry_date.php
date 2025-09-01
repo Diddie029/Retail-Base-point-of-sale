@@ -40,19 +40,19 @@ $message_type = '';
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $product_id = $_POST['product_id'] ?? '';
-    $batch_number = $_POST['batch_number'] ?? '';
-    $expiry_date = $_POST['expiry_date'] ?? '';
-    $manufacturing_date = $_POST['manufacturing_date'] ?? '';
-    $quantity = $_POST['quantity'] ?? 0;
-    $unit_cost = $_POST['unit_cost'] ?? 0;
-    $location = $_POST['location'] ?? '';
-    $supplier_id = $_POST['supplier_id'] ?? '';
-    $purchase_order_id = $_POST['purchase_order_id'] ?? '';
-    $alert_days_before = $_POST['alert_days_before'] ?? 30;
-    $notes = $_POST['notes'] ?? '';
+    $product_id = trim($_POST['product_id'] ?? '');
+    $batch_number = trim($_POST['batch_number'] ?? '');
+    $expiry_date = trim($_POST['expiry_date'] ?? '');
+    $manufacturing_date = trim($_POST['manufacturing_date'] ?? '');
+    $quantity = trim($_POST['quantity'] ?? '');
+    $unit_cost = trim($_POST['unit_cost'] ?? '');
+    $location = trim($_POST['location'] ?? '');
+    $supplier_id = trim($_POST['supplier_id'] ?? '');
+    $purchase_order_id = trim($_POST['purchase_order_id'] ?? '');
+    $alert_days_before = trim($_POST['alert_days_before'] ?? '30');
+    $notes = trim($_POST['notes'] ?? '');
     
-    // Validation
+    // Enhanced validation with proper type checking
     $errors = [];
     
     if (empty($product_id)) {
@@ -65,8 +65,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = "Expiry date must be in the future";
     }
     
-    if (empty($quantity) || $quantity <= 0) {
-        $errors[] = "Quantity must be greater than 0";
+    if (empty($quantity)) {
+        $errors[] = "Quantity is required";
+    } elseif (!is_numeric($quantity) || floatval($quantity) <= 0) {
+        $errors[] = "Quantity must be a positive number";
+    } else {
+        $quantity = floatval($quantity);
+    }
+    
+    // Validate unit_cost - allow empty but ensure it's numeric if provided
+    if (!empty($unit_cost)) {
+        if (!is_numeric($unit_cost) || floatval($unit_cost) < 0) {
+            $errors[] = "Unit cost must be a non-negative number";
+        } else {
+            $unit_cost = floatval($unit_cost);
+        }
+    } else {
+        $unit_cost = 0.00; // Set default value for empty input
+    }
+    
+    // Validate alert_days_before
+    if (!empty($alert_days_before)) {
+        if (!is_numeric($alert_days_before) || intval($alert_days_before) < 1) {
+            $errors[] = "Alert days must be a positive number";
+        } else {
+            $alert_days_before = intval($alert_days_before);
+        }
+    } else {
+        $alert_days_before = 30; // Default value
+    }
+    
+    // Validate manufacturing date if provided
+    if (!empty($manufacturing_date)) {
+        if (strtotime($manufacturing_date) > strtotime($expiry_date)) {
+            $errors[] = "Manufacturing date cannot be after expiry date";
+        }
     }
     
     if (empty($errors)) {
@@ -88,16 +121,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $stmt->execute([
                 ':product_id' => $product_id,
-                ':batch_number' => $batch_number,
+                ':batch_number' => $batch_number ?: null,
                 ':expiry_date' => $expiry_date,
                 ':manufacturing_date' => $manufacturing_date ?: null,
                 ':quantity' => $quantity,
                 ':unit_cost' => $unit_cost,
-                ':location' => $location,
+                ':location' => $location ?: null,
                 ':supplier_id' => $supplier_id ?: null,
                 ':purchase_order_id' => $purchase_order_id ?: null,
                 ':alert_days_before' => $alert_days_before,
-                ':notes' => $notes
+                ':notes' => $notes ?: null
             ]);
             
             $expiry_id = $conn->lastInsertId();
@@ -138,8 +171,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
         } catch (PDOException $e) {
             $conn->rollBack();
-            $message = "Error adding expiry date: " . $e->getMessage();
+            
+            // Enhanced error handling with specific error messages
+            $error_code = $e->getCode();
+            $error_message = $e->getMessage();
+            
+            switch ($error_code) {
+                case '1366': // Incorrect decimal value
+                    $message = "Invalid numeric value provided. Please check quantity and unit cost fields.";
+                    break;
+                case '1452': // Foreign key constraint failure
+                    $message = "Invalid reference data. Please check product, supplier, or purchase order selection.";
+                    break;
+                case '1062': // Duplicate entry
+                    $message = "A record with this information already exists.";
+                    break;
+                default:
+                    $message = "Database error occurred. Please try again or contact support.";
+                    // Log the actual error for debugging
+                    error_log("Expiry tracker error: " . $error_message);
+            }
+            
             $message_type = "error";
+        } catch (Exception $e) {
+            $conn->rollBack();
+            $message = "An unexpected error occurred. Please try again.";
+            $message_type = "error";
+            error_log("Unexpected error in expiry tracker: " . $e->getMessage());
         }
     } else {
         $message = implode("<br>", $errors);
@@ -254,8 +312,9 @@ $page_title = "Add Expiry Date";
                     <div class="form-group">
                         <label for="unit_cost">Unit Cost</label>
                         <input type="number" name="unit_cost" id="unit_cost" 
-                               value="<?php echo $_POST['unit_cost'] ?? ''; ?>"
-                               min="0" step="0.01">
+                               value="<?php echo htmlspecialchars($_POST['unit_cost'] ?? ''); ?>"
+                               min="0" step="0.01" placeholder="0.00">
+                        <small class="form-help">Leave empty or enter 0.00 if not applicable</small>
                     </div>
                 </div>
 
@@ -321,45 +380,119 @@ $page_title = "Add Expiry Date";
     </div>
 
     <script>
-        // Auto-fill manufacturing date if not provided
-        document.getElementById('expiry_date').addEventListener('change', function() {
-            const expiryDate = new Date(this.value);
-            const manufacturingDate = document.getElementById('manufacturing_date');
+        // Form validation and enhancement
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.querySelector('.expiry-form');
+            const unitCostInput = document.getElementById('unit_cost');
+            const quantityInput = document.getElementById('quantity');
             
-            if (!manufacturingDate.value) {
-                // Set manufacturing date to 30 days before expiry (common for many products)
-                const manufacturingDateValue = new Date(expiryDate);
-                manufacturingDateValue.setDate(expiryDate.getDate() - 30);
-                manufacturingDate.value = manufacturingDateValue.toISOString().split('T')[0];
+            // Auto-fill manufacturing date if not provided
+            document.getElementById('expiry_date').addEventListener('change', function() {
+                const expiryDate = new Date(this.value);
+                const manufacturingDate = document.getElementById('manufacturing_date');
+                
+                if (!manufacturingDate.value) {
+                    // Set manufacturing date to 30 days before expiry (common for many products)
+                    const manufacturingDateValue = new Date(expiryDate);
+                    manufacturingDateValue.setDate(expiryDate.getDate() - 30);
+                    manufacturingDate.value = manufacturingDateValue.toISOString().split('T')[0];
+                }
+            });
+
+            // Validate expiry date
+            document.getElementById('expiry_date').addEventListener('blur', function() {
+                const expiryDate = new Date(this.value);
+                const today = new Date();
+                
+                if (expiryDate <= today) {
+                    this.setCustomValidity('Expiry date must be in the future');
+                    this.classList.add('error');
+                } else {
+                    this.setCustomValidity('');
+                    this.classList.remove('error');
+                }
+            });
+
+            // Validate unit cost
+            unitCostInput.addEventListener('blur', function() {
+                const value = this.value.trim();
+                if (value !== '' && (isNaN(value) || parseFloat(value) < 0)) {
+                    this.setCustomValidity('Unit cost must be a non-negative number');
+                    this.classList.add('error');
+                } else {
+                    this.setCustomValidity('');
+                    this.classList.remove('error');
+                }
+            });
+
+            // Validate quantity
+            quantityInput.addEventListener('blur', function() {
+                const value = this.value.trim();
+                if (value === '' || isNaN(value) || parseFloat(value) <= 0) {
+                    this.setCustomValidity('Quantity must be a positive number');
+                    this.classList.add('error');
+                } else {
+                    this.setCustomValidity('');
+                    this.classList.remove('error');
+                }
+            });
+
+            // Handle empty unit cost - convert to 0.00
+            unitCostInput.addEventListener('input', function() {
+                if (this.value === '') {
+                    this.value = '0.00';
+                }
+            });
+
+            // Form submission validation
+            form.addEventListener('submit', function(e) {
+                let isValid = true;
+                
+                // Clear previous error states
+                document.querySelectorAll('.form-group input, .form-group select, .form-group textarea').forEach(input => {
+                    input.classList.remove('error');
+                });
+                
+                // Validate required fields
+                const requiredFields = ['product_id', 'expiry_date', 'quantity'];
+                requiredFields.forEach(fieldName => {
+                    const field = document.getElementById(fieldName);
+                    if (!field.value.trim()) {
+                        field.classList.add('error');
+                        isValid = false;
+                    }
+                });
+                
+                // Validate numeric fields
+                if (quantityInput.value && (isNaN(quantityInput.value) || parseFloat(quantityInput.value) <= 0)) {
+                    quantityInput.classList.add('error');
+                    isValid = false;
+                }
+                
+                if (unitCostInput.value && unitCostInput.value !== '0.00' && (isNaN(unitCostInput.value) || parseFloat(unitCostInput.value) < 0)) {
+                    unitCostInput.classList.add('error');
+                    isValid = false;
+                }
+                
+                if (!isValid) {
+                    e.preventDefault();
+                    alert('Please fix the errors before submitting the form.');
+                }
+            });
+
+            // Auto-calculate total cost
+            quantityInput.addEventListener('input', calculateTotalCost);
+            unitCostInput.addEventListener('input', calculateTotalCost);
+
+            function calculateTotalCost() {
+                const quantity = parseFloat(quantityInput.value) || 0;
+                const unitCost = parseFloat(unitCostInput.value) || 0;
+                const totalCost = quantity * unitCost;
+                
+                // You could display this somewhere if needed
+                console.log('Total cost:', totalCost);
             }
         });
-
-        // Validate expiry date
-        document.getElementById('expiry_date').addEventListener('blur', function() {
-            const expiryDate = new Date(this.value);
-            const today = new Date();
-            
-            if (expiryDate <= today) {
-                this.setCustomValidity('Expiry date must be in the future');
-                this.style.borderColor = '#ef4444';
-            } else {
-                this.setCustomValidity('');
-                this.style.borderColor = '#e2e8f0';
-            }
-        });
-
-        // Auto-calculate total cost
-        document.getElementById('quantity').addEventListener('input', calculateTotalCost);
-        document.getElementById('unit_cost').addEventListener('input', calculateTotalCost);
-
-        function calculateTotalCost() {
-            const quantity = parseFloat(document.getElementById('quantity').value) || 0;
-            const unitCost = parseFloat(document.getElementById('unit_cost').value) || 0;
-            const totalCost = quantity * unitCost;
-            
-            // You could display this somewhere if needed
-            console.log('Total cost:', totalCost);
-        }
     </script>
 </body>
 </html>

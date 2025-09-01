@@ -78,9 +78,27 @@ $sort_order = sanitizeProductInput($_GET['order'] ?? 'ASC');
 $query = "
     SELECT s.*,
            COUNT(p.id) as product_count,
-           COUNT(CASE WHEN p.status = 'active' THEN 1 END) as active_product_count
+           COUNT(CASE WHEN p.status = 'active' THEN 1 END) as active_product_count,
+           COALESCE(spm.quality_score, 0) as performance_score,
+           COALESCE(spm.on_time_percentage, 0) as on_time_delivery_rate,
+           COALESCE(spm.return_rate, 0) as return_rate,
+           COALESCE(spm.average_delivery_days, 0) as avg_delivery_days,
+           COALESCE(spm.total_orders, 0) as total_orders_90days,
+           COALESCE(spm.total_order_value, 0) as order_value_90days
     FROM suppliers s
     LEFT JOIN products p ON s.id = p.supplier_id
+    LEFT JOIN (
+        SELECT supplier_id,
+               quality_score,
+               ROUND((on_time_deliveries / NULLIF(total_orders, 0)) * 100, 2) as on_time_percentage,
+               return_rate,
+               average_delivery_days,
+               total_orders,
+               total_order_value
+        FROM supplier_performance_metrics
+        WHERE metric_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+        ORDER BY metric_date DESC
+    ) spm ON s.id = spm.supplier_id
     WHERE 1=1
 ";
 
@@ -96,10 +114,10 @@ if ($status_filter !== 'all') {
     $params[':is_active'] = ($status_filter === 'active') ? 1 : 0;
 }
 
-$query .= " GROUP BY s.id";
+$query .= " GROUP BY s.id, spm.quality_score, spm.on_time_percentage, spm.return_rate, spm.average_delivery_days, spm.total_orders, spm.total_order_value";
 
 // Add sorting
-$valid_sort_columns = ['name', 'contact_person', 'email', 'created_at', 'product_count'];
+$valid_sort_columns = ['name', 'contact_person', 'email', 'created_at', 'product_count', 'performance_score', 'on_time_delivery_rate', 'return_rate', 'avg_delivery_days', 'total_orders_90days', 'order_value_90days'];
 if (in_array($sort_by, $valid_sort_columns)) {
     if ($sort_by === 'name') {
         $query .= " ORDER BY s.name " . ($sort_order === 'DESC' ? 'DESC' : 'ASC');
@@ -109,11 +127,23 @@ if (in_array($sort_by, $valid_sort_columns)) {
         $query .= " ORDER BY s.email " . ($sort_order === 'DESC' ? 'DESC' : 'ASC');
     } elseif ($sort_by === 'created_at') {
         $query .= " ORDER BY s.created_at " . ($sort_order === 'DESC' ? 'DESC' : 'ASC');
+    } elseif ($sort_by === 'performance_score') {
+        $query .= " ORDER BY performance_score " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
+    } elseif ($sort_by === 'on_time_delivery_rate') {
+        $query .= " ORDER BY on_time_delivery_rate " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
+    } elseif ($sort_by === 'return_rate') {
+        $query .= " ORDER BY return_rate " . ($sort_order === 'ASC' ? 'ASC' : 'DESC') . ", s.name ASC";
+    } elseif ($sort_by === 'avg_delivery_days') {
+        $query .= " ORDER BY avg_delivery_days " . ($sort_order === 'ASC' ? 'ASC' : 'DESC') . ", s.name ASC";
+    } elseif ($sort_by === 'total_orders_90days') {
+        $query .= " ORDER BY total_orders_90days " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
+    } elseif ($sort_by === 'order_value_90days') {
+        $query .= " ORDER BY order_value_90days " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
     } else {
-        $query .= " ORDER BY " . $sort_by . " " . ($sort_order === 'DESC' ? 'DESC' : 'ASC');
+        $query .= " ORDER BY " . $sort_by . " " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
     }
 } else {
-    $query .= " ORDER BY s.name ASC";
+    $query .= " ORDER BY performance_score DESC, s.name ASC";
 }
 
 // Get total count for pagination
@@ -148,6 +178,54 @@ foreach ($params as $key => $value) {
 }
 $stmt->execute();
 $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Calculate performance ratings for each supplier
+foreach ($suppliers as &$supplier) {
+    $score = $supplier['performance_score'] ?? 0;
+    if ($score >= 90) {
+        $supplier['performance_rating'] = 'Excellent';
+        $supplier['rating_class'] = 'success';
+    } elseif ($score >= 80) {
+        $supplier['performance_rating'] = 'Very Good';
+        $supplier['rating_class'] = 'success';
+    } elseif ($score >= 70) {
+        $supplier['performance_rating'] = 'Good';
+        $supplier['rating_class'] = 'primary';
+    } elseif ($score >= 60) {
+        $supplier['performance_rating'] = 'Fair';
+        $supplier['rating_class'] = 'warning';
+    } elseif ($score >= 50) {
+        $supplier['performance_rating'] = 'Poor';
+        $supplier['rating_class'] = 'warning';
+    } else {
+        $supplier['performance_rating'] = 'Critical';
+        $supplier['rating_class'] = 'danger';
+    }
+
+    // Calculate delivery performance class
+    $on_time_rate = $supplier['on_time_delivery_rate'] ?? 0;
+    if ($on_time_rate >= 95) {
+        $supplier['delivery_class'] = 'success';
+    } elseif ($on_time_rate >= 85) {
+        $supplier['delivery_class'] = 'primary';
+    } elseif ($on_time_rate >= 75) {
+        $supplier['delivery_class'] = 'warning';
+    } else {
+        $supplier['delivery_class'] = 'danger';
+    }
+
+    // Calculate return rate class (lower is better)
+    $return_rate = $supplier['return_rate'] ?? 0;
+    if ($return_rate <= 2) {
+        $supplier['return_class'] = 'success';
+    } elseif ($return_rate <= 5) {
+        $supplier['return_class'] = 'primary';
+    } elseif ($return_rate <= 10) {
+        $supplier['return_class'] = 'warning';
+    } else {
+        $supplier['return_class'] = 'danger';
+    }
+}
 
 // Handle individual toggle actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_supplier'])) {
@@ -344,6 +422,165 @@ unset($_SESSION['success'], $_SESSION['error']);
         :root {
             --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
         }
+
+        /* Performance metrics styling */
+        .performance-score {
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        .performance-badge {
+            font-size: 0.75em;
+            padding: 0.25em 0.5em;
+            border-radius: 0.25rem;
+        }
+
+        .delivery-metric {
+            font-size: 0.9em;
+        }
+
+        .quality-metric {
+            font-size: 0.9em;
+        }
+
+        .order-metric {
+            font-size: 0.9em;
+        }
+
+        .metric-label {
+            font-size: 0.75em;
+            color: #6c757d;
+            display: block;
+        }
+
+        /* Performance color coding */
+        .text-excellent { color: #28a745 !important; }
+        .text-good { color: #007bff !important; }
+        .text-fair { color: #ffc107 !important; }
+        .text-poor { color: #fd7e14 !important; }
+        .text-critical { color: #dc3545 !important; }
+
+        /* Responsive adjustments */
+        @media (max-width: 1200px) {
+            .performance-score {
+                font-size: 1em;
+            }
+
+            .table th, .table td {
+                padding: 0.5rem 0.25rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .table th:nth-child(7),
+            .table th:nth-child(8),
+            .table th:nth-child(9),
+            .table th:nth-child(10),
+            .table td:nth-child(7),
+            .table td:nth-child(8),
+            .table td:nth-child(9),
+            .table td:nth-child(10) {
+                display: none;
+            }
+        }
+
+        /* Performance tooltip */
+        .performance-tooltip {
+            position: relative;
+            cursor: help;
+        }
+
+        .performance-tooltip:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.75rem;
+            white-space: nowrap;
+            z-index: 1000;
+            margin-bottom: 0.5rem;
+        }
+
+        .performance-tooltip:hover::before {
+            content: '';
+            position: absolute;
+            bottom: calc(100% - 0.25rem);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 0.25rem solid transparent;
+            border-top-color: #333;
+            z-index: 1000;
+        }
+
+        /* Floating horizontal scroll bar */
+        .table-scroll-container {
+            position: relative;
+            overflow-x: auto;
+            margin-bottom: 0;
+        }
+
+        .floating-scrollbar {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 25px;
+            padding: 8px 16px;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .floating-scrollbar:hover {
+            background: rgba(0, 0, 0, 0.9);
+            transform: translateX(-50%) scale(1.05);
+        }
+
+        .scrollbar-track {
+            width: 200px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 3px;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .scrollbar-thumb {
+            height: 100%;
+            background: var(--primary-color, #6366f1);
+            border-radius: 3px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            min-width: 20px;
+            transition: background 0.2s ease;
+        }
+
+        .scrollbar-thumb:hover {
+            background: #4f46e5;
+        }
+
+        .scrollbar-info {
+            color: white;
+            font-size: 0.75rem;
+            text-align: center;
+            margin-top: 4px;
+            opacity: 0.8;
+        }
+
+        /* Hide scrollbar on mobile */
+        @media (max-width: 768px) {
+            .floating-scrollbar {
+                display: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -415,6 +652,12 @@ unset($_SESSION['success'], $_SESSION['error']);
                             <option value="email" <?php echo $sort_by === 'email' ? 'selected' : ''; ?>>Email</option>
                             <option value="created_at" <?php echo $sort_by === 'created_at' ? 'selected' : ''; ?>>Date Added</option>
                             <option value="product_count" <?php echo $sort_by === 'product_count' ? 'selected' : ''; ?>>Product Count</option>
+                            <option value="performance_score" <?php echo $sort_by === 'performance_score' ? 'selected' : ''; ?>>Performance Score</option>
+                            <option value="on_time_delivery_rate" <?php echo $sort_by === 'on_time_delivery_rate' ? 'selected' : ''; ?>>On-Time Delivery</option>
+                            <option value="return_rate" <?php echo $sort_by === 'return_rate' ? 'selected' : ''; ?>>Return Rate</option>
+                            <option value="avg_delivery_days" <?php echo $sort_by === 'avg_delivery_days' ? 'selected' : ''; ?>>Avg Delivery Days</option>
+                            <option value="total_orders_90days" <?php echo $sort_by === 'total_orders_90days' ? 'selected' : ''; ?>>Orders (90 Days)</option>
+                            <option value="order_value_90days" <?php echo $sort_by === 'order_value_90days' ? 'selected' : ''; ?>>Order Value (90 Days)</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -460,110 +703,180 @@ unset($_SESSION['success'], $_SESSION['error']);
 
                 <!-- Suppliers Table -->
                 <div class="product-table">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>
-                                    <input type="checkbox" id="selectAll" class="form-check-input">
-                                </th>
-                                <th>Name</th>
-                                <th>Contact Person</th>
-                                <th>Email</th>
-                                <th>Phone</th>
-                                <th>Products</th>
-                                <th>Status</th>
-                                <th>Created</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (empty($suppliers)): ?>
-                            <tr>
-                                <td colspan="9" class="text-center py-5">
-                                    <i class="bi bi-truck text-muted" style="font-size: 3rem;"></i>
-                                    <h5 class="mt-3 text-muted">No suppliers found</h5>
-                                    <p class="text-muted">Start by adding your first supplier</p>
-                                    <a href="add.php" class="btn btn-primary">
-                                        <i class="bi bi-plus"></i>
-                                        Add First Supplier
-                                    </a>
-                                </td>
-                            </tr>
-                            <?php else: ?>
-                                <?php foreach ($suppliers as $supplier): ?>
+                    <div class="table-scroll-container">
+                        <table class="table">
+                            <thead>
                                 <tr>
-                                    <td>
-                                        <input type="checkbox" name="supplier_ids[]" value="<?php echo $supplier['id']; ?>"
-                                               class="form-check-input supplier-checkbox">
-                                    </td>
-                                    <td>
-                                        <div class="d-flex align-items-center">
-                                            <div class="product-image-placeholder me-3">
-                                                <i class="bi bi-truck"></i>
-                                            </div>
-                                            <div>
-                                                <strong><?php echo htmlspecialchars($supplier['name']); ?></strong>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($supplier['contact_person'] ?? 'Not specified'); ?></td>
-                                    <td>
-                                        <?php if ($supplier['email']): ?>
-                                            <a href="mailto:<?php echo htmlspecialchars($supplier['email']); ?>" class="text-decoration-none">
-                                                <?php echo htmlspecialchars($supplier['email']); ?>
-                                            </a>
-                                        <?php else: ?>
-                                            <span class="text-muted">-</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <?php if ($supplier['phone']): ?>
-                                            <a href="tel:<?php echo htmlspecialchars($supplier['phone']); ?>" class="text-decoration-none">
-                                                <?php echo htmlspecialchars($supplier['phone']); ?>
-                                            </a>
-                                        <?php else: ?>
-                                            <span class="text-muted">-</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <span class="badge badge-primary">
-                                            <?php echo $supplier['active_product_count']; ?>/<?php echo $supplier['product_count']; ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="badge <?php echo $supplier['is_active'] ? 'badge-success' : 'badge-secondary'; ?>">
-                                            <?php echo $supplier['is_active'] ? 'Active' : 'Inactive'; ?>
-                                        </span>
-                                    </td>
-                                    <td><?php echo date('M d, Y', strtotime($supplier['created_at'])); ?></td>
-                                    <td>
-                                        <div class="btn-group">
-                                            <a href="view.php?id=<?php echo $supplier['id']; ?>" class="btn btn-sm btn-outline-primary"
-                                               title="View Details">
-                                                <i class="bi bi-eye"></i>
-                                            </a>
-                                            <a href="edit.php?id=<?php echo $supplier['id']; ?>" class="btn btn-sm btn-outline-secondary"
-                                               title="Edit Supplier">
-                                                <i class="bi bi-pencil"></i>
-                                            </a>
-                                            <button type="button" class="btn btn-sm <?php echo $supplier['is_active'] ? 'btn-warning' : 'btn-success'; ?> toggle-status"
-                                                    data-id="<?php echo $supplier['id']; ?>"
-                                                    data-current-status="<?php echo $supplier['is_active']; ?>"
-                                                    title="<?php echo $supplier['is_active'] ? 'Deactivate Supplier' : 'Activate Supplier'; ?>">
-                                                <i class="bi <?php echo $supplier['is_active'] ? 'bi-pause-fill' : 'bi-play-fill'; ?>"></i>
-                                            </button>
-                                            <a href="delete.php?id=<?php echo $supplier['id']; ?>" class="btn btn-sm btn-outline-danger"
-                                               onclick="return confirm('Are you sure you want to delete this supplier?')"
-                                               title="Delete Supplier">
-                                                <i class="bi bi-trash"></i>
-                                            </a>
-                                        </div>
+                                    <th>
+                                        <input type="checkbox" id="selectAll" class="form-check-input">
+                                    </th>
+                                    <th>Name</th>
+                                    <th>Contact Person</th>
+                                    <th>Email</th>
+                                    <th>Phone</th>
+                                    <th>Products</th>
+                                    <th>Performance</th>
+                                    <th>Delivery</th>
+                                    <th>Quality</th>
+                                    <th>Orders (90d)</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if (empty($suppliers)): ?>
+                                <tr>
+                                    <td colspan="13" class="text-center py-5">
+                                        <i class="bi bi-truck text-muted" style="font-size: 3rem;"></i>
+                                        <h5 class="mt-3 text-muted">No suppliers found</h5>
+                                        <p class="text-muted">Start by adding your first supplier</p>
+                                        <a href="add.php" class="btn btn-primary">
+                                            <i class="bi bi-plus"></i>
+                                            Add First Supplier
+                                        </a>
                                     </td>
                                 </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
+                                <?php else: ?>
+                                    <?php foreach ($suppliers as $supplier): ?>
+                                    <tr>
+                                        <td>
+                                            <input type="checkbox" name="supplier_ids[]" value="<?php echo $supplier['id']; ?>"
+                                                   class="form-check-input supplier-checkbox">
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center">
+                                                <div class="product-image-placeholder me-3">
+                                                    <i class="bi bi-truck"></i>
+                                                </div>
+                                                <div>
+                                                    <strong><?php echo htmlspecialchars($supplier['name']); ?></strong>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td><?php echo htmlspecialchars($supplier['contact_person'] ?? 'Not specified'); ?></td>
+                                        <td>
+                                            <?php if ($supplier['email']): ?>
+                                                <a href="mailto:<?php echo htmlspecialchars($supplier['email']); ?>" class="text-decoration-none">
+                                                    <?php echo htmlspecialchars($supplier['email']); ?>
+                                                </a>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if ($supplier['phone']): ?>
+                                                <a href="tel:<?php echo htmlspecialchars($supplier['phone']); ?>" class="text-decoration-none">
+                                                    <?php echo htmlspecialchars($supplier['phone']); ?>
+                                                </a>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <span class="badge badge-primary">
+                                                <?php echo $supplier['active_product_count']; ?>/<?php echo $supplier['product_count']; ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <?php if ($supplier['performance_score'] > 0): ?>
+                                                <div class="text-center">
+                                                    <div class="fw-bold text-<?php echo $supplier['rating_class']; ?>">
+                                                        <?php echo round($supplier['performance_score'], 1); ?>/100
+                                                    </div>
+                                                    <small class="badge bg-<?php echo $supplier['rating_class']; ?>">
+                                                        <?php echo $supplier['performance_rating']; ?>
+                                                    </small>
+                                                </div>
+                                            <?php else: ?>
+                                                <span class="text-muted">No data</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if ($supplier['on_time_delivery_rate'] > 0): ?>
+                                                <div class="text-center">
+                                                    <div class="fw-bold text-<?php echo $supplier['delivery_class']; ?>">
+                                                        <?php echo round($supplier['on_time_delivery_rate'], 1); ?>%
+                                                    </div>
+                                                    <small class="text-muted">
+                                                        <?php echo round($supplier['avg_delivery_days'], 1); ?> days avg
+                                                    </small>
+                                                </div>
+                                            <?php else: ?>
+                                                <span class="text-muted">No data</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if ($supplier['return_rate'] >= 0): ?>
+                                                <div class="text-center">
+                                                    <div class="fw-bold text-<?php echo $supplier['return_class']; ?>">
+                                                        <?php echo round($supplier['return_rate'], 1); ?>%
+                                                    </div>
+                                                    <small class="text-muted">return rate</small>
+                                                </div>
+                                            <?php else: ?>
+                                                <span class="text-muted">No data</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if ($supplier['total_orders_90days'] > 0): ?>
+                                                <div class="text-center">
+                                                    <div class="fw-bold"><?php echo $supplier['total_orders_90days']; ?></div>
+                                                    <small class="text-muted">
+                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($supplier['order_value_90days'], 0); ?>
+                                                    </small>
+                                                </div>
+                                            <?php else: ?>
+                                                <span class="text-muted">No orders</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <span class="badge <?php echo $supplier['is_active'] ? 'badge-success' : 'badge-secondary'; ?>">
+                                                <?php echo $supplier['is_active'] ? 'Active' : 'Inactive'; ?>
+                                            </span>
+                                        </td>
+                                        <td><?php echo date('M d, Y', strtotime($supplier['created_at'])); ?></td>
+                                        <td>
+                                            <div class="btn-group">
+                                                <a href="view.php?id=<?php echo $supplier['id']; ?>" class="btn btn-sm btn-outline-primary"
+                                                   title="View Details">
+                                                    <i class="bi bi-eye"></i>
+                                                </a>
+                                                <a href="supplier_performance.php?id=<?php echo $supplier['id']; ?>" class="btn btn-sm btn-outline-info"
+                                                   title="View Performance">
+                                                    <i class="bi bi-graph-up"></i>
+                                                </a>
+                                                <a href="edit.php?id=<?php echo $supplier['id']; ?>" class="btn btn-sm btn-outline-secondary"
+                                                   title="Edit Supplier">
+                                                    <i class="bi bi-pencil"></i>
+                                                </a>
+                                                <button type="button" class="btn btn-sm <?php echo $supplier['is_active'] ? 'btn-warning' : 'btn-success'; ?> toggle-status"
+                                                        data-id="<?php echo $supplier['id']; ?>"
+                                                        data-current-status="<?php echo $supplier['is_active']; ?>"
+                                                        title="<?php echo $supplier['is_active'] ? 'Deactivate Supplier' : 'Activate Supplier'; ?>">
+                                                    <i class="bi <?php echo $supplier['is_active'] ? 'bi-pause-fill' : 'bi-play-fill'; ?>"></i>
+                                                </button>
+                                                <a href="delete.php?id=<?php echo $supplier['id']; ?>" class="btn btn-sm btn-outline-danger"
+                                                   onclick="return confirm('Are you sure you want to delete this supplier?')"
+                                                   title="Delete Supplier">
+                                                    <i class="bi bi-trash"></i>
+                                                </a>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Floating Horizontal Scroll Bar -->
+                <div class="floating-scrollbar" id="floatingScrollbar">
+                    <div class="scrollbar-track" id="scrollbarTrack">
+                        <div class="scrollbar-thumb" id="scrollbarThumb"></div>
+                    </div>
+                    <div class="scrollbar-info">Scroll left/right</div>
                 </div>
             </form>
 
@@ -607,6 +920,112 @@ unset($_SESSION['success'], $_SESSION['error']);
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="../assets/js/suppliers.js"></script>
+
+    <script>
+        // Floating scroll bar functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const tableContainer = document.querySelector('.table-scroll-container');
+            const floatingScrollbar = document.getElementById('floatingScrollbar');
+            const scrollbarTrack = document.getElementById('scrollbarTrack');
+            const scrollbarThumb = document.getElementById('scrollbarThumb');
+            
+            if (!tableContainer || !floatingScrollbar) return;
+            
+            // Update scrollbar position based on table scroll
+            function updateScrollbar() {
+                const scrollLeft = tableContainer.scrollLeft;
+                const maxScroll = tableContainer.scrollWidth - tableContainer.clientWidth;
+                const scrollPercentage = maxScroll > 0 ? scrollLeft / maxScroll : 0;
+                
+                const thumbWidth = Math.max(20, scrollbarTrack.offsetWidth * 0.3);
+                const maxThumbLeft = scrollbarTrack.offsetWidth - thumbWidth;
+                const thumbLeft = scrollPercentage * maxThumbLeft;
+                
+                scrollbarThumb.style.width = thumbWidth + 'px';
+                scrollbarThumb.style.left = thumbLeft + 'px';
+                
+                // Show/hide scrollbar based on scrollability
+                if (maxScroll > 0) {
+                    floatingScrollbar.style.display = 'block';
+                } else {
+                    floatingScrollbar.style.display = 'none';
+                }
+            }
+            
+            // Handle scrollbar track click
+            scrollbarTrack.addEventListener('click', function(e) {
+                const rect = scrollbarTrack.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickPercentage = clickX / scrollbarTrack.offsetWidth;
+                
+                const maxScroll = tableContainer.scrollWidth - tableContainer.clientWidth;
+                const newScrollLeft = clickPercentage * maxScroll;
+                
+                tableContainer.scrollTo({
+                    left: newScrollLeft,
+                    behavior: 'smooth'
+                });
+            });
+            
+            // Handle scrollbar thumb drag
+            let isDragging = false;
+            let startX, startScrollLeft;
+            
+            scrollbarThumb.addEventListener('mousedown', function(e) {
+                isDragging = true;
+                startX = e.clientX;
+                startScrollLeft = tableContainer.scrollLeft;
+                document.body.style.cursor = 'grabbing';
+                e.preventDefault();
+            });
+            
+            document.addEventListener('mousemove', function(e) {
+                if (!isDragging) return;
+                
+                const deltaX = e.clientX - startX;
+                const scrollDelta = (deltaX / scrollbarTrack.offsetWidth) * (tableContainer.scrollWidth - tableContainer.clientWidth);
+                tableContainer.scrollLeft = startScrollLeft + scrollDelta;
+            });
+            
+            document.addEventListener('mouseup', function() {
+                if (isDragging) {
+                    isDragging = false;
+                    document.body.style.cursor = '';
+                }
+            });
+            
+            // Update scrollbar on table scroll
+            tableContainer.addEventListener('scroll', updateScrollbar);
+            
+            // Update scrollbar on window resize
+            window.addEventListener('resize', updateScrollbar);
+            
+            // Initial update
+            updateScrollbar();
+            
+            // Hide scrollbar after 3 seconds of inactivity
+            let scrollbarTimeout;
+            function hideScrollbarAfterDelay() {
+                clearTimeout(scrollbarTimeout);
+                scrollbarTimeout = setTimeout(() => {
+                    if (floatingScrollbar.style.display !== 'none') {
+                        floatingScrollbar.style.opacity = '0.7';
+                    }
+                }, 3000);
+            }
+            
+            // Show scrollbar on hover
+            floatingScrollbar.addEventListener('mouseenter', function() {
+                floatingScrollbar.style.opacity = '1';
+                clearTimeout(scrollbarTimeout);
+            });
+            
+            floatingScrollbar.addEventListener('mouseleave', hideScrollbarAfterDelay);
+            
+            // Initial hide delay
+            hideScrollbarAfterDelay();
+        });
+    </script>
 
 </body>
 </html>

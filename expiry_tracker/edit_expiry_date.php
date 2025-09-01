@@ -70,18 +70,18 @@ $message_type = '';
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $batch_number = $_POST['batch_number'] ?? '';
-    $expiry_date = $_POST['expiry_date'] ?? '';
-    $manufacturing_date = $_POST['manufacturing_date'] ?? '';
-    $quantity = $_POST['quantity'] ?? 0;
-    $unit_cost = $_POST['unit_cost'] ?? 0;
-    $location = $_POST['location'] ?? '';
-    $supplier_id = $_POST['supplier_id'] ?? '';
-    $purchase_order_id = $_POST['purchase_order_id'] ?? '';
-    $alert_days_before = $_POST['alert_days_before'] ?? 30;
-    $notes = $_POST['notes'] ?? '';
+    $batch_number = trim($_POST['batch_number'] ?? '');
+    $expiry_date = trim($_POST['expiry_date'] ?? '');
+    $manufacturing_date = trim($_POST['manufacturing_date'] ?? '');
+    $quantity = trim($_POST['quantity'] ?? '');
+    $unit_cost = trim($_POST['unit_cost'] ?? '');
+    $location = trim($_POST['location'] ?? '');
+    $supplier_id = trim($_POST['supplier_id'] ?? '');
+    $purchase_order_id = trim($_POST['purchase_order_id'] ?? '');
+    $alert_days_before = trim($_POST['alert_days_before'] ?? '30');
+    $notes = trim($_POST['notes'] ?? '');
     
-    // Validation
+    // Enhanced validation with proper type checking
     $errors = [];
     
     if (empty($expiry_date)) {
@@ -90,8 +90,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = "Expiry date must be in the future";
     }
     
-    if (empty($quantity) || $quantity <= 0) {
-        $errors[] = "Quantity must be greater than 0";
+    if (empty($quantity)) {
+        $errors[] = "Quantity is required";
+    } elseif (!is_numeric($quantity) || floatval($quantity) <= 0) {
+        $errors[] = "Quantity must be a positive number";
+    } else {
+        $quantity = floatval($quantity);
+    }
+    
+    // Validate unit_cost - allow empty but ensure it's numeric if provided
+    if (!empty($unit_cost)) {
+        if (!is_numeric($unit_cost) || floatval($unit_cost) < 0) {
+            $errors[] = "Unit cost must be a non-negative number";
+        } else {
+            $unit_cost = floatval($unit_cost);
+        }
+    } else {
+        $unit_cost = 0.00; // Set default value for empty input
+    }
+    
+    // Validate alert_days_before
+    if (!empty($alert_days_before)) {
+        if (!is_numeric($alert_days_before) || intval($alert_days_before) < 1) {
+            $errors[] = "Alert days must be a positive number";
+        } else {
+            $alert_days_before = intval($alert_days_before);
+        }
+    } else {
+        $alert_days_before = 30; // Default value
+    }
+    
+    // Validate manufacturing date if provided
+    if (!empty($manufacturing_date)) {
+        if (strtotime($manufacturing_date) > strtotime($expiry_date)) {
+            $errors[] = "Manufacturing date cannot be after expiry date";
+        }
     }
     
     if (empty($errors)) {
@@ -120,17 +153,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ");
             
             $stmt->execute([
-                ':batch_number' => $batch_number,
+                ':batch_number' => $batch_number ?: null,
                 ':expiry_date' => $expiry_date,
                 ':manufacturing_date' => $manufacturing_date ?: null,
                 ':quantity' => $quantity,
                 ':quantity_difference' => $quantity_difference,
                 ':unit_cost' => $unit_cost,
-                ':location' => $location,
+                ':location' => $location ?: null,
                 ':supplier_id' => $supplier_id ?: null,
                 ':purchase_order_id' => $purchase_order_id ?: null,
                 ':alert_days_before' => $alert_days_before,
-                ':notes' => $notes,
+                ':notes' => $notes ?: null,
                 ':id' => $expiry_id
             ]);
             
@@ -170,8 +203,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
         } catch (PDOException $e) {
             $conn->rollBack();
-            $message = "Error updating expiry date: " . $e->getMessage();
+            
+            // Enhanced error handling with specific error messages
+            $error_code = $e->getCode();
+            $error_message = $e->getMessage();
+            
+            switch ($error_code) {
+                case '1366': // Incorrect decimal value
+                    $message = "Invalid numeric value provided. Please check quantity and unit cost fields.";
+                    break;
+                case '1452': // Foreign key constraint failure
+                    $message = "Invalid reference data. Please check supplier or purchase order selection.";
+                    break;
+                case '1062': // Duplicate entry
+                    $message = "A record with this information already exists.";
+                    break;
+                default:
+                    $message = "Database error occurred. Please try again or contact support.";
+                    // Log the actual error for debugging
+                    error_log("Expiry tracker edit error: " . $error_message);
+            }
+            
             $message_type = "error";
+        } catch (Exception $e) {
+            $conn->rollBack();
+            $message = "An unexpected error occurred. Please try again.";
+            $message_type = "error";
+            error_log("Unexpected error in expiry tracker edit: " . $e->getMessage());
         }
     } else {
         $message = implode("<br>", $errors);

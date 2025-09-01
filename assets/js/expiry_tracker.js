@@ -817,59 +817,97 @@ function setupActionButtons() {
 }
 
 function showHandleExpiryModal(itemId) {
-    // Create modal for handling expiry
-    const modal = document.createElement('div');
-    modal.className = 'expiry-modal-overlay';
-    modal.innerHTML = `
-        <div class="expiry-modal">
-            <div class="expiry-modal-header">
-                <h3>Handle Expiry Item</h3>
-                <button class="modal-close">&times;</button>
+    // First, fetch the expiry item details to populate the form
+    fetch(`handle_expiry.php?id=${itemId}&ajax=1`)
+        .then(response => response.text())
+        .then(html => {
+            // Create modal for handling expiry
+            const modal = document.createElement('div');
+            modal.className = 'expiry-modal-overlay';
+            modal.innerHTML = `
+                <div class="expiry-modal">
+                    <div class="expiry-modal-header">
+                        <h3><i class="fas fa-tools"></i> Handle Expiry Item</h3>
+                        <button class="modal-close">&times;</button>
+                    </div>
+                    <div class="expiry-modal-body">
+                        <div id="modalContent">
+                            <div class="loading">Loading item details...</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Add modal to page
+            document.body.appendChild(modal);
+            
+            // Show modal
+            setTimeout(() => modal.classList.add('show'), 10);
+            
+            // Load the content
+            loadModalContent(modal, itemId, html);
+            
+            // Handle modal close
+            const closeButtons = modal.querySelectorAll('.modal-close');
+            closeButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    modal.classList.remove('show');
+                    setTimeout(() => modal.remove(), 300);
+                });
+            });
+            
+            // Close modal when clicking outside
+            modal.addEventListener('click', function(e) {
+                if (e.target === this) {
+                    this.classList.remove('show');
+                    setTimeout(() => this.remove(), 300);
+                }
+            });
+        })
+        .catch(error => {
+            console.error('Error loading modal:', error);
+            showNotification('Error loading item details', 'error');
+        });
+}
+
+function loadModalContent(modal, itemId, html) {
+    const modalContent = modal.querySelector('#modalContent');
+    
+    // Parse the HTML response to extract the form content
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    
+    // Extract the form content
+    const formContent = doc.querySelector('.handle-expiry-form');
+    const itemDetails = doc.querySelector('.item-details');
+    
+    if (formContent && itemDetails) {
+        // Create the enhanced modal content
+        modalContent.innerHTML = `
+            ${itemDetails.outerHTML}
+            <div class="action-form-container">
+                <div class="action-form">
+                    <div class="form-header">
+                        <h3>Take Action</h3>
+                    </div>
+                    <div class="handle-expiry-form">
+                        ${formContent.innerHTML}
+                    </div>
+                </div>
             </div>
-            <div class="expiry-modal-body">
-                                 <form id="handleExpiryForm" method="POST" action="handle_expiry.php?id=${itemId}">
-                    
-                    <div class="form-group">
-                        <label for="action_type">Action Type:</label>
-                        <select name="action_type" id="action_type" required>
-                            <option value="">Select Action</option>
-                            <option value="dispose">Dispose</option>
-                            <option value="return">Return to Supplier</option>
-                            <option value="sell_at_discount">Sell at Discount</option>
-                            <option value="donate">Donate</option>
-                            <option value="recall">Recall</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="quantity_affected">Quantity Affected:</label>
-                        <input type="number" name="quantity_affected" id="quantity_affected" min="1" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="reason">Reason:</label>
-                        <textarea name="reason" id="reason" rows="3" required></textarea>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="cost">Cost (if applicable):</label>
-                        <input type="number" name="cost" id="cost" step="0.01" min="0">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="notes">Additional Notes:</label>
-                        <textarea name="notes" id="notes" rows="2"></textarea>
-                    </div>
-                    
-                    <div class="modal-actions">
-                        <button type="submit" class="btn btn-primary">Submit Action</button>
-                        <button type="button" class="btn btn-secondary modal-close">Cancel</button>
-                    </div>
-                </form>
+        `;
+        
+        // Initialize the enhanced form functionality
+        initializeEnhancedForm(modal, itemId);
+    } else {
+        modalContent.innerHTML = `
+            <div class="error">
+                <i class="fas fa-exclamation-triangle"></i>
+                Unable to load form content. Please try refreshing the page.
             </div>
-        </div>
-    `;
+        `;
+    }
+}
     
     // Add modal to page
     document.body.appendChild(modal);
@@ -946,6 +984,210 @@ function showHandleExpiryModal(itemId) {
     });
 }
 
+function initializeEnhancedForm(modal, itemId) {
+    // Get the form elements
+    const form = modal.querySelector('.handle-expiry-form');
+    const actionTypeSelect = modal.querySelector('#action_type');
+    const quantityInput = modal.querySelector('#quantity_affected');
+    const costInput = modal.querySelector('#cost');
+    const revenueInput = modal.querySelector('#revenue');
+    const disposalMethodSelect = modal.querySelector('#disposal_method');
+    
+    if (!form) return;
+    
+    // Show/hide fields based on action type
+    if (actionTypeSelect) {
+        actionTypeSelect.addEventListener('change', function() {
+            const actionType = this.value;
+            const disposalMethodGroup = modal.querySelector('label[for="disposal_method"]')?.parentElement;
+            const returnReferenceGroup = modal.querySelector('label[for="return_reference"]')?.parentElement;
+            const costGroup = modal.querySelector('label[for="cost"]')?.parentElement;
+            const revenueGroup = modal.querySelector('label[for="revenue"]')?.parentElement;
+            
+            // Hide all conditional fields first
+            if (disposalMethodGroup) disposalMethodGroup.style.display = 'none';
+            if (returnReferenceGroup) returnReferenceGroup.style.display = 'none';
+            if (costGroup) costGroup.style.display = 'none';
+            if (revenueGroup) revenueGroup.style.display = 'none';
+            
+            // Show relevant fields based on action type
+            switch(actionType) {
+                case 'dispose':
+                    if (disposalMethodGroup) disposalMethodGroup.style.display = 'block';
+                    if (costGroup) costGroup.style.display = 'block';
+                    break;
+                case 'return':
+                    if (returnReferenceGroup) returnReferenceGroup.style.display = 'block';
+                    if (costGroup) costGroup.style.display = 'block';
+                    break;
+                case 'sell_at_discount':
+                    if (revenueGroup) revenueGroup.style.display = 'block';
+                    break;
+                case 'recall':
+                    if (costGroup) costGroup.style.display = 'block';
+                    break;
+            }
+            
+            // Update action description
+            updateModalActionDescription(modal);
+        });
+    }
+    
+    // Update disposal method description
+    if (disposalMethodSelect) {
+        disposalMethodSelect.addEventListener('change', function() {
+            updateModalDisposalDescription(modal);
+        });
+    }
+    
+    // Handle empty cost/revenue - convert to 0.00
+    if (costInput) {
+        costInput.addEventListener('input', function() {
+            if (this.value === '') {
+                this.value = '0.00';
+            }
+            updateModalFinancialSummary(modal);
+        });
+    }
+    
+    if (revenueInput) {
+        revenueInput.addEventListener('input', function() {
+            if (this.value === '') {
+                this.value = '0.00';
+            }
+            updateModalFinancialSummary(modal);
+        });
+    }
+    
+    // Quantity validation and financial updates
+    if (quantityInput) {
+        quantityInput.addEventListener('input', function() {
+            updateModalFinancialSummary(modal);
+        });
+    }
+    
+    // Form submission
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const submitBtn = this.querySelector('button[type="submit"]');
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+        submitBtn.disabled = true;
+        
+        // Submit form data
+        const formData = new FormData(this);
+        fetch(`handle_expiry.php?id=${itemId}`, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: formData
+        })
+        .then(response => {
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                return response.json();
+            } else {
+                throw new Error('Server returned HTML instead of JSON. This usually means there was a PHP error.');
+            }
+        })
+        .then(data => {
+            if (data.success) {
+                showNotification('Action completed successfully!', 'success');
+                modal.classList.remove('show');
+                setTimeout(() => {
+                    modal.remove();
+                    location.reload(); // Refresh page to show updated data
+                }, 300);
+            } else {
+                showNotification(data.message || 'An error occurred', 'error');
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showNotification('An error occurred while processing the request: ' + error.message, 'error');
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = false;
+        });
+    });
+}
+
+function updateModalActionDescription(modal) {
+    const actionSelect = modal.querySelector('#action_type');
+    const descriptionSpan = modal.querySelector('#action-description');
+    
+    if (actionSelect && descriptionSpan) {
+        const selectedOption = actionSelect.options[actionSelect.selectedIndex];
+        if (selectedOption && selectedOption.dataset.description) {
+            descriptionSpan.textContent = selectedOption.dataset.description;
+        } else {
+            descriptionSpan.textContent = 'Select an action type to see detailed description';
+        }
+    }
+}
+
+function updateModalDisposalDescription(modal) {
+    const disposalSelect = modal.querySelector('#disposal_method');
+    const descriptionSpan = modal.querySelector('#disposal-description');
+    
+    if (disposalSelect && descriptionSpan) {
+        const selectedOption = disposalSelect.options[disposalSelect.selectedIndex];
+        if (selectedOption && selectedOption.dataset.description) {
+            descriptionSpan.textContent = selectedOption.dataset.description;
+        } else {
+            descriptionSpan.textContent = 'Select disposal method to see environmental impact';
+        }
+    }
+}
+
+function updateModalFinancialSummary(modal) {
+    const quantity = parseInt(modal.querySelector('#quantity_affected')?.value) || 0;
+    const unitCost = parseFloat(modal.querySelector('.unit-info strong')?.textContent.replace('KES ', '').replace(',', '')) || 0;
+    const additionalCost = parseFloat(modal.querySelector('#cost')?.value) || 0;
+    const revenue = parseFloat(modal.querySelector('#revenue')?.value) || 0;
+    
+    // Calculate values
+    const valueLost = quantity * unitCost;
+    const totalCost = valueLost + additionalCost;
+    const netImpact = revenue - totalCost;
+    
+    // Update displays if they exist
+    const valueLostElement = modal.querySelector('#value-lost');
+    const additionalCostsElement = modal.querySelector('#additional-costs');
+    const potentialRevenueElement = modal.querySelector('#potential-revenue-summary');
+    const netImpactElement = modal.querySelector('#net-impact');
+    
+    if (valueLostElement) valueLostElement.textContent = `KES ${valueLost.toFixed(2)}`;
+    if (additionalCostsElement) additionalCostsElement.textContent = `KES ${additionalCost.toFixed(2)}`;
+    if (potentialRevenueElement) potentialRevenueElement.textContent = `KES ${revenue.toFixed(2)}`;
+    
+    // Update cost info display
+    const totalCostDisplay = modal.querySelector('#total-cost-display');
+    if (totalCostDisplay) {
+        totalCostDisplay.textContent = `Total Cost: KES ${additionalCost.toFixed(2)}`;
+    }
+    
+    // Update potential revenue display
+    const potentialRevenueDisplay = modal.querySelector('#potential-revenue-display');
+    if (potentialRevenueDisplay) {
+        potentialRevenueDisplay.textContent = `Potential Revenue: KES ${revenue.toFixed(2)}`;
+    }
+    
+    // Style net impact based on value
+    if (netImpactElement) {
+        if (netImpact > 0) {
+            netImpactElement.className = 'net-impact positive';
+        } else if (netImpact < 0) {
+            netImpactElement.className = 'net-impact negative';
+        } else {
+            netImpactElement.className = 'net-impact neutral';
+        }
+    }
+}
+
 function showNotification(message, type = 'info') {
     // Create notification element
     const notification = document.createElement('div');
@@ -1003,9 +1245,9 @@ style.textContent = `
     .expiry-modal {
         background: white;
         border-radius: 10px;
-        width: 90%;
-        max-width: 500px;
-        max-height: 90vh;
+        width: 95%;
+        max-width: 1200px;
+        max-height: 95vh;
         overflow-y: auto;
         transform: scale(0.9);
         transition: transform 0.3s ease;

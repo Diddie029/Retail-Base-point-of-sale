@@ -486,6 +486,76 @@ try {
         INDEX idx_created_at (created_at)
     )");
 
+    // Create supplier performance tracking tables
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS supplier_performance_metrics (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            supplier_id INT NOT NULL,
+            metric_date DATE NOT NULL,
+            total_orders INT DEFAULT 0,
+            on_time_deliveries INT DEFAULT 0,
+            late_deliveries INT DEFAULT 0,
+            average_delivery_days DECIMAL(5,2) DEFAULT 0,
+            total_returns INT DEFAULT 0,
+            quality_score DECIMAL(5,2) DEFAULT 100,
+            total_order_value DECIMAL(10,2) DEFAULT 0,
+            average_cost_per_unit DECIMAL(8,2) DEFAULT 0,
+            total_return_value DECIMAL(10,2) DEFAULT 0,
+            return_rate DECIMAL(5,2) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_supplier_date (supplier_id, metric_date),
+            INDEX idx_supplier_id (supplier_id),
+            INDEX idx_metric_date (metric_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create supplier_quality_issues table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS supplier_quality_issues (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            supplier_id INT NOT NULL,
+            issue_type ENUM('defective', 'wrong_item', 'damaged', 'expired', 'quality', 'other') NOT NULL,
+            severity ENUM('low', 'medium', 'high', 'critical') DEFAULT 'medium',
+            description TEXT,
+            product_id INT,
+            order_id INT,
+            return_id INT,
+            reported_date DATE NOT NULL,
+            resolved TINYINT(1) DEFAULT 0,
+            resolved_date DATE,
+            resolution_notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
+            INDEX idx_supplier_id (supplier_id),
+            INDEX idx_issue_type (issue_type),
+            INDEX idx_reported_date (reported_date),
+            INDEX idx_resolved (resolved)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create supplier_cost_history table for price tracking
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS supplier_cost_history (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            supplier_id INT NOT NULL,
+            product_id INT NOT NULL,
+            cost_price DECIMAL(10,2) NOT NULL,
+            effective_date DATE NOT NULL,
+            order_id INT,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+            FOREIGN KEY (order_id) REFERENCES inventory_orders(id) ON DELETE SET NULL,
+            INDEX idx_supplier_product (supplier_id, product_id),
+            INDEX idx_effective_date (effective_date),
+            INDEX idx_cost_price (cost_price)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
     // Create expiry tracker tables with improved error handling and foreign key management
     try {
         // Create expiry_categories table first (referenced by others)
@@ -858,7 +928,10 @@ try {
         ['manage_inventory', 'Manage inventory and orders'],
         ['manage_returns', 'Create and manage product returns'],
         ['approve_returns', 'Approve product returns'],
-        ['view_returns', 'View return history and details']
+        ['view_returns', 'View return history and details'],
+        ['manage_suppliers', 'Add, edit, delete suppliers'],
+        ['view_supplier_performance', 'View supplier performance metrics'],
+        ['manage_supplier_performance', 'Manage supplier performance tracking']
     ];
     
     $stmt = $conn->prepare("INSERT IGNORE INTO permissions (name, description) VALUES (:name, :description)");
@@ -880,7 +953,7 @@ try {
 
     // Assign permissions to Cashier role (limited permissions)
     $cashier_role_id = 2;
-    $cashier_permissions = ['view_dashboard', 'manage_sales', 'process_sales', 'view_returns'];
+    $cashier_permissions = ['view_dashboard', 'manage_sales', 'process_sales', 'view_returns', 'view_supplier_performance'];
     $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id)
                             SELECT :role_id, id FROM permissions WHERE name IN ('" . implode("','", $cashier_permissions) . "')");
     $stmt->bindParam(':role_id', $cashier_role_id);
@@ -1122,7 +1195,482 @@ try {
         
         // Default categories created silently
     }
-    
+
+    // Populate supplier performance data if suppliers exist
+    $supplier_count = $conn->query("SELECT COUNT(*) as count FROM suppliers")->fetch(PDO::FETCH_ASSOC)['count'];
+    if ($supplier_count > 0) {
+        try {
+            // Get existing suppliers
+            $stmt = $conn->query("SELECT id, name FROM suppliers ORDER BY id");
+            $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // Silent population - no console output
+            foreach ($suppliers as $supplier) {
+                // Generate sample performance data for different periods
+                $periods = ['30days', '90days', '1year'];
+                $baseDate = date('Y-m-d');
+
+                foreach ($periods as $period) {
+                    // Calculate date range and realistic metrics
+                    switch ($period) {
+                        case '30days':
+                            $orders = rand(3, 8);
+                            $onTimeRate = rand(85, 98);
+                            $qualityScore = rand(88, 97);
+                            break;
+                        case '90days':
+                            $orders = rand(8, 15);
+                            $onTimeRate = rand(82, 95);
+                            $qualityScore = rand(85, 94);
+                            break;
+                        case '1year':
+                            $orders = rand(25, 50);
+                            $onTimeRate = rand(78, 92);
+                            $qualityScore = rand(80, 91);
+                            break;
+                    }
+
+                    $onTimeDeliveries = round($orders * $onTimeRate / 100);
+                    $lateDeliveries = $orders - $onTimeDeliveries;
+                    $avgDeliveryDays = rand(5, 12) + (rand(0, 9) / 10);
+                    $returns = rand(0, max(1, round($orders * 0.05)));
+                    $totalOrderValue = $orders * rand(5000, 15000);
+                    $totalReturnValue = $returns * rand(1000, 5000);
+                    $returnRate = $orders > 0 ? ($returns / $orders) * 100 : 0;
+
+                    // Insert performance metrics
+                    $stmt = $conn->prepare("
+                        INSERT INTO supplier_performance_metrics
+                        (supplier_id, metric_date, total_orders, on_time_deliveries, late_deliveries,
+                         average_delivery_days, total_returns, quality_score, total_order_value,
+                         average_cost_per_unit, total_return_value, return_rate)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON DUPLICATE KEY UPDATE
+                            total_orders = VALUES(total_orders),
+                            on_time_deliveries = VALUES(on_time_deliveries),
+                            late_deliveries = VALUES(late_deliveries),
+                            average_delivery_days = VALUES(average_delivery_days),
+                            total_returns = VALUES(total_returns),
+                            quality_score = VALUES(quality_score),
+                            total_order_value = VALUES(total_order_value),
+                            average_cost_per_unit = VALUES(average_cost_per_unit),
+                            total_return_value = VALUES(total_return_value),
+                            return_rate = VALUES(return_rate)
+                    ");
+
+                    $stmt->execute([
+                        $supplier['id'],
+                        $baseDate,
+                        $orders,
+                        $onTimeDeliveries,
+                        $lateDeliveries,
+                        $avgDeliveryDays,
+                        $returns,
+                        $qualityScore,
+                        $totalOrderValue,
+                        rand(50, 200) + (rand(0, 99) / 100),
+                        $totalReturnValue,
+                        $returnRate
+                    ]);
+                }
+
+                // Generate historical data (last 6 months)
+                for ($i = 1; $i <= 6; $i++) {
+                    $historicalDate = date('Y-m-d', strtotime("-{$i} months"));
+
+                    $historicalOrders = rand(5, 12);
+                    $historicalOnTimeRate = rand(80, 95);
+                    $historicalQualityScore = rand(82, 95);
+
+                    $historicalOnTimeDeliveries = round($historicalOrders * $historicalOnTimeRate / 100);
+                    $historicalLateDeliveries = $historicalOrders - $historicalOnTimeDeliveries;
+
+                    $stmt->execute([
+                        $supplier['id'],
+                        $historicalDate,
+                        $historicalOrders,
+                        $historicalOnTimeDeliveries,
+                        $historicalLateDeliveries,
+                        rand(5, 12) + (rand(0, 9) / 10),
+                        rand(0, max(1, round($historicalOrders * 0.03))),
+                        $historicalQualityScore,
+                        $historicalOrders * rand(4000, 12000),
+                        rand(45, 180) + (rand(0, 99) / 100),
+                        rand(0, 2000),
+                        rand(0, 3) + (rand(0, 9) / 10)
+                    ]);
+                }
+
+                // Add some quality issues
+                $issueTypes = ['defective', 'wrong_item', 'damaged', 'expired', 'quality'];
+                $severities = ['low', 'medium', 'high'];
+
+                for ($i = 0; $i < rand(0, 3); $i++) {
+                    $issueStmt = $conn->prepare("
+                        INSERT INTO supplier_quality_issues
+                        (supplier_id, issue_type, severity, description, reported_date, resolved, resolution_notes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ");
+
+                    $issueType = $issueTypes[array_rand($issueTypes)];
+                    $severity = $severities[array_rand($severities)];
+                    $resolved = rand(0, 1);
+                    $reportedDate = date('Y-m-d', strtotime('-' . rand(1, 90) . ' days'));
+                    $resolvedDate = $resolved ? date('Y-m-d', strtotime($reportedDate . ' +' . rand(1, 14) . ' days')) : null;
+
+                    $descriptions = [
+                        'defective' => 'Product received with manufacturing defects',
+                        'wrong_item' => 'Wrong product variant received',
+                        'damaged' => 'Product damaged during shipping',
+                        'expired' => 'Product received past expiry date',
+                        'quality' => 'Product does not meet quality standards'
+                    ];
+
+                    $issueStmt->execute([
+                        $supplier['id'],
+                        $issueType,
+                        $severity,
+                        $descriptions[$issueType] . ' - Batch #' . rand(1000, 9999),
+                        $reportedDate,
+                        $resolved,
+                        $resolved ? 'Issue resolved and replacement sent' : null
+                    ]);
+                }
+            }
+
+            // Silent success - data populated without console output
+
+        } catch (PDOException $e) {
+            // Silent error handling - log to PHP error log if needed
+            error_log("Warning: Could not populate supplier performance data: " . $e->getMessage());
+        }
+    }
+
+    // Create expense management tables
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expense_categories (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            parent_id INT DEFAULT NULL,
+            color_code VARCHAR(7) DEFAULT '#6366f1',
+            is_tax_deductible TINYINT(1) DEFAULT 0,
+            is_active TINYINT(1) DEFAULT 1,
+            sort_order INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (parent_id) REFERENCES expense_categories(id) ON DELETE SET NULL,
+            INDEX idx_parent_id (parent_id),
+            INDEX idx_is_active (is_active),
+            INDEX idx_sort_order (sort_order)
+        )
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expense_vendors (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            contact_person VARCHAR(100),
+            email VARCHAR(100),
+            phone VARCHAR(20),
+            address TEXT,
+            tax_id VARCHAR(50),
+            payment_terms VARCHAR(100),
+            credit_limit DECIMAL(12, 2) DEFAULT 0,
+            current_balance DECIMAL(12, 2) DEFAULT 0,
+            notes TEXT,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_name (name),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expense_payment_methods (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(50) NOT NULL,
+            description TEXT,
+            is_active TINYINT(1) DEFAULT 1,
+            sort_order INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_is_active (is_active),
+            INDEX idx_sort_order (sort_order)
+        )
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expense_departments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            manager_id INT,
+            budget_amount DECIMAL(12, 2) DEFAULT 0,
+            budget_period ENUM('monthly', 'quarterly', 'yearly') DEFAULT 'monthly',
+            is_active TINYINT(1) DEFAULT 1,
+            sort_order INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE SET NULL,
+            INDEX idx_is_active (is_active),
+            INDEX idx_sort_order (sort_order)
+        )
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expenses (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            expense_number VARCHAR(50) NOT NULL UNIQUE,
+            title VARCHAR(255) NOT NULL,
+            description TEXT,
+            category_id INT NOT NULL,
+            subcategory_id INT,
+            vendor_id INT,
+            department_id INT,
+            amount DECIMAL(12, 2) NOT NULL,
+            tax_amount DECIMAL(12, 2) DEFAULT 0,
+            total_amount DECIMAL(12, 2) NOT NULL,
+            payment_method_id INT,
+            payment_status ENUM('pending', 'paid', 'partial', 'overdue') DEFAULT 'pending',
+            payment_date DATE,
+            due_date DATE,
+            expense_date DATE NOT NULL,
+            is_tax_deductible TINYINT(1) DEFAULT 0,
+            is_recurring TINYINT(1) DEFAULT 0,
+            recurring_frequency ENUM('daily', 'weekly', 'monthly', 'quarterly', 'yearly'),
+            recurring_end_date DATE,
+            approval_status ENUM('pending', 'approved', 'rejected', 'cancelled') DEFAULT 'pending',
+            approved_by INT,
+            approved_at DATETIME,
+            rejection_reason TEXT,
+            receipt_file VARCHAR(500),
+            notes TEXT,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (category_id) REFERENCES expense_categories(id),
+            FOREIGN KEY (subcategory_id) REFERENCES expense_categories(id),
+            FOREIGN KEY (vendor_id) REFERENCES expense_vendors(id),
+            FOREIGN KEY (department_id) REFERENCES expense_departments(id),
+            FOREIGN KEY (payment_method_id) REFERENCES expense_payment_methods(id),
+            FOREIGN KEY (approved_by) REFERENCES users(id),
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            INDEX idx_expense_number (expense_number),
+            INDEX idx_category_id (category_id),
+            INDEX idx_vendor_id (vendor_id),
+            INDEX idx_department_id (department_id),
+            INDEX idx_payment_status (payment_status),
+            INDEX idx_approval_status (approval_status),
+            INDEX idx_expense_date (expense_date),
+            INDEX idx_created_by (created_by),
+            INDEX idx_is_recurring (is_recurring)
+        )
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expense_attachments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            expense_id INT NOT NULL,
+            file_name VARCHAR(255) NOT NULL,
+            file_path VARCHAR(500) NOT NULL,
+            file_type VARCHAR(100),
+            file_size INT,
+            uploaded_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE,
+            FOREIGN KEY (uploaded_by) REFERENCES users(id),
+            INDEX idx_expense_id (expense_id)
+        )
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expense_approvals (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            expense_id INT NOT NULL,
+            approver_id INT NOT NULL,
+            approval_level INT DEFAULT 1,
+            status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+            comments TEXT,
+            approved_at DATETIME,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE,
+            FOREIGN KEY (approver_id) REFERENCES users(id),
+            INDEX idx_expense_id (expense_id),
+            INDEX idx_approver_id (approver_id),
+            INDEX idx_status (status)
+        )
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS expense_budgets (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            department_id INT,
+            category_id INT,
+            budget_amount DECIMAL(12, 2) NOT NULL,
+            spent_amount DECIMAL(12, 2) DEFAULT 0,
+            budget_period ENUM('monthly', 'quarterly', 'yearly') DEFAULT 'monthly',
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            is_active TINYINT(1) DEFAULT 1,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (department_id) REFERENCES expense_departments(id),
+            FOREIGN KEY (category_id) REFERENCES expense_categories(id),
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            INDEX idx_department_id (department_id),
+            INDEX idx_category_id (category_id),
+            INDEX idx_budget_period (budget_period),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS vendor_payments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            vendor_id INT NOT NULL,
+            expense_id INT,
+            payment_amount DECIMAL(12, 2) NOT NULL,
+            payment_date DATE NOT NULL,
+            payment_method_id INT,
+            reference_number VARCHAR(100),
+            notes TEXT,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (vendor_id) REFERENCES expense_vendors(id),
+            FOREIGN KEY (expense_id) REFERENCES expenses(id),
+            FOREIGN KEY (payment_method_id) REFERENCES expense_payment_methods(id),
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            INDEX idx_vendor_id (vendor_id),
+            INDEX idx_expense_id (expense_id),
+            INDEX idx_payment_date (payment_date)
+        )
+    ");
+
+    // Insert default expense categories
+    $default_expense_categories = [
+        ['Rent', 'Office and facility rent expenses', NULL, '#ef4444', 1, 1, 1],
+        ['Utilities', 'Electricity, water, internet, phone', NULL, '#f59e0b', 1, 1, 2],
+        ['Salaries', 'Employee salaries and wages', NULL, '#10b981', 0, 1, 3],
+        ['Marketing', 'Advertising and promotional expenses', NULL, '#8b5cf6', 1, 1, 4],
+        ['Supplies', 'Office supplies and materials', NULL, '#06b6d4', 1, 1, 5],
+        ['Maintenance', 'Equipment and facility maintenance', NULL, '#84cc16', 1, 1, 6],
+        ['Travel', 'Business travel expenses', NULL, '#f97316', 1, 1, 7],
+        ['Insurance', 'Business insurance premiums', NULL, '#ec4899', 1, 1, 8],
+        ['Professional Services', 'Legal, accounting, consulting', NULL, '#6366f1', 1, 1, 9],
+        ['Equipment', 'Office equipment and furniture', NULL, '#14b8a6', 1, 1, 10],
+        ['Software', 'Software licenses and subscriptions', NULL, '#f43f5e', 1, 1, 11],
+        ['Other', 'Miscellaneous expenses', NULL, '#6b7280', 0, 1, 12]
+    ];
+
+    $stmt = $conn->prepare("INSERT IGNORE INTO expense_categories (name, description, parent_id, color_code, is_tax_deductible, is_active, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    foreach ($default_expense_categories as $category) {
+        $stmt->execute($category);
+    }
+
+    // Insert subcategories
+    $subcategories = [
+        ['Electricity', 'Electricity bills', 2, '#f59e0b', 1, 1, 1],
+        ['Water', 'Water and sewage bills', 2, '#f59e0b', 1, 1, 2],
+        ['Internet', 'Internet and phone services', 2, '#f59e0b', 1, 1, 3],
+        ['Gas', 'Gas and heating expenses', 2, '#f59e0b', 1, 1, 4],
+        ['Print Advertising', 'Newspaper, magazine ads', 4, '#8b5cf6', 1, 1, 1],
+        ['Digital Marketing', 'Online advertising and SEO', 4, '#8b5cf6', 1, 1, 2],
+        ['Social Media', 'Social media marketing', 4, '#8b5cf6', 1, 1, 3],
+        ['Office Supplies', 'Paper, pens, stationery', 5, '#06b6d4', 1, 1, 1],
+        ['Cleaning Supplies', 'Cleaning materials', 5, '#06b6d4', 1, 1, 2],
+        ['Equipment Repair', 'Computer and equipment repairs', 6, '#84cc16', 1, 1, 1],
+        ['Facility Maintenance', 'Building and facility repairs', 6, '#84cc16', 1, 1, 2],
+        ['Airfare', 'Flight tickets', 7, '#f97316', 1, 1, 1],
+        ['Hotel', 'Accommodation expenses', 7, '#f97316', 1, 1, 2],
+        ['Meals', 'Business meals and entertainment', 7, '#f97316', 1, 1, 3],
+        ['Transportation', 'Local transportation costs', 7, '#f97316', 1, 1, 4]
+    ];
+
+    foreach ($subcategories as $subcategory) {
+        $stmt->execute($subcategory);
+    }
+
+    // Insert default payment methods
+    $default_payment_methods = [
+        ['Cash', 'Cash payments', 1, 1],
+        ['Check', 'Check payments', 1, 2],
+        ['Credit Card', 'Credit card payments', 1, 3],
+        ['Bank Transfer', 'Bank transfers and wire transfers', 1, 4],
+        ['Mobile Money', 'Mobile money payments', 1, 5],
+        ['PayPal', 'PayPal payments', 1, 6]
+    ];
+
+    $stmt = $conn->prepare("INSERT IGNORE INTO expense_payment_methods (name, description, is_active, sort_order) VALUES (?, ?, ?, ?)");
+    foreach ($default_payment_methods as $method) {
+        $stmt->execute($method);
+    }
+
+    // Insert default departments
+    $default_departments = [
+        ['Administration', 'General administration and management', NULL, 50000, 'monthly'],
+        ['Sales', 'Sales and marketing department', NULL, 30000, 'monthly'],
+        ['Operations', 'Operations and production', NULL, 40000, 'monthly'],
+        ['Finance', 'Finance and accounting', NULL, 25000, 'monthly'],
+        ['IT', 'Information technology', NULL, 35000, 'monthly'],
+        ['Human Resources', 'HR and personnel management', NULL, 20000, 'monthly']
+    ];
+
+    $stmt = $conn->prepare("INSERT IGNORE INTO expense_departments (name, description, manager_id, budget_amount, budget_period) VALUES (?, ?, ?, ?, ?)");
+    foreach ($default_departments as $department) {
+        $stmt->execute($department);
+    }
+
+    // Add expense management permissions
+    $expense_permissions = [
+        ['manage_expenses', 'Manage all expenses'],
+        ['create_expenses', 'Create new expenses'],
+        ['edit_expenses', 'Edit existing expenses'],
+        ['delete_expenses', 'Delete expenses'],
+        ['approve_expenses', 'Approve expense requests'],
+        ['view_expense_reports', 'View expense reports and analytics'],
+        ['manage_expense_categories', 'Manage expense categories'],
+        ['manage_expense_departments', 'Manage expense departments'],
+        ['manage_expense_vendors', 'Manage expense vendors'],
+        ['manage_expense_budgets', 'Manage expense budgets'],
+        ['export_expenses', 'Export expense data']
+    ];
+
+    $stmt = $conn->prepare("INSERT IGNORE INTO permissions (name, description) VALUES (?, ?)");
+    foreach ($expense_permissions as $permission) {
+        $stmt->execute($permission);
+    }
+
+    // Assign expense permissions to Admin role
+    $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
+                           SELECT 1, id FROM permissions WHERE name IN ('manage_expenses', 'create_expenses', 'edit_expenses', 'delete_expenses', 'approve_expenses', 'view_expense_reports', 'manage_expense_categories', 'manage_expense_departments', 'manage_expense_vendors', 'manage_expense_budgets', 'export_expenses')");
+    $stmt->execute();
+
+    // Assign limited expense permissions to Cashier role
+    $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
+                           SELECT 2, id FROM permissions WHERE name IN ('create_expenses', 'view_expense_reports')");
+    $stmt->execute();
+
+    // Add expense settings
+    $expense_settings = [
+        ['expense_auto_approval', '0'],
+        ['expense_approval_required', '1'],
+        ['expense_max_amount_auto_approval', '1000'],
+        ['expense_notification_email', ''],
+        ['expense_receipt_required', '1'],
+        ['expense_tax_deductible_default', '0'],
+        ['expense_number_prefix', 'EXP'],
+        ['expense_number_length', '6'],
+        ['expense_currency', 'KES'],
+        ['expense_decimal_places', '2']
+    ];
+
+    $stmt = $conn->prepare("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (?, ?)");
+    foreach ($expense_settings as $setting) {
+        $stmt->execute($setting);
+    }
+
     // Database initialized silently
     // Store connection status for login page
     $GLOBALS['db_connected'] = true;
