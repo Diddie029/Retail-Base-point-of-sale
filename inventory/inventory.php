@@ -36,6 +36,16 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
+// Check BOM permissions
+$can_manage_boms = hasPermission('manage_boms', $permissions);
+$can_view_boms = hasPermission('view_boms', $permissions);
+
+// Get BOM statistics if user has BOM permissions
+$bom_stats = [];
+if ($can_manage_boms || $can_view_boms) {
+    $bom_stats = getBOMStatistics($conn);
+}
+
 // Get inventory statistics
 $stats = [];
 
@@ -380,9 +390,9 @@ if (hasPermission('manage_products', $permissions)) {
                             Add Product
                         </a>
                         <?php endif; ?>
-                        <a href="create_order.php" class="action-btn">
+                        <a href="place_order.php" class="action-btn">
                             <i class="bi bi-plus-circle"></i>
-                            Create Order
+                            Place Order
                         </a>
                         <a href="view_orders.php?filter=receivable" class="action-btn">
                             <i class="bi bi-box-arrow-in-down"></i>
@@ -413,6 +423,32 @@ if (hasPermission('manage_products', $permissions)) {
                             Shelf Labels
                         </a>
                     </div>
+
+                    <!-- Quick Actions Row 3: BOM Management -->
+                    <?php if ($can_manage_boms || $can_view_boms): ?>
+                    <div class="quick-actions">
+                        <?php if ($can_manage_boms): ?>
+                        <a href="../bom/add.php" class="action-btn">
+                            <i class="bi bi-file-earmark-plus"></i>
+                            Create BOM
+                        </a>
+                        <?php endif; ?>
+                        <a href="../bom/index.php" class="action-btn">
+                            <i class="bi bi-list-ul"></i>
+                            View BOMs
+                        </a>
+                        <?php if ($can_manage_boms): ?>
+                        <a href="../bom/production.php" class="action-btn">
+                            <i class="bi bi-gear"></i>
+                            Production Orders
+                        </a>
+                        <?php endif; ?>
+                        <a href="../bom/reports.php" class="action-btn">
+                            <i class="bi bi-graph-up"></i>
+                            BOM Reports
+                        </a>
+                    </div>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -610,9 +646,118 @@ if (hasPermission('manage_products', $permissions)) {
                     </div>
                 </div>
 
+                <!-- BOM Statistics -->
+                <?php if (($can_manage_boms || $can_view_boms) && !empty($bom_stats)): ?>
+                <div class="stat-card" onclick="window.location.href='../bom/index.php'" style="cursor: pointer;">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-info">
+                            <i class="bi bi-file-earmark-text"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($bom_stats['total_active_boms'] ?? 0); ?></div>
+                    <div class="stat-label">Active BOMs</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-arrow-up"></i> Manufacturing specs
+                    </div>
+                </div>
+
+                <div class="stat-card" onclick="window.location.href='../bom/index.php?status=draft'" style="cursor: pointer;">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-warning">
+                            <i class="bi bi-pencil-square"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($bom_stats['draft_boms'] ?? 0); ?></div>
+                    <div class="stat-label">Draft BOMs</div>
+                    <div class="stat-change <?php echo ($bom_stats['draft_boms'] ?? 0) > 0 ? 'negative' : 'positive'; ?>">
+                        <i class="bi bi-<?php echo ($bom_stats['draft_boms'] ?? 0) > 0 ? 'exclamation-triangle' : 'check-circle'; ?>"></i>
+                        <?php echo ($bom_stats['draft_boms'] ?? 0) > 0 ? 'Needs approval' : 'All approved'; ?>
+                    </div>
+                </div>
+
+                <div class="stat-card" onclick="window.location.href='../bom/index.php?production=active'" style="cursor: pointer;">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-primary">
+                            <i class="bi bi-gear"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($bom_stats['active_production_orders'] ?? 0); ?></div>
+                    <div class="stat-label">Active Production</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-play-circle"></i> In progress
+                    </div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <div class="stat-icon stat-success">
+                            <i class="bi bi-trophy"></i>
+                        </div>
+                    </div>
+                    <div class="stat-value"><?php echo number_format($bom_stats['completed_this_month'] ?? 0); ?></div>
+                    <div class="stat-label">Completed This Month</div>
+                    <div class="stat-change positive">
+                        <i class="bi bi-check-circle"></i> This month
+                    </div>
+                </div>
+                <?php endif; ?>
+
                     </div>
                 </div>
             </div>
+
+            <!-- Bulk Operations Section -->
+            <?php if (hasPermission('manage_products', $permissions) || hasPermission('manage_inventory', $permissions)): ?>
+            <div class="row mt-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-lightning-charge me-2"></i>Bulk Operations</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-3">
+                                    <div class="text-center">
+                                        <a href="../products/products.php" class="btn btn-outline-primary d-block">
+                                            <i class="bi bi-boxes me-2"></i>
+                                            <strong>Bulk Product Management</strong><br>
+                                            <small>Update multiple products at once</small>
+                                        </a>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="text-center">
+                                        <a href="bulk_status_update.php" class="btn btn-outline-warning d-block">
+                                            <i class="bi bi-toggle-on me-2"></i>
+                                            <strong>Bulk Status Update</strong><br>
+                                            <small>Change status for multiple items</small>
+                                        </a>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="text-center">
+                                        <a href="../bom/auto_bom_index.php" class="btn btn-outline-success d-block">
+                                            <i class="fas fa-cogs me-2"></i>
+                                            <strong>Bulk Auto BOM Setup</strong><br>
+                                            <small>Configure Auto BOM for products</small>
+                                        </a>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="text-center">
+                                        <a href="../products/bulk_operations.php" class="btn btn-outline-info d-block">
+                                            <i class="bi bi-gear me-2"></i>
+                                            <strong>Advanced Bulk Ops</strong><br>
+                                            <small>Import, export, and advanced operations</small>
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
 
             <!-- Low Stock Alert -->
             <?php if (!empty($low_stock_products)): ?>

@@ -73,6 +73,10 @@ $brands = $brands_stmt->fetchAll(PDO::FETCH_ASSOC);
 $suppliers_stmt = $conn->query("SELECT * FROM suppliers ORDER BY name");
 $suppliers = $suppliers_stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Get product families
+$families_stmt = $conn->query("SELECT * FROM product_families WHERE status = 'active' ORDER BY name");
+$families = $families_stmt->fetchAll(PDO::FETCH_ASSOC);
+
 $errors = [];
 $success = '';
 
@@ -85,6 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // SKU and identifiers
     $sku = sanitizeProductInput($_POST['sku'] ?? '');
+    $product_number = sanitizeProductInput($_POST['product_number'] ?? '');
     $barcode = sanitizeProductInput($_POST['barcode'] ?? '');
 
     // Product type and pricing
@@ -183,6 +188,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Check Product Number uniqueness if provided
+    if (!empty($product_number)) {
+        $stmt = $conn->prepare("SELECT COUNT(*) as count FROM products WHERE product_number = :product_number AND id != :id");
+        $stmt->bindParam(':product_number', $product_number);
+        $stmt->bindParam(':id', $product_id);
+        $stmt->execute();
+        if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+            $errors['product_number'] = 'This Product Number already exists';
+        }
+    }
+
     // Check barcode uniqueness if provided
     if (!empty($barcode)) {
         $stmt = $conn->prepare("SELECT COUNT(*) as count FROM products WHERE barcode = :barcode AND id != :id");
@@ -214,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $update_stmt = $conn->prepare("
                 UPDATE products 
                 SET name = :name, description = :description, category_id = :category_id,
-                    sku = :sku, product_type = :product_type, price = :price, cost_price = :cost_price,
+                    sku = :sku, product_number = :product_number, product_type = :product_type, price = :price, cost_price = :cost_price,
                     quantity = :quantity, minimum_stock = :minimum_stock, maximum_stock = :maximum_stock,
                     reorder_point = :reorder_point, barcode = :barcode, brand_id = :brand_id,
                     supplier_id = :supplier_id, weight = :weight, length = :length, width = :width,
@@ -230,6 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $update_stmt->bindParam(':description', $description);
             $update_stmt->bindParam(':category_id', $category_id);
             $update_stmt->bindParam(':sku', $sku);
+            $update_stmt->bindParam(':product_number', $product_number);
             $update_stmt->bindParam(':product_type', $product_type);
             $update_stmt->bindParam(':price', $price);
             $update_stmt->bindParam(':cost_price', $cost_price);
@@ -271,6 +288,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $product['description'] = $description;
     $product['category_id'] = $category_id;
     $product['sku'] = $sku;
+    $product['product_number'] = $product_number;
     $product['product_type'] = $product_type;
     $product['price'] = $price;
     $product['cost_price'] = $cost_price;
@@ -295,6 +313,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $product['sale_price'] = $sale_price;
     $product['sale_start_date'] = $sale_start_date;
     $product['sale_end_date'] = $sale_end_date;
+}
+
+// Handle AJAX requests for Product Number generation
+if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
+    $product_number = generateProductNumber($conn);
+    
+    header('Content-Type: application/json');
+    echo json_encode(['product_number' => $product_number]);
+    exit();
 }
 ?>
 
@@ -468,6 +495,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <?php endif; ?>
                                 <div class="form-text">
                                     Unique identifier for inventory tracking. Leave empty to auto-generate.
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="product_number" class="form-label">Product Number</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control <?php echo isset($errors['product_number']) ? 'is-invalid' : ''; ?>"
+                                           id="product_number" name="product_number" value="<?php echo htmlspecialchars($product['product_number'] ?? ''); ?>"
+                                           placeholder="Enter or generate product number">
+                                    <button type="button" class="btn btn-outline-secondary" id="generateProductNumber">
+                                        <i class="bi bi-magic"></i>
+                                        Generate
+                                    </button>
+                                </div>
+                                <?php if (isset($errors['product_number'])): ?>
+                                <div class="invalid-feedback"><?php echo htmlspecialchars($errors['product_number']); ?></div>
+                                <?php endif; ?>
+                                <div class="form-text">
+                                    Internal product number for tracking. Leave empty to auto-generate.
                                 </div>
                             </div>
 
@@ -694,6 +740,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
 
                             <div class="form-group">
+                                <label for="product_family_id" class="form-label">Product Family</label>
+                                <select class="form-control" id="product_family_id" name="product_family_id">
+                                    <option value="">Select Product Family</option>
+                                    <?php foreach ($families as $family): ?>
+                                    <option value="<?php echo $family['id']; ?>"
+                                            <?php echo ($product['product_family_id'] ?? '') == $family['id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($family['name']); ?> (<?php echo htmlspecialchars($family['base_unit']); ?>)
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="form-text">
+                                    <a href="../product_families/add.php" target="_blank">Add new family</a>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
                                 <label for="supplier_id" class="form-label">Supplier</label>
                                 <select class="form-control" id="supplier_id" name="supplier_id">
                                     <option value="">Select Supplier</option>
@@ -794,5 +856,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="../assets/js/products.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Product Number Generation
+            const generateProductNumberBtn = document.getElementById('generateProductNumber');
+            if (generateProductNumberBtn) {
+                generateProductNumberBtn.addEventListener('click', function() {
+                    fetch('?action=generate_product_number')
+                        .then(response => response.json())
+                        .then(data => {
+                            document.getElementById('product_number').value = data.product_number;
+                        })
+                        .catch(error => {
+                            console.error('Error generating product number:', error);
+                        });
+                });
+            }
+        });
+    </script>
 </body>
 </html>

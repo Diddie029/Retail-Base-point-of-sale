@@ -35,8 +35,24 @@ function sanitizeInput($data) {
  * @param int $decimals Number of decimal places
  * @return string Formatted currency string
  */
-function formatCurrency($amount, $currency = 'KES', $decimals = 2) {
-    return $currency . ' ' . number_format($amount, $decimals);
+function formatCurrency($amount, $settings = null) {
+    // If no settings provided, get from database
+    if ($settings === null) {
+        global $conn;
+        $settings = getSystemSettings($conn);
+    }
+
+    $symbol = $settings['currency_symbol'] ?? 'KES';
+    $position = $settings['currency_position'] ?? 'before';
+    $decimals = intval($settings['currency_decimal_places'] ?? 2);
+
+    $formatted_amount = number_format($amount, $decimals);
+
+    if ($position === 'before') {
+        return $symbol . ' ' . $formatted_amount;
+    } else {
+        return $formatted_amount . ' ' . $symbol;
+    }
 }
 
 /**
@@ -376,7 +392,9 @@ function getSKUSettings($conn) {
         $stmt->execute();
         $settings = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $settings[$row['setting_key']] = $row['setting_value'];
+            if (isset($row['setting_key']) && isset($row['setting_value'])) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
         }
 
         // Set defaults if not configured
@@ -1128,6 +1146,750 @@ function getSupplierCostComparison($conn, $supplier_id) {
 }
 
 /**
+ * BILL OF MATERIALS (BOM) FUNCTIONS
+ */
+
+/**
+ * Generate Product number based on system settings
+ *
+ * @param PDO $conn Database connection
+ * @return string Generated Product number
+ */
+function generateProductNumber($conn) {
+    try {
+        $stmt = $conn->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('product_number_prefix', 'product_number_length', 'product_number_separator', 'product_number_format')");
+        $stmt->execute();
+        $settings = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            if (isset($row['setting_key']) && isset($row['setting_value'])) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
+        }
+
+        $prefix = $settings['product_number_prefix'] ?? 'PRD';
+        $length = intval($settings['product_number_length'] ?? 6);
+        $separator = $settings['product_number_separator'] ?? '-';
+        $format = $settings['product_number_format'] ?? 'prefix-number';
+        $currentDate = date('Ymd');
+
+        // Get the next sequential number based on format
+        $nextNumber = 1;
+        
+        if ($format === 'prefix-date-number') {
+            // Find the highest number for today's date
+            $searchPattern = $prefix . $separator . $currentDate . $separator . '%';
+            $stmt = $conn->prepare("SELECT product_number FROM products WHERE product_number LIKE :pattern ORDER BY product_number DESC LIMIT 1");
+            $stmt->bindParam(':pattern', $searchPattern);
+            $stmt->execute();
+            $lastProduct = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($lastProduct) {
+                // Extract the number part and increment
+                $lastNumber = substr($lastProduct['product_number'], strlen($prefix . $separator . $currentDate . $separator));
+                $nextNumber = intval($lastNumber) + 1;
+            }
+        } elseif ($format === 'prefix-number') {
+            // Find the highest number for this prefix
+            $searchPattern = $prefix . $separator . '%';
+            $stmt = $conn->prepare("SELECT product_number FROM products WHERE product_number LIKE :pattern ORDER BY product_number DESC LIMIT 1");
+            $stmt->bindParam(':pattern', $searchPattern);
+            $stmt->execute();
+            $lastProduct = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($lastProduct) {
+                // Extract the number part and increment
+                $lastNumber = substr($lastProduct['product_number'], strlen($prefix . $separator));
+                $nextNumber = intval($lastNumber) + 1;
+            }
+        } elseif ($format === 'date-prefix-number') {
+            // Find the highest number for today's date and prefix
+            $searchPattern = $currentDate . $separator . $prefix . $separator . '%';
+            $stmt = $conn->prepare("SELECT product_number FROM products WHERE product_number LIKE :pattern ORDER BY product_number DESC LIMIT 1");
+            $stmt->bindParam(':pattern', $searchPattern);
+            $stmt->execute();
+            $lastProduct = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($lastProduct) {
+                // Extract the number part and increment
+                $lastNumber = substr($lastProduct['product_number'], strlen($currentDate . $separator . $prefix . $separator));
+                $nextNumber = intval($lastNumber) + 1;
+            }
+        } elseif ($format === 'number-only') {
+            // Find the highest number (no prefix/date)
+            $stmt = $conn->prepare("SELECT product_number FROM products WHERE product_number REGEXP '^[0-9]+$' ORDER BY CAST(product_number AS UNSIGNED) DESC LIMIT 1");
+            $stmt->execute();
+            $lastProduct = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($lastProduct) {
+                $nextNumber = intval($lastProduct['product_number']) + 1;
+            }
+        }
+
+        // Format the number with leading zeros
+        $number = str_pad($nextNumber, $length, '0', STR_PAD_LEFT);
+
+        // Generate the final product number
+        switch ($format) {
+            case 'prefix-date-number':
+                $product_number = $prefix . $separator . $currentDate . $separator . $number;
+                break;
+            case 'prefix-number':
+                $product_number = $prefix . $separator . $number;
+                break;
+            case 'date-prefix-number':
+                $product_number = $currentDate . $separator . $prefix . $separator . $number;
+                break;
+            case 'number-only':
+                $product_number = $number;
+                break;
+            default:
+                $product_number = $prefix . $separator . $number;
+        }
+
+        return $product_number;
+    } catch (PDOException $e) {
+        // Fallback to simple generation with timestamp
+        return 'PRD-' . date('Ymd') . '-' . str_pad(1, 6, '0', STR_PAD_LEFT);
+    }
+}
+
+/**
+ * Generate BOM number based on system settings
+ *
+ * @param PDO $conn Database connection
+ * @return string Generated BOM number
+ */
+function generateBOMNumber($conn) {
+    try {
+        $stmt = $conn->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('bom_number_prefix', 'bom_number_length', 'bom_number_separator', 'bom_number_format')");
+        $stmt->execute();
+        $settings = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            if (isset($row['setting_key']) && isset($row['setting_value'])) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
+        }
+
+        $prefix = $settings['bom_number_prefix'] ?? 'BOM';
+        $length = intval($settings['bom_number_length'] ?? 6);
+        $separator = $settings['bom_number_separator'] ?? '-';
+        $format = $settings['bom_number_format'] ?? 'prefix-date-number';
+        $currentDate = date('Ymd');
+
+        // Get the next sequential number based on format
+        $nextNumber = 1;
+        
+        if ($format === 'prefix-date-number') {
+            // Find the highest number for today's date
+            $searchPattern = $prefix . $separator . $currentDate . $separator . '%';
+            $stmt = $conn->prepare("SELECT bom_number FROM bom_headers WHERE bom_number LIKE :pattern ORDER BY bom_number DESC LIMIT 1");
+            $stmt->bindParam(':pattern', $searchPattern);
+            $stmt->execute();
+            $lastBOM = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($lastBOM) {
+                // Extract the number part and increment
+                $lastNumber = substr($lastBOM['bom_number'], strlen($prefix . $separator . $currentDate . $separator));
+                $nextNumber = intval($lastNumber) + 1;
+            }
+        } elseif ($format === 'prefix-number') {
+            // Find the highest number for this prefix
+            $searchPattern = $prefix . $separator . '%';
+            $stmt = $conn->prepare("SELECT bom_number FROM bom_headers WHERE bom_number LIKE :pattern ORDER BY bom_number DESC LIMIT 1");
+            $stmt->bindParam(':pattern', $searchPattern);
+            $stmt->execute();
+            $lastBOM = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($lastBOM) {
+                // Extract the number part and increment
+                $lastNumber = substr($lastBOM['bom_number'], strlen($prefix . $separator));
+                $nextNumber = intval($lastNumber) + 1;
+            }
+        } elseif ($format === 'date-prefix-number') {
+            // Find the highest number for today's date and prefix
+            $searchPattern = $currentDate . $separator . $prefix . $separator . '%';
+            $stmt = $conn->prepare("SELECT bom_number FROM bom_headers WHERE bom_number LIKE :pattern ORDER BY bom_number DESC LIMIT 1");
+            $stmt->bindParam(':pattern', $searchPattern);
+            $stmt->execute();
+            $lastBOM = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($lastBOM) {
+                // Extract the number part and increment
+                $lastNumber = substr($lastBOM['bom_number'], strlen($currentDate . $separator . $prefix . $separator));
+                $nextNumber = intval($lastNumber) + 1;
+            }
+        } elseif ($format === 'number-only') {
+            // Find the highest number (no prefix/date)
+            $stmt = $conn->prepare("SELECT bom_number FROM bom_headers WHERE bom_number REGEXP '^[0-9]+$' ORDER BY CAST(bom_number AS UNSIGNED) DESC LIMIT 1");
+            $stmt->execute();
+            $lastBOM = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($lastBOM) {
+                $nextNumber = intval($lastBOM['bom_number']) + 1;
+            }
+        }
+
+        // Format the number with leading zeros
+        $number = str_pad($nextNumber, $length, '0', STR_PAD_LEFT);
+
+        // Generate the final BOM number
+        switch ($format) {
+            case 'prefix-date-number':
+                $bom_number = $prefix . $separator . $currentDate . $separator . $number;
+                break;
+            case 'prefix-number':
+                $bom_number = $prefix . $separator . $number;
+                break;
+            case 'date-prefix-number':
+                $bom_number = $currentDate . $separator . $prefix . $separator . $number;
+                break;
+            case 'number-only':
+                $bom_number = $number;
+                break;
+            default:
+                $bom_number = $prefix . $separator . $currentDate . $separator . $number;
+        }
+
+        return $bom_number;
+    } catch (PDOException $e) {
+        // Fallback to simple generation with timestamp
+        return 'BOM-' . date('Ymd') . '-' . str_pad(1, 6, '0', STR_PAD_LEFT);
+    }
+}
+
+/**
+ * Generate Production Order number based on system settings
+ *
+ * @param PDO $conn Database connection
+ * @return string Generated Production Order number
+ */
+function generateProductionOrderNumber($conn) {
+    try {
+        $stmt = $conn->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('bom_production_order_prefix', 'bom_production_order_length')");
+        $stmt->execute();
+        $settings = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            if (isset($row['setting_key']) && isset($row['setting_value'])) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
+        }
+
+        $prefix = $settings['bom_production_order_prefix'] ?? 'PROD';
+        $length = intval($settings['bom_production_order_length'] ?? 6);
+        $currentDate = date('Ymd');
+
+        // Get the next sequential number for today's date
+        $searchPattern = $prefix . '-' . $currentDate . '-%';
+        $stmt = $conn->prepare("SELECT production_order_number FROM bom_production_orders WHERE production_order_number LIKE :pattern ORDER BY production_order_number DESC LIMIT 1");
+        $stmt->bindParam(':pattern', $searchPattern);
+        $stmt->execute();
+        $lastOrder = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        $nextNumber = 1;
+        if ($lastOrder) {
+            // Extract the number part and increment
+            $lastNumber = substr($lastOrder['production_order_number'], strlen($prefix . '-' . $currentDate . '-'));
+            $nextNumber = intval($lastNumber) + 1;
+        }
+
+        // Format the number with leading zeros
+        $number = str_pad($nextNumber, $length, '0', STR_PAD_LEFT);
+        $production_order_number = $prefix . '-' . $currentDate . '-' . $number;
+
+        return $production_order_number;
+    } catch (PDOException $e) {
+        // Fallback to simple generation with timestamp
+        return 'PROD-' . date('Ymd') . '-' . str_pad(1, 6, '0', STR_PAD_LEFT);
+    }
+}
+
+/**
+ * Calculate BOM component costs and totals (with multi-level BOM support)
+ *
+ * @param PDO $conn Database connection
+ * @param int $bom_id BOM ID
+ * @return array Cost calculation results
+ */
+function calculateBOMCost($conn, $bom_id) {
+    try {
+        $sql = "
+            SELECT
+                bc.*,
+                p.name as component_name,
+                p.sku as component_sku,
+                p.quantity as available_stock,
+                COALESCE(p.cost_price, 0) as current_cost_price,
+                COALESCE(bh_sub.total_cost, 0) as sub_bom_total_cost,
+                COALESCE(bh_sub.total_quantity, 1) as sub_bom_quantity,
+                CASE WHEN bh_sub.id IS NOT NULL THEN 1 ELSE 0 END as has_sub_bom
+            FROM bom_components bc
+            INNER JOIN products p ON bc.component_product_id = p.id
+            LEFT JOIN bom_headers bh_sub ON p.id = bh_sub.product_id AND bh_sub.status = 'active'
+            WHERE bc.bom_id = :bom_id
+            ORDER BY bc.sequence_number ASC
+        ";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(':bom_id', $bom_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $components = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $total_material_cost = 0;
+        $components_data = [];
+
+        foreach ($components as $component) {
+            // Use the component's unit_cost if set, otherwise use current product cost_price
+            $unit_cost = $component['unit_cost'] > 0 ? $component['unit_cost'] : $component['current_cost_price'];
+
+            // If component has its own BOM, use the rolled-up cost per unit from that BOM
+            if ($component['has_sub_bom'] && $component['sub_bom_total_cost'] > 0) {
+                $sub_bom_cost_per_unit = $component['sub_bom_total_cost'] / $component['sub_bom_quantity'];
+                $unit_cost = max($unit_cost, $sub_bom_cost_per_unit); // Use the higher cost for safety
+            }
+
+            // Calculate quantity with waste
+            $quantity_with_waste = $component['quantity_required'] * (1 + ($component['waste_percentage'] / 100));
+            $total_cost = $quantity_with_waste * $unit_cost;
+
+            $components_data[] = [
+                'id' => $component['id'],
+                'component_name' => $component['component_name'],
+                'component_sku' => $component['component_sku'],
+                'quantity_required' => $component['quantity_required'],
+                'unit_of_measure' => $component['unit_of_measure'],
+                'waste_percentage' => $component['waste_percentage'],
+                'quantity_with_waste' => round($quantity_with_waste, 3),
+                'unit_cost' => $unit_cost,
+                'total_cost' => round($total_cost, 2),
+                'available_stock' => $component['available_stock'],
+                'stock_status' => $component['available_stock'] >= $quantity_with_waste ? 'sufficient' : 'insufficient',
+                'supplier_id' => $component['supplier_id'],
+                'has_sub_bom' => $component['has_sub_bom'],
+                'sub_bom_cost' => $component['sub_bom_total_cost'] ?? 0
+            ];
+
+            $total_material_cost += $total_cost;
+        }
+
+        // Get BOM header to calculate final totals
+        $stmt = $conn->prepare("SELECT * FROM bom_headers WHERE id = :bom_id");
+        $stmt->bindParam(':bom_id', $bom_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $bom_header = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        $labor_cost = $bom_header['labor_cost'] ?? 0;
+        $overhead_cost = $bom_header['overhead_cost'] ?? 0;
+        $total_quantity = $bom_header['total_quantity'] ?? 1;
+
+        $total_cost = $total_material_cost + $labor_cost + $overhead_cost;
+        $cost_per_unit = $total_quantity > 0 ? $total_cost / $total_quantity : 0;
+
+        return [
+            'bom_id' => $bom_id,
+            'components' => $components_data,
+            'material_cost' => round($total_material_cost, 2),
+            'labor_cost' => round($labor_cost, 2),
+            'overhead_cost' => round($overhead_cost, 2),
+            'total_cost' => round($total_cost, 2),
+            'cost_per_unit' => round($cost_per_unit, 2),
+            'total_quantity' => $total_quantity,
+            'multi_level_components' => count(array_filter($components_data, function($c) { return $c['has_sub_bom']; })),
+            'profit_margin' => calculateBOMProfitMargin($conn, $bom_id, $cost_per_unit)
+        ];
+    } catch (PDOException $e) {
+        return [
+            'error' => $e->getMessage(),
+            'material_cost' => 0,
+            'labor_cost' => 0,
+            'overhead_cost' => 0,
+            'total_cost' => 0,
+            'cost_per_unit' => 0,
+            'components' => []
+        ];
+    }
+}
+
+/**
+ * Get detailed BOM structure with multi-level breakdown
+ *
+ * @param PDO $conn Database connection
+ * @param int $bom_id BOM ID
+ * @return array Detailed BOM structure
+ */
+function getBOMStructure($conn, $bom_id) {
+    try {
+        // Get main BOM info
+        $stmt = $conn->prepare("
+            SELECT bh.*, p.name as product_name, p.sku as product_sku
+            FROM bom_headers bh
+            INNER JOIN products p ON bh.product_id = p.id
+            WHERE bh.id = :bom_id
+        ");
+        $stmt->bindParam(':bom_id', $bom_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $bom_header = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$bom_header) {
+            return ['error' => 'BOM not found'];
+        }
+
+        // Get all components with their sub-BOM info
+        $stmt = $conn->prepare("
+            SELECT
+                bc.*,
+                p.name as component_name,
+                p.sku as component_sku,
+                p.quantity as available_stock,
+                COALESCE(bh_sub.id, NULL) as sub_bom_id,
+                COALESCE(bh_sub.bom_number, NULL) as sub_bom_number,
+                CASE WHEN bh_sub.id IS NOT NULL THEN 1 ELSE 0 END as has_sub_bom
+            FROM bom_components bc
+            INNER JOIN products p ON bc.component_product_id = p.id
+            LEFT JOIN bom_headers bh_sub ON p.id = bh_sub.product_id AND bh_sub.status = 'active'
+            WHERE bc.bom_id = :bom_id
+            ORDER BY bc.sequence_number ASC
+        ");
+        $stmt->bindParam(':bom_id', $bom_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $components = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Build hierarchical structure
+        $structure = [
+            'bom_id' => $bom_id,
+            'bom_number' => $bom_header['bom_number'],
+            'product_name' => $bom_header['product_name'],
+            'product_sku' => $bom_header['product_sku'],
+            'version' => $bom_header['version'],
+            'status' => $bom_header['status'],
+            'components' => []
+        ];
+
+        foreach ($components as $component) {
+            $component_data = [
+                'id' => $component['id'],
+                'component_name' => $component['component_name'],
+                'component_sku' => $component['component_sku'],
+                'quantity_required' => $component['quantity_required'],
+                'unit_of_measure' => $component['unit_of_measure'],
+                'waste_percentage' => $component['waste_percentage'],
+                'has_sub_bom' => $component['has_sub_bom'],
+                'available_stock' => $component['available_stock'],
+                'stock_status' => $component['available_stock'] >= $component['quantity_required'] ? 'sufficient' : 'insufficient'
+            ];
+
+            // If component has sub-BOM, get its structure recursively
+            if ($component['has_sub_bom']) {
+                $sub_structure = getBOMStructure($conn, $component['sub_bom_id']);
+                if (!isset($sub_structure['error'])) {
+                    $component_data['sub_bom'] = $sub_structure;
+                }
+            }
+
+            $structure['components'][] = $component_data;
+        }
+
+        return $structure;
+    } catch (PDOException $e) {
+        return ['error' => $e->getMessage()];
+    }
+}
+
+/**
+ * Calculate profit margin for BOM
+ *
+ * @param PDO $conn Database connection
+ * @param int $bom_id BOM ID
+ * @param float $cost_per_unit Calculated cost per unit
+ * @return array Profit margin data
+ */
+function calculateBOMProfitMargin($conn, $bom_id, $cost_per_unit) {
+    try {
+        // Get the finished product information
+        $stmt = $conn->prepare("
+            SELECT p.price, p.sale_price, p.name
+            FROM bom_headers bh
+            INNER JOIN products p ON bh.product_id = p.id
+            WHERE bh.id = :bom_id
+        ");
+        $stmt->bindParam(':bom_id', $bom_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $product = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$product) {
+            return ['error' => 'Product not found'];
+        }
+
+        $selling_price = $product['sale_price'] > 0 ? $product['sale_price'] : $product['price'];
+
+        if ($cost_per_unit <= 0) {
+            return [
+                'selling_price' => $selling_price,
+                'cost_per_unit' => $cost_per_unit,
+                'profit_margin' => 0,
+                'profit_amount' => 0
+            ];
+        }
+
+        $profit_amount = $selling_price - $cost_per_unit;
+        $profit_margin = ($profit_amount / $cost_per_unit) * 100;
+
+        return [
+            'product_name' => $product['name'],
+            'selling_price' => $selling_price,
+            'cost_per_unit' => $cost_per_unit,
+            'profit_amount' => round($profit_amount, 2),
+            'profit_margin' => round($profit_margin, 2)
+        ];
+    } catch (PDOException $e) {
+        return ['error' => $e->getMessage()];
+    }
+}
+
+/**
+ * Check material availability for BOM production
+ *
+ * @param PDO $conn Database connection
+ * @param int $bom_id BOM ID
+ * @param int $quantity_to_produce Quantity to produce
+ * @return array Availability check results
+ */
+function checkBOMMaterialAvailability($conn, $bom_id, $quantity_to_produce = 1) {
+    try {
+        $sql = "
+            SELECT
+                bc.*,
+                p.name as component_name,
+                p.quantity as available_stock,
+                p.minimum_stock,
+                p.sku as component_sku
+            FROM bom_components bc
+            INNER JOIN products p ON bc.component_product_id = p.id
+            WHERE bc.bom_id = :bom_id
+            ORDER BY bc.sequence_number ASC
+        ";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(':bom_id', $bom_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $components = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $availability = [];
+        $all_available = true;
+        $shortages = [];
+
+        foreach ($components as $component) {
+            $required_quantity = $component['quantity_required'] * $quantity_to_produce;
+            $quantity_with_waste = $required_quantity * (1 + ($component['waste_percentage'] / 100));
+            $available = $component['available_stock'];
+            $is_available = $available >= $quantity_with_waste;
+
+            $availability[] = [
+                'component_id' => $component['component_product_id'],
+                'component_name' => $component['component_name'],
+                'component_sku' => $component['component_sku'],
+                'required_quantity' => round($required_quantity, 3),
+                'quantity_with_waste' => round($quantity_with_waste, 3),
+                'available_stock' => $available,
+                'is_available' => $is_available,
+                'shortage_quantity' => $is_available ? 0 : round($quantity_with_waste - $available, 3),
+                'minimum_stock' => $component['minimum_stock']
+            ];
+
+            if (!$is_available) {
+                $all_available = false;
+                $shortages[] = $component['component_name'];
+            }
+        }
+
+        return [
+            'all_available' => $all_available,
+            'components' => $availability,
+            'shortages' => $shortages,
+            'shortage_count' => count($shortages),
+            'quantity_to_produce' => $quantity_to_produce
+        ];
+    } catch (PDOException $e) {
+        return [
+            'error' => $e->getMessage(),
+            'all_available' => false,
+            'components' => [],
+            'shortages' => [],
+            'shortage_count' => 0
+        ];
+    }
+}
+
+/**
+ * Get BOM explosion (all components needed)
+ *
+ * @param PDO $conn Database connection
+ * @param int $bom_id BOM ID
+ * @param int $quantity Quantity to produce
+ * @param int $level Current explosion level (for multi-level BOMs)
+ * @return array BOM explosion data
+ */
+function getBOMExplosion($conn, $bom_id, $quantity = 1, $level = 0) {
+    try {
+        $explosion = [];
+        $sql = "
+            SELECT
+                bc.*,
+                p.name as component_name,
+                p.sku as component_sku,
+                p.quantity as available_stock,
+                p.cost_price,
+                c.name as category_name
+            FROM bom_components bc
+            INNER JOIN products p ON bc.component_product_id = p.id
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE bc.bom_id = :bom_id
+            ORDER BY bc.sequence_number ASC
+        ";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(':bom_id', $bom_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $components = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($components as $component) {
+            $required_qty = $component['quantity_required'] * $quantity;
+            $qty_with_waste = $required_qty * (1 + ($component['waste_percentage'] / 100));
+
+            $explosion[] = [
+                'level' => $level,
+                'component_id' => $component['component_product_id'],
+                'component_name' => $component['component_name'],
+                'component_sku' => $component['component_sku'],
+                'category_name' => $component['category_name'],
+                'quantity_required' => round($required_qty, 3),
+                'quantity_with_waste' => round($qty_with_waste, 3),
+                'unit_of_measure' => $component['unit_of_measure'],
+                'waste_percentage' => $component['waste_percentage'],
+                'available_stock' => $component['available_stock'],
+                'unit_cost' => $component['cost_price'],
+                'total_cost' => round($qty_with_waste * $component['cost_price'], 2),
+                'is_available' => $component['available_stock'] >= $qty_with_waste
+            ];
+
+            // Check if this component has its own BOM (multi-level BOM)
+            $stmt = $conn->prepare("SELECT id FROM bom_headers WHERE product_id = :product_id AND status = 'active'");
+            $stmt->bindParam(':product_id', $component['component_product_id'], PDO::PARAM_INT);
+            $stmt->execute();
+            $sub_bom = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($sub_bom) {
+                // Recursively get sub-components
+                $sub_explosion = getBOMExplosion($conn, $sub_bom['id'], $required_qty, $level + 1);
+                $explosion = array_merge($explosion, $sub_explosion);
+            }
+        }
+
+        return $explosion;
+    } catch (PDOException $e) {
+        return [];
+    }
+}
+
+/**
+ * Get where-used report for a component (which BOMs use this component)
+ *
+ * @param PDO $conn Database connection
+ * @param int $component_product_id Component product ID
+ * @return array Where-used data
+ */
+function getWhereUsedReport($conn, $component_product_id) {
+    try {
+        $sql = "
+            SELECT
+                bh.id as bom_id,
+                bh.bom_number,
+                bh.name as bom_name,
+                bh.version,
+                bh.status,
+                p.name as finished_product_name,
+                p.sku as finished_product_sku,
+                bc.quantity_required,
+                bc.unit_of_measure,
+                bc.waste_percentage,
+                (bc.quantity_required * (1 + bc.waste_percentage / 100)) as quantity_with_waste,
+                bc.unit_cost,
+                (bc.quantity_required * (1 + bc.waste_percentage / 100) * bc.unit_cost) as total_cost
+            FROM bom_components bc
+            INNER JOIN bom_headers bh ON bc.bom_id = bh.id
+            INNER JOIN products p ON bh.product_id = p.id
+            WHERE bc.component_product_id = :component_product_id
+            AND bh.status IN ('active', 'draft')
+            ORDER BY bh.bom_number ASC
+        ";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bindParam(':component_product_id', $component_product_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return [
+            'component_id' => $component_product_id,
+            'used_in_count' => count($results),
+            'boms' => $results
+        ];
+    } catch (PDOException $e) {
+        return [
+            'error' => $e->getMessage(),
+            'component_id' => $component_product_id,
+            'used_in_count' => 0,
+            'boms' => []
+        ];
+    }
+}
+
+/**
+ * Get BOM statistics for dashboard
+ *
+ * @param PDO $conn Database connection
+ * @return array BOM statistics
+ */
+function getBOMStatistics($conn) {
+    try {
+        $stats = [];
+
+        // Total active BOMs
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM bom_headers WHERE status = 'active'");
+        $stats['total_active_boms'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+        // Draft BOMs
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM bom_headers WHERE status = 'draft'");
+        $stats['draft_boms'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+        // Total production orders
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM bom_production_orders");
+        $stats['total_production_orders'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+        // Active production orders
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM bom_production_orders WHERE status IN ('planned', 'in_progress')");
+        $stats['active_production_orders'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+        // Completed production orders this month
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM bom_production_orders WHERE status = 'completed' AND MONTH(created_at) = MONTH(CURRENT_DATE()) AND YEAR(created_at) = YEAR(CURRENT_DATE())");
+        $stats['completed_this_month'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+        // Total production value this month
+        $stmt = $conn->query("SELECT COALESCE(SUM(total_production_cost), 0) as total FROM bom_production_orders WHERE status = 'completed' AND MONTH(created_at) = MONTH(CURRENT_DATE()) AND YEAR(created_at) = YEAR(CURRENT_DATE())");
+        $stats['production_value_this_month'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+        return $stats;
+    } catch (PDOException $e) {
+        return [
+            'total_active_boms' => 0,
+            'draft_boms' => 0,
+            'total_production_orders' => 0,
+            'active_production_orders' => 0,
+            'completed_this_month' => 0,
+            'production_value_this_month' => 0
+        ];
+    }
+}
+
+/**
  * Update supplier performance metrics in database
  *
  * @param PDO $conn Database connection
@@ -1183,6 +1945,41 @@ function updateSupplierPerformanceMetrics($conn, $supplier_id, $metric_date = nu
         return true;
     } catch (PDOException $e) {
         return false;
+    }
+}
+
+/**
+ * Get currency symbol only
+ *
+ * @param array $settings System settings array
+ * @return string Currency symbol
+ */
+function getCurrencySymbol($settings = null) {
+    if ($settings === null) {
+        global $conn;
+        $settings = getSystemSettings($conn);
+    }
+    return $settings['currency_symbol'] ?? 'KES';
+}
+
+/**
+ * Get system settings with defaults
+ *
+ * @param PDO $conn Database connection
+ * @return array System settings
+ */
+function getSystemSettings($conn) {
+    try {
+        $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
+        $settings = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            if (isset($row['setting_key']) && isset($row['setting_value'])) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
+        }
+        return $settings;
+    } catch (PDOException $e) {
+        return [];
     }
 }
 

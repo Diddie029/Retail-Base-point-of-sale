@@ -102,7 +102,30 @@ $defaults = [
     'invoice_length' => '6',
     'invoice_separator' => '-',
     'invoice_format' => 'prefix-date-number',
-    'invoice_auto_generate' => '1'
+    'invoice_auto_generate' => '1',
+
+    // Product Number Settings
+    'auto_generate_product_number' => '1',
+    'product_number_prefix' => 'PRD',
+    'product_number_length' => '6',
+    'product_number_separator' => '-',
+    'product_number_format' => 'prefix-number',
+
+    // BOM Settings
+    'auto_generate_bom_number' => '1',
+    'bom_number_prefix' => 'BOM',
+    'bom_number_length' => '6',
+    'bom_number_separator' => '-',
+    'bom_number_format' => 'prefix-date-number',
+
+    // Production Order Settings
+    'auto_generate_production_order' => '1',
+    'bom_production_order_prefix' => 'PROD',
+    'bom_production_order_length' => '6',
+
+    // BOM Cost Calculation Settings
+    'bom_cost_calculation_method' => 'standard',
+    'bom_default_waste_percentage' => '5.0'
 ];
 
 // Merge with defaults
@@ -160,6 +183,68 @@ function generateInvoiceNumberPreview($settings) {
         default:
             return $prefix . $separator . $currentDate . $separator . $sampleNumber;
     }
+}
+
+// Function to generate BOM number preview
+function generateBOMNumberPreview($settings) {
+    $prefix = $settings['bom_number_prefix'] ?? 'BOM';
+    $length = intval($settings['bom_number_length'] ?? 6);
+    $separator = $settings['bom_number_separator'] ?? '-';
+    $format = $settings['bom_number_format'] ?? 'prefix-date-number';
+
+    // Generate sample number
+    $sampleNumber = str_pad('1', $length, '0', STR_PAD_LEFT);
+    $currentDate = date('Ymd');
+
+    switch ($format) {
+        case 'prefix-date-number':
+            return $prefix . $separator . $currentDate . $separator . $sampleNumber;
+        case 'prefix-number':
+            return $prefix . $separator . $sampleNumber;
+        case 'date-prefix-number':
+            return $currentDate . $separator . $prefix . $separator . $sampleNumber;
+        case 'number-only':
+            return $sampleNumber;
+        default:
+            return $prefix . $separator . $currentDate . $separator . $sampleNumber;
+    }
+}
+
+// Function to generate product number preview
+function generateProductNumberPreview($settings) {
+    $prefix = $settings['product_number_prefix'] ?? 'PRD';
+    $length = intval($settings['product_number_length'] ?? 6);
+    $separator = $settings['product_number_separator'] ?? '-';
+    $format = $settings['product_number_format'] ?? 'prefix-number';
+
+    // Generate sample number
+    $sampleNumber = str_pad('1', $length, '0', STR_PAD_LEFT);
+    $currentDate = date('Ymd');
+
+    switch ($format) {
+        case 'prefix-date-number':
+            return $prefix . $separator . $currentDate . $separator . $sampleNumber;
+        case 'prefix-number':
+            return $prefix . $separator . $sampleNumber;
+        case 'date-prefix-number':
+            return $currentDate . $separator . $prefix . $separator . $sampleNumber;
+        case 'number-only':
+            return $sampleNumber;
+        default:
+            return $prefix . $separator . $sampleNumber;
+    }
+}
+
+// Function to generate production order preview
+function generateProductionOrderPreview($settings) {
+    $prefix = $settings['bom_production_order_prefix'] ?? 'PROD';
+    $length = intval($settings['bom_production_order_length'] ?? 6);
+
+    // Generate sample number
+    $sampleNumber = str_pad('1', $length, '0', STR_PAD_LEFT);
+    $currentDate = date('Ymd');
+
+    return $prefix . '-' . $currentDate . '-' . $sampleNumber;
 }
 
 // Active tab
@@ -1323,7 +1408,233 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <span id="invoiceNumberPreview"><?php echo generateInvoiceNumberPreview($settings); ?></span>
                             </div>
                         </div>
-                        
+
+                        <!-- Product Number Settings Section -->
+                        <div class="form-group mt-5">
+                            <h5 class="mb-3 text-primary">
+                                <i class="bi bi-box me-2"></i>
+                                Product Number Settings
+                            </h5>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="auto_generate_product_number" name="auto_generate_product_number" value="1"
+                                       <?php echo (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1') ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="auto_generate_product_number">
+                                    Auto-generate Product Numbers
+                                </label>
+                            </div>
+                            <div class="form-text">Automatically generate product numbers when creating new products.</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="product_number_prefix" class="form-label">Product Number Prefix</label>
+                                    <input type="text" class="form-control" id="product_number_prefix" name="product_number_prefix"
+                                           value="<?php echo htmlspecialchars($settings['product_number_prefix'] ?? 'PRD'); ?>"
+                                           placeholder="PRD" maxlength="10">
+                                    <div class="form-text">Prefix for all product numbers (e.g., PRD, ITEM, PROD).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="product_number_length" class="form-label">Product Number Length</label>
+                                    <input type="number" min="3" max="10" class="form-control" id="product_number_length" name="product_number_length"
+                                           value="<?php echo htmlspecialchars($settings['product_number_length'] ?? '6'); ?>"
+                                           placeholder="6">
+                                    <div class="form-text">Number of digits in the product number (3-10).</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="product_number_separator" class="form-label">Product Number Separator</label>
+                                    <input type="text" class="form-control" id="product_number_separator" name="product_number_separator"
+                                           value="<?php echo htmlspecialchars($settings['product_number_separator'] ?? '-'); ?>"
+                                           placeholder="-" maxlength="3">
+                                    <div class="form-text">Separator character between prefix and number (e.g., -, _, .).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="product_number_format" class="form-label">Product Number Format</label>
+                                    <select class="form-select" id="product_number_format" name="product_number_format">
+                                        <option value="prefix-date-number" <?php echo ($settings['product_number_format'] ?? 'prefix-number') == 'prefix-date-number' ? 'selected' : ''; ?>>Prefix-Date-Number (PRD-20241201-000001)</option>
+                                        <option value="prefix-number" <?php echo ($settings['product_number_format'] ?? 'prefix-number') == 'prefix-number' ? 'selected' : ''; ?>>Prefix-Number (PRD-000001)</option>
+                                        <option value="date-prefix-number" <?php echo ($settings['product_number_format'] ?? 'prefix-number') == 'date-prefix-number' ? 'selected' : ''; ?>>Date-Prefix-Number (20241201-PRD-000001)</option>
+                                        <option value="number-only" <?php echo ($settings['product_number_format'] ?? 'prefix-number') == 'number-only' ? 'selected' : ''; ?>>Number Only (000001)</option>
+                                    </select>
+                                    <div class="form-text">Format for generating product numbers.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="product_number_preview" class="form-label">Product Number Preview</label>
+                            <div class="alert alert-info">
+                                <i class="bi bi-eye me-2"></i>
+                                <strong>Preview:</strong>
+                                <span id="productNumberPreview"><?php echo generateProductNumberPreview($settings); ?></span>
+                            </div>
+                        </div>
+
+                        <!-- BOM Settings Section -->
+                        <div class="form-group mt-5">
+                            <h5 class="mb-3 text-primary">
+                                <i class="bi bi-diagram-3 me-2"></i>
+                                Bill of Materials (BOM) Settings
+                            </h5>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="auto_generate_bom_number" name="auto_generate_bom_number" value="1"
+                                       <?php echo (isset($settings['auto_generate_bom_number']) && $settings['auto_generate_bom_number'] == '1') ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="auto_generate_bom_number">
+                                    Auto-generate BOM Numbers
+                                </label>
+                            </div>
+                            <div class="form-text">Automatically generate BOM numbers when creating new bills of materials.</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="bom_number_prefix" class="form-label">BOM Number Prefix</label>
+                                    <input type="text" class="form-control" id="bom_number_prefix" name="bom_number_prefix"
+                                           value="<?php echo htmlspecialchars($settings['bom_number_prefix'] ?? 'BOM'); ?>"
+                                           placeholder="BOM" maxlength="10">
+                                    <div class="form-text">Prefix for all BOM numbers (e.g., BOM, RECIPE, FORMULA).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="bom_number_length" class="form-label">BOM Number Length</label>
+                                    <input type="number" min="3" max="10" class="form-control" id="bom_number_length" name="bom_number_length"
+                                           value="<?php echo htmlspecialchars($settings['bom_number_length'] ?? '6'); ?>"
+                                           placeholder="6">
+                                    <div class="form-text">Number of digits in the BOM number (3-10).</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="bom_number_separator" class="form-label">BOM Number Separator</label>
+                                    <input type="text" class="form-control" id="bom_number_separator" name="bom_number_separator"
+                                           value="<?php echo htmlspecialchars($settings['bom_number_separator'] ?? '-'); ?>"
+                                           placeholder="-" maxlength="5">
+                                    <div class="form-text">Separator between prefix and numbers (e.g., -, _, space).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="bom_number_format" class="form-label">BOM Number Format</label>
+                                    <select class="form-control" id="bom_number_format" name="bom_number_format">
+                                        <option value="prefix-date-number" <?php echo ($settings['bom_number_format'] ?? 'prefix-date-number') == 'prefix-date-number' ? 'selected' : ''; ?>>Prefix-Date-Number (BOM-20241201-000001)</option>
+                                        <option value="prefix-number" <?php echo ($settings['bom_number_format'] ?? 'prefix-date-number') == 'prefix-number' ? 'selected' : ''; ?>>Prefix-Number (BOM-000001)</option>
+                                        <option value="date-prefix-number" <?php echo ($settings['bom_number_format'] ?? 'prefix-date-number') == 'date-prefix-number' ? 'selected' : ''; ?>>Date-Prefix-Number (20241201-BOM-000001)</option>
+                                        <option value="number-only" <?php echo ($settings['bom_number_format'] ?? 'prefix-date-number') == 'number-only' ? 'selected' : ''; ?>>Number Only (000001)</option>
+                                    </select>
+                                    <div class="form-text">Format for generating BOM numbers.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="bom_number_preview" class="form-label">BOM Number Preview</label>
+                            <div class="alert alert-info">
+                                <i class="bi bi-eye me-2"></i>
+                                <strong>Preview:</strong>
+                                <span id="bomNumberPreview"><?php echo generateBOMNumberPreview($settings); ?></span>
+                            </div>
+                        </div>
+
+                        <!-- Production Order Settings Section -->
+                        <div class="form-group mt-4">
+                            <h5 class="mb-3 text-primary">
+                                <i class="bi bi-gear me-2"></i>
+                                Production Order Settings
+                            </h5>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="auto_generate_production_order" name="auto_generate_production_order" value="1"
+                                       <?php echo (isset($settings['auto_generate_production_order']) && $settings['auto_generate_production_order'] == '1') ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="auto_generate_production_order">
+                                    Auto-generate Production Order Numbers
+                                </label>
+                            </div>
+                            <div class="form-text">Automatically generate production order numbers when creating production orders.</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="bom_production_order_prefix" class="form-label">Production Order Prefix</label>
+                                    <input type="text" class="form-control" id="bom_production_order_prefix" name="bom_production_order_prefix"
+                                           value="<?php echo htmlspecialchars($settings['bom_production_order_prefix'] ?? 'PROD'); ?>"
+                                           placeholder="PROD" maxlength="10">
+                                    <div class="form-text">Prefix for all production order numbers (e.g., PROD, PO, WORK).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="bom_production_order_length" class="form-label">Production Order Length</label>
+                                    <input type="number" min="3" max="10" class="form-control" id="bom_production_order_length" name="bom_production_order_length"
+                                           value="<?php echo htmlspecialchars($settings['bom_production_order_length'] ?? '6'); ?>"
+                                           placeholder="6">
+                                    <div class="form-text">Number of digits in the production order number (3-10).</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="bom_production_order_preview" class="form-label">Production Order Preview</label>
+                            <div class="alert alert-info">
+                                <i class="bi bi-eye me-2"></i>
+                                <strong>Preview:</strong>
+                                <span id="productionOrderPreview"><?php echo generateProductionOrderPreview($settings); ?></span>
+                            </div>
+                        </div>
+
+                        <!-- BOM Cost Calculation Settings -->
+                        <div class="form-group mt-4">
+                            <h5 class="mb-3 text-primary">
+                                <i class="bi bi-calculator me-2"></i>
+                                BOM Cost Calculation Settings
+                            </h5>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="bom_cost_calculation_method" class="form-label">Cost Calculation Method</label>
+                                    <select class="form-control" id="bom_cost_calculation_method" name="bom_cost_calculation_method">
+                                        <option value="standard" <?php echo ($settings['bom_cost_calculation_method'] ?? 'standard') == 'standard' ? 'selected' : ''; ?>>Standard Costing</option>
+                                        <option value="actual" <?php echo ($settings['bom_cost_calculation_method'] ?? 'standard') == 'actual' ? 'selected' : ''; ?>>Actual Costing</option>
+                                        <option value="average" <?php echo ($settings['bom_cost_calculation_method'] ?? 'standard') == 'average' ? 'selected' : ''; ?>>Average Costing</option>
+                                    </select>
+                                    <div class="form-text">Method used to calculate component costs in BOMs.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="bom_default_waste_percentage" class="form-label">Default Waste Percentage (%)</label>
+                                    <input type="number" step="0.1" min="0" max="50" class="form-control" id="bom_default_waste_percentage" name="bom_default_waste_percentage"
+                                           value="<?php echo htmlspecialchars($settings['bom_default_waste_percentage'] ?? '5.0'); ?>"
+                                           placeholder="5.0">
+                                    <div class="form-text">Default waste/loss percentage for BOM components (0-50).</div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Brand and Supplier Management Section -->
                         <div class="form-group">
                             <h5 class="mb-3 text-primary">
@@ -1333,7 +1644,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                         
                         <div class="row">
-                            <div class="col-md-6">
+                            <div class="col-md-4">
                                 <div class="card border-primary management-card">
                                     <div class="card-body text-center">
                                         <i class="bi bi-star text-primary" style="font-size: 2rem;"></i>
@@ -1346,7 +1657,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     </div>
                                 </div>
                             </div>
-                            <div class="col-md-6">
+                            <div class="col-md-4">
                                 <div class="card border-success management-card">
                                     <div class="card-body text-center">
                                         <i class="bi bi-truck text-success" style="font-size: 2rem;"></i>
@@ -1355,6 +1666,19 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         <a href="../../suppliers/suppliers.php" class="btn btn-outline-success">
                                             <i class="bi bi-arrow-right"></i>
                                             Manage Suppliers
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="card border-info management-card">
+                                    <div class="card-body text-center">
+                                        <i class="bi bi-diagram-3 text-info" style="font-size: 2rem;"></i>
+                                        <h6 class="card-title mt-2">BOM Management</h6>
+                                        <p class="card-text text-muted">Manage bills of materials and production recipes</p>
+                                        <a href="../../bom/index.php" class="btn btn-outline-info">
+                                            <i class="bi bi-arrow-right"></i>
+                                            Manage BOMs
                                         </a>
                                     </div>
                                 </div>
@@ -2354,6 +2678,122 @@ Best regards,
 
             // Initial invoice number preview update
             updateInvoiceNumberPreview();
+
+            // BOM Number Preview Functionality
+            function updateBOMNumberPreview() {
+                const prefix = document.getElementById('bom_number_prefix').value || 'BOM';
+                const separator = document.getElementById('bom_number_separator').value || '-';
+                const length = parseInt(document.getElementById('bom_number_length').value) || 6;
+                const format = document.getElementById('bom_number_format').value || 'prefix-date-number';
+
+                // Generate sample number
+                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+                let preview = '';
+                switch(format) {
+                    case 'prefix-date-number':
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                        break;
+                    case 'prefix-number':
+                        preview = prefix + separator + sampleNumber;
+                        break;
+                    case 'date-prefix-number':
+                        preview = currentDate + separator + prefix + separator + sampleNumber;
+                        break;
+                    case 'number-only':
+                        preview = sampleNumber;
+                        break;
+                    default:
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                }
+
+                document.getElementById('bomNumberPreview').textContent = preview;
+            }
+
+            // Add event listeners for BOM number preview updates
+            const bomNumberInputs = ['bom_number_prefix', 'bom_number_separator', 'bom_number_length', 'bom_number_format'];
+            bomNumberInputs.forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.addEventListener('input', updateBOMNumberPreview);
+                    input.addEventListener('change', updateBOMNumberPreview);
+                }
+            });
+
+            // Initial BOM number preview update
+            updateBOMNumberPreview();
+
+            // Product Number Preview Functionality
+            function updateProductNumberPreview() {
+                const prefix = document.getElementById('product_number_prefix').value || 'PRD';
+                const separator = document.getElementById('product_number_separator').value || '-';
+                const length = parseInt(document.getElementById('product_number_length').value) || 6;
+                const format = document.getElementById('product_number_format').value || 'prefix-number';
+
+                // Generate sample number
+                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+                let preview = '';
+                switch(format) {
+                    case 'prefix-date-number':
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                        break;
+                    case 'prefix-number':
+                        preview = prefix + separator + sampleNumber;
+                        break;
+                    case 'date-prefix-number':
+                        preview = currentDate + separator + prefix + separator + sampleNumber;
+                        break;
+                    case 'number-only':
+                        preview = sampleNumber;
+                        break;
+                    default:
+                        preview = prefix + separator + sampleNumber;
+                }
+
+                document.getElementById('productNumberPreview').textContent = preview;
+            }
+
+            // Add event listeners for product number preview updates
+            const productNumberInputs = ['product_number_prefix', 'product_number_separator', 'product_number_length', 'product_number_format'];
+            productNumberInputs.forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.addEventListener('input', updateProductNumberPreview);
+                    input.addEventListener('change', updateProductNumberPreview);
+                }
+            });
+
+            // Initial product number preview update
+            updateProductNumberPreview();
+
+            // Production Order Preview Functionality
+            function updateProductionOrderPreview() {
+                const prefix = document.getElementById('bom_production_order_prefix').value || 'PROD';
+                const length = parseInt(document.getElementById('bom_production_order_length').value) || 6;
+
+                // Generate sample number
+                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+                const preview = prefix + '-' + currentDate + '-' + sampleNumber;
+                document.getElementById('productionOrderPreview').textContent = preview;
+            }
+
+            // Add event listeners for production order preview updates
+            const productionOrderInputs = ['bom_production_order_prefix', 'bom_production_order_length'];
+            productionOrderInputs.forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.addEventListener('input', updateProductionOrderPreview);
+                    input.addEventListener('change', updateProductionOrderPreview);
+                }
+            });
+
+            // Initial production order preview update
+            updateProductionOrderPreview();
         });
     </script>
 </body>

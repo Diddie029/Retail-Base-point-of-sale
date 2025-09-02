@@ -228,6 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mass Status Updates - POS System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         /* Main layout alignment */
@@ -287,6 +288,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
             border-color: #28a745;
         }
         .status-card.inactive-card {
+            border-color: #ffc107;
+        }
+        .status-card.discontinued-card {
+            border-color: #6c757d;
+        }
+        .status-card.blocked-card {
             border-color: #dc3545;
         }
     </style>
@@ -402,10 +409,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
                         <div class="row mt-3">
                             <div class="col-md-4">
                                 <label class="form-label">Current Status</label>
-                                <select name="filters[current_status]" class="form-select">
+                                <select name="filters[current_status]" class="form-select" onchange="handleStatusFilterChange(this.value)">
                                     <option value="">Any Status</option>
                                     <option value="active">Active Only</option>
                                     <option value="inactive">Inactive Only</option>
+                                    <option value="discontinued">Discontinued Only</option>
+                                    <option value="blocked">Blocked Only</option>
                                 </select>
                             </div>
                             <div class="col-md-4">
@@ -453,35 +462,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
                         <p class="text-muted">Select the status you want to apply to the filtered products:</p>
 
                         <div class="row">
-                            <div class="col-md-6">
+                            <div class="col-md-6 col-lg-3">
                                 <div class="status-card active-card" onclick="selectStatus('active')">
                                     <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="new_status" value="active" id="status_active">
-                                        <label class="form-check-label" for="status_active">
-                                            <h5><i class="fas fa-check-circle text-success me-2"></i>Activate Products</h5>
+                                        <input class="form-check-input" type="radio" name="new_status" value="active" id="status_active" onchange="console.log('Active radio changed:', this.checked)" onclick="event.stopPropagation();">
+                                        <label class="form-check-label" for="status_active" onclick="event.stopPropagation();">
+                                            <h5><i class="fas fa-check-circle text-success me-2"></i>Active</h5>
                                         </label>
                                     </div>
-                                    <p class="mb-0 text-muted">Make products visible and available for sale</p>
-                                    <ul class="list-unstyled mt-2 mb-0">
-                                        <li><i class="fas fa-check text-success me-2"></i>Products will appear in POS</li>
-                                        <li><i class="fas fa-check text-success me-2"></i>Available for online orders</li>
+                                    <p class="mb-0 text-muted small">Make products visible and available for sale</p>
+                                    <ul class="list-unstyled mt-2 mb-0 small">
+                                        <li><i class="fas fa-check text-success me-2"></i>Appears in POS</li>
+                                        <li><i class="fas fa-check text-success me-2"></i>Available for orders</li>
                                         <li><i class="fas fa-check text-success me-2"></i>Included in reports</li>
                                     </ul>
                                 </div>
                             </div>
-                            <div class="col-md-6">
+                            <div class="col-md-6 col-lg-3">
                                 <div class="status-card inactive-card" onclick="selectStatus('inactive')">
                                     <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="new_status" value="inactive" id="status_inactive">
-                                        <label class="form-check-label" for="status_inactive">
-                                            <h5><i class="fas fa-times-circle text-danger me-2"></i>Deactivate Products</h5>
+                                        <input class="form-check-input" type="radio" name="new_status" value="inactive" id="status_inactive" onchange="console.log('Inactive radio changed:', this.checked)" onclick="event.stopPropagation();">
+                                        <label class="form-check-label" for="status_inactive" onclick="event.stopPropagation();">
+                                            <h5><i class="fas fa-pause-circle text-warning me-2"></i>Inactive</h5>
                                         </label>
                                     </div>
-                                    <p class="mb-0 text-muted">Hide products from sale while keeping data</p>
-                                    <ul class="list-unstyled mt-2 mb-0">
-                                        <li><i class="fas fa-times text-danger me-2"></i>Products hidden from POS</li>
+                                    <p class="mb-0 text-muted small">Hide products from sale while keeping data</p>
+                                    <ul class="list-unstyled mt-2 mb-0 small">
+                                        <li><i class="fas fa-times text-danger me-2"></i>Hidden from POS</li>
                                         <li><i class="fas fa-times text-danger me-2"></i>Not available for orders</li>
-                                        <li><i class="fas fa-check text-success me-2"></i>Data preserved for reports</li>
+                                        <li><i class="fas fa-check text-success me-2"></i>Data preserved</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="col-md-6 col-lg-3">
+                                <div class="status-card discontinued-card" onclick="selectStatus('discontinued')">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="new_status" value="discontinued" id="status_discontinued" onchange="console.log('Discontinued radio changed:', this.checked)" onclick="event.stopPropagation();">
+                                        <label class="form-check-label" for="status_discontinued" onclick="event.stopPropagation();">
+                                            <h5><i class="fas fa-ban text-secondary me-2"></i>Discontinued</h5>
+                                        </label>
+                                    </div>
+                                    <p class="mb-0 text-muted small">Product no longer available for purchase</p>
+                                    <ul class="list-unstyled mt-2 mb-0 small">
+                                        <li><i class="fas fa-times text-danger me-2"></i>Not for new sales</li>
+                                        <li><i class="fas fa-times text-danger me-2"></i>Hidden from catalog</li>
+                                        <li><i class="fas fa-check text-success me-2"></i>Historical data kept</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="col-md-6 col-lg-3">
+                                <div class="status-card blocked-card" onclick="selectStatus('blocked')">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="new_status" value="blocked" id="status_blocked" onchange="console.log('Blocked radio changed:', this.checked)" onclick="event.stopPropagation();">
+                                        <label class="form-check-label" for="status_blocked" onclick="event.stopPropagation();">
+                                            <h5><i class="fas fa-exclamation-triangle text-danger me-2"></i>Blocked</h5>
+                                        </label>
+                                    </div>
+                                    <p class="mb-0 text-muted small">Product blocked for specific reasons</p>
+                                    <ul class="list-unstyled mt-2 mb-0 small">
+                                        <li><i class="fas fa-times text-danger me-2"></i>Completely blocked</li>
+                                        <li><i class="fas fa-times text-danger me-2"></i>All sales stopped</li>
+                                        <li><i class="fas fa-info-circle text-info me-2"></i>Check block reason</li>
                                     </ul>
                                 </div>
                             </div>
@@ -512,6 +553,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
     
     <script>
         function selectStatus(status) {
+            console.log('selectStatus called with:', status); // Debug log
+            
             // Remove selected class from all status cards
             document.querySelectorAll('.status-card').forEach(card => {
                 card.classList.remove('selected');
@@ -521,12 +564,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
             event.currentTarget.classList.add('selected');
             
             // Select the radio button
-            document.getElementById('status_' + status).checked = true;
+            const radioButton = document.getElementById('status_' + status);
+            console.log('Radio button found:', radioButton); // Debug log
+            
+            if (radioButton) {
+                // Uncheck all other radio buttons first
+                document.querySelectorAll('input[name="new_status"]').forEach(radio => {
+                    radio.checked = false;
+                });
+                
+                // Check the selected radio button
+                radioButton.checked = true;
+                console.log('Radio button checked:', radioButton.checked); // Debug log
+                
+                // Trigger change event
+                radioButton.dispatchEvent(new Event('change'));
+            } else {
+                console.error('Radio button not found for status:', status);
+            }
+        }
+
+        function handleStatusFilterChange(selectedStatus) {
+            console.log('Status filter changed to:', selectedStatus); // Debug log
+            
+            if (selectedStatus && selectedStatus !== '') {
+                // Find the corresponding status card and select it
+                const statusCard = document.querySelector(`[onclick="selectStatus('${selectedStatus}')"]`);
+                if (statusCard) {
+                    console.log('Found status card for:', selectedStatus); // Debug log
+                    
+                    // Remove selected class from all status cards
+                    document.querySelectorAll('.status-card').forEach(card => {
+                        card.classList.remove('selected');
+                    });
+                    
+                    // Add selected class to the corresponding card
+                    statusCard.classList.add('selected');
+                    
+                    // Select the radio button
+                    const radioButton = document.getElementById('status_' + selectedStatus);
+                    if (radioButton) {
+                        // Uncheck all other radio buttons first
+                        document.querySelectorAll('input[name="new_status"]').forEach(radio => {
+                            radio.checked = false;
+                        });
+                        
+                        // Check the selected radio button
+                        radioButton.checked = true;
+                        console.log('Radio button checked from filter:', radioButton.checked); // Debug log
+                        
+                        // Trigger change event
+                        radioButton.dispatchEvent(new Event('change'));
+                        
+                        // Scroll to the status selection area to show the user what was selected
+                        document.querySelector('.action-section').scrollIntoView({ behavior: 'smooth' });
+                    }
+                } else {
+                    console.error('Status card not found for:', selectedStatus);
+                }
+            }
         }
 
         function previewProducts() {
+            // Debug: Check all radio buttons
+            const allRadios = document.querySelectorAll('input[name="new_status"]');
+            console.log('All radio buttons found:', allRadios.length);
+            allRadios.forEach((radio, index) => {
+                console.log(`Radio ${index}: id=${radio.id}, value=${radio.value}, checked=${radio.checked}`);
+            });
+            
+            // Validate that a status is selected before previewing
+            const selectedStatus = document.querySelector('input[name="new_status"]:checked');
+            console.log('Selected status:', selectedStatus); // Debug log
+            
+            if (!selectedStatus) {
+                alert('Please select a status (Active, Inactive, Discontinued, or Blocked) before previewing products.');
+                // Highlight the status selection area
+                document.querySelector('.action-section').scrollIntoView({ behavior: 'smooth' });
+                document.querySelector('.action-section').style.borderColor = '#dc3545';
+                setTimeout(() => {
+                    document.querySelector('.action-section').style.borderColor = '#e8f4f8';
+                }, 2000);
+                return;
+            }
+
+            console.log('Selected status value:', selectedStatus.value); // Debug log
+
             const formData = new FormData(document.getElementById('statusForm'));
             formData.append('action', 'preview');
+            
+            // Debug: Log all form data
+            console.log('Form data being sent:');
+            for (let [key, value] of formData.entries()) {
+                console.log(key, value);
+            }
 
             fetch('bulk_status_handler.php', {
                 method: 'POST',
@@ -561,7 +692,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
                 return false;
             }
 
-            const statusText = selectedStatus.value === 'active' ? 'activate' : 'deactivate';
+            const statusValue = selectedStatus.value;
+            const statusLabels = {
+                'active': 'activate',
+                'inactive': 'deactivate',
+                'discontinued': 'mark as discontinued',
+                'blocked': 'block'
+            };
+
+            const statusText = statusLabels[statusValue] || 'update the status of';
             return confirm(`Are you sure you want to ${statusText} the selected products? This action can be reversed later if needed.`);
         }
 

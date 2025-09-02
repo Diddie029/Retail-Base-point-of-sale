@@ -266,9 +266,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// Get categories
+// Get categories with DISTINCT to prevent duplicates
 $categories = $conn->query("
-    SELECT c.*, p.name as parent_name,
+    SELECT DISTINCT c.id, c.name, c.description, c.parent_id, c.color_code, 
+           c.is_tax_deductible, c.is_active, c.sort_order, c.created_at, c.updated_at,
+           p.name as parent_name,
            (SELECT COUNT(*) FROM expense_categories WHERE parent_id = c.id) as subcategory_count,
            (SELECT COUNT(*) FROM expenses WHERE category_id = c.id OR subcategory_id = c.id) as expense_count
     FROM expense_categories c
@@ -312,9 +314,14 @@ $parent_categories = $conn->query("
                     <p class="header-subtitle">Manage and organize your expense categories</p>
                 </div>
                 <div class="header-actions">
-                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCategoryModal">
-                        <i class="bi bi-plus-circle"></i> Add Category
-                    </button>
+                    <div class="btn-group me-2" role="group">
+                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCategoryModal">
+                            <i class="bi bi-plus-circle"></i> Add Category
+                        </button>
+                        <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addSubcategoryModal">
+                            <i class="bi bi-diagram-3"></i> Add Subcategory
+                        </button>
+                    </div>
                     <a href="index.php" class="btn btn-outline-secondary">
                         <i class="bi bi-arrow-left"></i> Back to Expenses
                     </a>
@@ -403,11 +410,14 @@ $parent_categories = $conn->query("
                                         </td>
                                         <td>
                                             <div class="d-flex align-items-center">
+                                                <?php if ($category['parent_id']): ?>
+                                                <span class="me-2 text-muted">├── </span>
+                                                <?php endif; ?>
                                                 <span class="badge me-2" style="background-color: <?= $category['color_code'] ?>; width: 20px; height: 20px;"></span>
                                                 <div>
                                                     <strong><?= htmlspecialchars($category['name']) ?></strong>
                                                     <?php if ($category['parent_name']): ?>
-                                                    <br><small class="text-muted">Parent: <?= htmlspecialchars($category['parent_name']) ?></small>
+                                                    <br><small class="text-muted"><i class="bi bi-arrow-return-right"></i> Under: <?= htmlspecialchars($category['parent_name']) ?></small>
                                                     <?php endif; ?>
                                                 </div>
                                             </div>
@@ -630,6 +640,77 @@ $parent_categories = $conn->query("
         </div>
     </div>
 
+    <!-- Add Subcategory Modal -->
+    <div class="modal fade" id="addSubcategoryModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-diagram-3"></i> Add New Subcategory</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST">
+                    <div class="modal-body">
+                        <input type="hidden" name="action" value="add_category">
+                        
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i> 
+                            <strong>Creating a Subcategory</strong><br>
+                            Subcategories help organize your expenses under main categories for better reporting and management.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Parent Category <span class="text-danger">*</span></label>
+                            <select class="form-select" name="parent_id" id="subcategory_parent_id" required>
+                                <option value="">Select Parent Category</option>
+                                <?php foreach ($parent_categories as $parent): ?>
+                                <option value="<?= $parent['id'] ?>"><?= htmlspecialchars($parent['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <div class="form-text">Choose the main category this subcategory belongs to.</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Subcategory Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" name="name" placeholder="e.g., Office Rent, Equipment Repair" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control" name="description" rows="3" placeholder="Describe what expenses this subcategory covers..."></textarea>
+                        </div>
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Color</label>
+                                <input type="color" class="form-control form-control-color" name="color_code" value="#6366f1">
+                                <div class="form-text">Color will help identify this subcategory visually.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Sort Order</label>
+                                <input type="number" class="form-control" name="sort_order" value="0" min="0">
+                                <div class="form-text">Lower numbers appear first in lists.</div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="is_tax_deductible" value="1" id="subcategory_tax_deductible">
+                                <label class="form-check-label" for="subcategory_tax_deductible">
+                                    Tax Deductible
+                                </label>
+                                <div class="form-text">Check if expenses in this subcategory are tax deductible.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-success">Add Subcategory</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Bulk Actions Confirmation Modal -->
     <div class="modal fade" id="bulkActionModal" tabindex="-1">
         <div class="modal-dialog">
@@ -657,6 +738,40 @@ $parent_categories = $conn->query("
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Form submission protection to prevent duplicates
+        let formSubmitting = false;
+        
+        // Add event listeners to all forms
+        document.addEventListener('DOMContentLoaded', function() {
+            const forms = document.querySelectorAll('form');
+            forms.forEach(form => {
+                form.addEventListener('submit', function(e) {
+                    if (formSubmitting) {
+                        e.preventDefault();
+                        return false;
+                    }
+                    formSubmitting = true;
+                    
+                    // Disable submit button
+                    const submitBtn = form.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.disabled = true;
+                        submitBtn.innerHTML = '<i class="spinner-border spinner-border-sm" role="status"></i> Processing...';
+                    }
+                    
+                    // Reset after 3 seconds in case something goes wrong
+                    setTimeout(() => {
+                        formSubmitting = false;
+                        if (submitBtn) {
+                            submitBtn.disabled = false;
+                            submitBtn.innerHTML = submitBtn.textContent.includes('Add') ? 'Add Category' : 
+                                                 submitBtn.textContent.includes('Update') ? 'Update Category' : 
+                                                 submitBtn.textContent.includes('Delete') ? 'Delete Category' : 'Confirm';
+                        }
+                    }, 3000);
+                });
+            });
+        });
         function editCategory(category) {
             document.getElementById('edit_id').value = category.id;
             document.getElementById('edit_name').value = category.name;

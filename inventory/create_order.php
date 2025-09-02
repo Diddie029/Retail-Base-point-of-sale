@@ -1,16 +1,5 @@
 <?php
 session_start();
-
-// Debug session configuration
-error_log("Session save path: " . session_save_path());
-error_log("Session cookie params: " . print_r(session_get_cookie_params(), true));
-error_log("Session status: " . session_status());
-
-// Ensure session is working properly
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    error_log("Session not active, starting new session");
-    session_start();
-}
 require_once __DIR__ . '/../include/db.php';
 require_once __DIR__ . '/../include/functions.php';
 
@@ -1720,9 +1709,11 @@ if ($current_step === 'review' && (!isset($_SESSION['order_supplier_id']) || !is
             suggestions.forEach((product, index) => {
                 const isSelected = selectedProducts.find(p => p.id == product.id);
                 const stockIndicator = product.stock_status === 'low' ? 'low' : 'ok';
-                
+                const autoBomIndicator = product.is_auto_bom_enabled ?
+                    `<span class="badge bg-info ms-2" title="${product.selling_units_count} selling units available">Auto BOM</span>` : '';
+
                 html += `
-                    <div class="suggestion-item" 
+                    <div class="suggestion-item"
                          data-product-id="${product.id}"
                          data-product-name="${sanitizeHtml(product.name)}"
                          data-product-sku="${product.sku}"
@@ -1732,11 +1723,13 @@ if ($current_step === 'review' && (!isset($_SESSION['order_supplier_id']) || !is
                             <span class="stock-indicator ${stockIndicator}"></span>
                             ${sanitizeHtml(product.name)}
                             ${isSelected ? '<span class="badge bg-success ms-2">Added</span>' : ''}
+                            ${autoBomIndicator}
                         </div>
                         <div class="suggestion-details">
                             ${product.sku ? 'SKU: ' + product.sku + ' | ' : ''}
-                            Stock: ${product.quantity} | 
+                            Stock: ${product.quantity} |
                             <span class="suggestion-price">Cost: ${currencySymbol} ${parseFloat(product.cost_price).toFixed(2)}</span>
+                            ${product.is_auto_bom_enabled ? ` | ${product.selling_units_count} units` : ''}
                         </div>
                     </div>
                 `;

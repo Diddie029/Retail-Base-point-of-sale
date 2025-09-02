@@ -227,6 +227,24 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
         <main class="content">
             <div class="container-fluid">
 
+                <?php if (($summary['total_expenses'] ?? 0) == 0): ?>
+                <div class="alert alert-info mb-4">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-info-circle fs-4 me-3"></i>
+                        <div>
+                            <h6 class="mb-1">No Expenses Found</h6>
+                            <p class="mb-0">
+                                <?php if ($category_filter || $department_filter): ?>
+                                    No expenses found for the selected filters in this period. Try adjusting your filters or selecting a different time period.
+                                <?php else: ?>
+                                    No expenses have been recorded for this period. Start by adding some expenses to see your reports.
+                                <?php endif; ?>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
+
                 <!-- Filters -->
                 <div class="card mb-4">
                     <div class="card-header">
@@ -319,8 +337,26 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                 <div class="d-flex justify-content-between">
                                     <div>
                                         <h6 class="card-title">Total Amount</h6>
-                                        <h3>KES <?= number_format($summary['total_amount'] ?? 0, 2) ?></h3>
-                                        <small>Avg: KES <?= number_format($summary['avg_amount'] ?? 0, 2) ?></small>
+                                        <h3><?php 
+                                            $total = $summary['total_amount'] ?? 0;
+                                            if ($total >= 1000000) {
+                                                echo 'KES ' . number_format($total / 1000000, 1) . 'M';
+                                            } elseif ($total >= 1000) {
+                                                echo 'KES ' . number_format($total / 1000, 1) . 'K';
+                                            } else {
+                                                echo 'KES ' . number_format($total, 2);
+                                            }
+                                        ?></h3>
+                                        <small>Avg: <?php 
+                                            $avg = $summary['avg_amount'] ?? 0;
+                                            if ($avg >= 1000000) {
+                                                echo 'KES ' . number_format($avg / 1000000, 1) . 'M';
+                                            } elseif ($avg >= 1000) {
+                                                echo 'KES ' . number_format($avg / 1000, 1) . 'K';
+                                            } else {
+                                                echo 'KES ' . number_format($avg, 2);
+                                            }
+                                        ?></small>
                                     </div>
                                     <div class="align-self-center">
                                         <i class="bi bi-currency-dollar fs-1"></i>
@@ -335,7 +371,16 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                 <div class="d-flex justify-content-between">
                                     <div>
                                         <h6 class="card-title">Tax Deductible</h6>
-                                        <h3>KES <?= number_format($summary['tax_deductible_amount'] ?? 0, 2) ?></h3>
+                                        <h3><?php 
+                                            $tax_deductible = $summary['tax_deductible_amount'] ?? 0;
+                                            if ($tax_deductible >= 1000000) {
+                                                echo 'KES ' . number_format($tax_deductible / 1000000, 1) . 'M';
+                                            } elseif ($tax_deductible >= 1000) {
+                                                echo 'KES ' . number_format($tax_deductible / 1000, 1) . 'K';
+                                            } else {
+                                                echo 'KES ' . number_format($tax_deductible, 2);
+                                            }
+                                        ?></h3>
                                         <small><?= ($summary['total_amount'] ?? 0) > 0 ? round((($summary['tax_deductible_amount'] ?? 0) / ($summary['total_amount'] ?? 1)) * 100, 1) : 0 ?>% of total</small>
                                     </div>
                                     <div class="align-self-center">
@@ -351,7 +396,16 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                 <div class="d-flex justify-content-between">
                                     <div>
                                         <h6 class="card-title">Pending Payments</h6>
-                                        <h3>KES <?= number_format($summary['pending_amount'] ?? 0, 2) ?></h3>
+                                        <h3><?php 
+                                            $pending = $summary['pending_amount'] ?? 0;
+                                            if ($pending >= 1000000) {
+                                                echo 'KES ' . number_format($pending / 1000000, 1) . 'M';
+                                            } elseif ($pending >= 1000) {
+                                                echo 'KES ' . number_format($pending / 1000, 1) . 'K';
+                                            } else {
+                                                echo 'KES ' . number_format($pending, 2);
+                                            }
+                                        ?></h3>
                                 <small><?= $summary['pending_approvals'] ?? 0 ?> pending approvals</small>
                                     </div>
                                     <div class="align-self-center">
@@ -371,7 +425,21 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                 <h5 class="mb-0">Expenses by Category</h5>
                             </div>
                             <div class="card-body">
+                                <?php if (empty($category_data)): ?>
+                                <div class="text-center py-5">
+                                    <i class="bi bi-pie-chart fs-1 text-muted"></i>
+                                    <h6 class="mt-3 text-muted">No Category Data</h6>
+                                    <p class="text-muted mb-0">
+                                        <?php if ($category_filter): ?>
+                                            No expenses found for the selected category in this period.
+                                        <?php else: ?>
+                                            No expenses recorded for this period.
+                                        <?php endif; ?>
+                                    </p>
+                                </div>
+                                <?php else: ?>
                                 <canvas id="categoryChart" height="300"></canvas>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -381,7 +449,21 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                 <h5 class="mb-0">Monthly Trend</h5>
                             </div>
                             <div class="card-body">
+                                <?php if (empty($trend_data)): ?>
+                                <div class="text-center py-5">
+                                    <i class="bi bi-graph-up fs-1 text-muted"></i>
+                                    <h6 class="mt-3 text-muted">No Trend Data</h6>
+                                    <p class="text-muted mb-0">
+                                        <?php if ($category_filter || $department_filter): ?>
+                                            No expenses found for the selected filters in this period.
+                                        <?php else: ?>
+                                            No expenses recorded for this period.
+                                        <?php endif; ?>
+                                    </p>
+                                </div>
+                                <?php else: ?>
                                 <canvas id="trendChart" height="300"></canvas>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -412,6 +494,19 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                 </div>
                             </div>
                             <div class="card-body">
+                                <?php if (empty($category_data)): ?>
+                                <div class="text-center py-4">
+                                    <i class="bi bi-list-ul fs-1 text-muted"></i>
+                                    <h6 class="mt-3 text-muted">No Categories Found</h6>
+                                    <p class="text-muted mb-0">
+                                        <?php if ($category_filter): ?>
+                                            No expenses found for the selected category in this period.
+                                        <?php else: ?>
+                                            No expenses recorded for this period.
+                                        <?php endif; ?>
+                                    </p>
+                                </div>
+                                <?php else: ?>
                                 <div class="table-responsive">
                                     <table class="table table-sm table-hover" id="categoriesTable">
                                         <thead>
@@ -440,7 +535,16 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                                     <small class="text-muted">expenses</small>
                                                 </td>
                                                 <td>
-                                                    <strong>KES <?= number_format($category['total_amount'], 2) ?></strong>
+                                                    <strong><?php 
+                                                        $amount = $category['total_amount'];
+                                                        if ($amount >= 1000000) {
+                                                            echo 'KES ' . number_format($amount / 1000000, 1) . 'M';
+                                                        } elseif ($amount >= 1000) {
+                                                            echo 'KES ' . number_format($amount / 1000, 1) . 'K';
+                                                        } else {
+                                                            echo 'KES ' . number_format($amount, 2);
+                                                        }
+                                                    ?></strong>
                                                 </td>
                                                 <td>
                                                     <div class="progress" style="height: 20px;">
@@ -454,6 +558,7 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                         </tbody>
                                     </table>
                                 </div>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -463,6 +568,19 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                 <h5 class="mb-0">Top Vendors</h5>
                             </div>
                             <div class="card-body">
+                                <?php if (empty($vendor_data)): ?>
+                                <div class="text-center py-4">
+                                    <i class="bi bi-building fs-1 text-muted"></i>
+                                    <h6 class="mt-3 text-muted">No Vendors Found</h6>
+                                    <p class="text-muted mb-0">
+                                        <?php if ($category_filter || $department_filter): ?>
+                                            No expenses found for the selected filters in this period.
+                                        <?php else: ?>
+                                            No expenses recorded for this period.
+                                        <?php endif; ?>
+                                    </p>
+                                </div>
+                                <?php else: ?>
                                 <div class="table-responsive">
                                     <table class="table table-sm">
                                         <thead>
@@ -478,13 +596,23 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                                             <tr>
                                                 <td><?= htmlspecialchars($vendor['vendor_name']) ?></td>
                                                 <td><?= number_format($vendor['expense_count']) ?></td>
-                                                <td>KES <?= number_format($vendor['total_amount'], 2) ?></td>
+                                                <td><?php 
+                                                    $amount = $vendor['total_amount'];
+                                                    if ($amount >= 1000000) {
+                                                        echo 'KES ' . number_format($amount / 1000000, 1) . 'M';
+                                                    } elseif ($amount >= 1000) {
+                                                        echo 'KES ' . number_format($amount / 1000, 1) . 'K';
+                                                    } else {
+                                                        echo 'KES ' . number_format($amount, 2);
+                                                    }
+                                                ?></td>
                                                 <td><?= $summary['total_amount'] > 0 ? round(($vendor['total_amount'] / $summary['total_amount']) * 100, 1) : 0 ?>%</td>
                                             </tr>
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
                                 </div>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -495,55 +623,177 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Category Chart
-        const categoryCtx = document.getElementById('categoryChart').getContext('2d');
-        new Chart(categoryCtx, {
+        // Category Chart with Enhanced Formatting
+        const categoryChartElement = document.getElementById('categoryChart');
+        if (categoryChartElement) {
+            const categoryCtx = categoryChartElement.getContext('2d');
+            const categoryData = <?= json_encode(array_column($category_data, 'total_amount')) ?>;
+            
+            // Enhanced currency formatting for category chart
+            function formatCategoryCurrency(value) {
+                if (value >= 1000000) {
+                    return 'KES ' + (value / 1000000).toFixed(1) + 'M';
+                } else if (value >= 1000) {
+                    return 'KES ' + (value / 1000).toFixed(1) + 'K';
+                } else {
+                    return 'KES ' + value.toLocaleString();
+                }
+            }
+            
+            new Chart(categoryCtx, {
             type: 'doughnut',
             data: {
                 labels: <?= json_encode(array_column($category_data, 'category_name')) ?>,
                 datasets: [{
-                    data: <?= json_encode(array_column($category_data, 'total_amount')) ?>,
+                    data: categoryData,
                     backgroundColor: <?= json_encode(array_column($category_data, 'color_code')) ?>,
-                    borderWidth: 2,
-                    borderColor: '#fff'
+                    borderWidth: 3,
+                    borderColor: '#fff',
+                    hoverBorderWidth: 4,
+                    hoverBorderColor: '#f8f9fa'
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                cutout: '60%',
                 plugins: {
                     legend: {
-                        position: 'bottom'
+                        position: 'bottom',
+                        labels: {
+                            padding: 20,
+                            usePointStyle: true,
+                            pointStyle: 'circle',
+                            font: {
+                                size: 12
+                            }
+                        }
                     },
                     tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#ffffff',
+                        borderColor: '#6366f1',
+                        borderWidth: 1,
                         callbacks: {
                             label: function(context) {
                                 const label = context.label || '';
                                 const value = context.parsed;
                                 const total = context.dataset.data.reduce((a, b) => a + b, 0);
                                 const percentage = ((value / total) * 100).toFixed(1);
-                                return label + ': KES ' + value.toLocaleString() + ' (' + percentage + '%)';
+                                return label + ': ' + formatCategoryCurrency(value) + ' (' + percentage + '%)';
                             }
                         }
+                    }
+                },
+                elements: {
+                    arc: {
+                        borderWidth: 3
                     }
                 }
             }
         });
+        }
 
-        // Trend Chart
-        const trendCtx = document.getElementById('trendChart').getContext('2d');
-        new Chart(trendCtx, {
+        // Trend Chart with Dynamic Scaling
+        const trendChartElement = document.getElementById('trendChart');
+        if (trendChartElement) {
+            const trendCtx = trendChartElement.getContext('2d');
+            const trendData = <?= json_encode(array_column($trend_data, 'total_amount')) ?>;
+        
+        // Calculate dynamic Y-axis scaling
+        const maxValue = trendData.length > 0 ? Math.max(...trendData) : 0;
+        const minValue = trendData.length > 0 ? Math.min(...trendData) : 0;
+        
+        // Ensure we always have some data to display
+        const hasData = trendData.length > 0 && maxValue > 0;
+        
+        // Smart scaling function
+        function calculateSmartScale(max, min) {
+            // Handle case when there's no data
+            if (max === 0 && min === 0) {
+                return {
+                    min: 0,
+                    max: 1000,
+                    step: 100
+                };
+            }
+            
+            // For very small amounts, ensure minimum visibility
+            const actualMax = Math.max(max, 50); // Minimum max of 50
+            const actualMin = Math.min(min, 0);   // Minimum min of 0
+            
+            const range = actualMax - actualMin;
+            const padding = Math.max(range * 0.2, 5); // At least 5 units padding, 20% of range
+            
+            // Calculate appropriate step size for better visibility
+            let step;
+            if (actualMax < 50) {
+                step = 5;
+            } else if (actualMax < 100) {
+                step = 10;
+            } else if (actualMax < 1000) {
+                step = 100;
+            } else if (actualMax < 10000) {
+                step = 1000;
+            } else if (actualMax < 100000) {
+                step = 10000;
+            } else if (actualMax < 1000000) {
+                step = 100000;
+            } else {
+                step = 1000000;
+            }
+            
+            // Calculate nice min and max values
+            const niceMin = Math.floor((actualMin - padding) / step) * step;
+            const niceMax = Math.ceil((actualMax + padding) / step) * step;
+            
+            return {
+                min: Math.max(0, niceMin),
+                max: Math.max(niceMax, actualMax + padding),
+                step: step
+            };
+        }
+        
+        const scale = calculateSmartScale(maxValue, minValue);
+        
+        // Debug logging (remove in production)
+        console.log('Chart Data:', {
+            trendData: trendData,
+            maxValue: maxValue,
+            minValue: minValue,
+            scale: scale
+        });
+        
+        // Format currency with appropriate units
+        function formatCurrency(value) {
+            if (value >= 1000000) {
+                return 'KES ' + (value / 1000000).toFixed(1) + 'M';
+            } else if (value >= 1000) {
+                return 'KES ' + (value / 1000).toFixed(1) + 'K';
+            } else {
+                return 'KES ' + value.toLocaleString();
+            }
+        }
+        
+        // Create chart with fallback configuration
+        const chartConfig = {
             type: 'line',
             data: {
                 labels: <?= json_encode(array_map(function($item) { return date('M Y', strtotime($item['month'] . '-01')); }, $trend_data)) ?>,
                 datasets: [{
                     label: 'Total Amount',
-                    data: <?= json_encode(array_column($trend_data, 'total_amount')) ?>,
+                    data: trendData,
                     borderColor: '#6366f1',
                     backgroundColor: 'rgba(99, 102, 241, 0.1)',
-                    borderWidth: 2,
+                    borderWidth: 3,
                     fill: true,
-                    tension: 0.4
+                    tension: 0.4,
+                    pointBackgroundColor: '#6366f1',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 2,
+                    pointRadius: 6,
+                    pointHoverRadius: 8
                 }]
             },
             options: {
@@ -554,9 +804,19 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                         display: false
                     },
                     tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#ffffff',
+                        borderColor: '#6366f1',
+                        borderWidth: 1,
                         callbacks: {
                             label: function(context) {
-                                return 'KES ' + context.parsed.y.toLocaleString();
+                                return 'Total: ' + formatCurrency(context.parsed.y);
+                            },
+                            afterLabel: function(context) {
+                                const dataIndex = context.dataIndex;
+                                const expenseCount = <?= json_encode(array_column($trend_data, 'expense_count')) ?>[dataIndex];
+                                return 'Expenses: ' + expenseCount.toLocaleString();
                             }
                         }
                     }
@@ -564,15 +824,85 @@ $departments = $conn->query("SELECT id, name FROM expense_departments WHERE is_a
                 scales: {
                     y: {
                         beginAtZero: true,
+                        min: scale.min,
+                        max: scale.max,
                         ticks: {
+                            stepSize: scale.step,
+                            maxTicksLimit: 10,
                             callback: function(value) {
-                                return 'KES ' + value.toLocaleString();
+                                return formatCurrency(value);
+                            },
+                            color: '#6b7280',
+                            font: {
+                                size: 11
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(107, 114, 128, 0.1)',
+                            drawBorder: false
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#6b7280',
+                            font: {
+                                size: 11
+                            }
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                },
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                elements: {
+                    point: {
+                        hoverBackgroundColor: '#4f46e5'
+                    }
+                }
+            }
+        };
+        
+        // Create the chart with error handling
+        try {
+            new Chart(trendCtx, chartConfig);
+        } catch (error) {
+            console.error('Chart creation error:', error);
+            // Fallback: Create a simple chart without custom scaling
+            new Chart(trendCtx, {
+                type: 'line',
+                data: {
+                    labels: <?= json_encode(array_map(function($item) { return date('M Y', strtotime($item['month'] . '-01')); }, $trend_data)) ?>,
+                    datasets: [{
+                        label: 'Total Amount',
+                        data: trendData,
+                        borderColor: '#6366f1',
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return 'KES ' + value.toLocaleString();
+                                }
                             }
                         }
                     }
                 }
-            }
-        });
+            });
+        }
+        }
 
         // Bulk Actions for Categories
         function toggleAllCategories() {

@@ -54,9 +54,38 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $payment_terms = trim($_POST['payment_terms']);
         $credit_limit = floatval($_POST['credit_limit']);
         $notes = trim($_POST['notes']);
-        
+
+        // Input validation
+        $errors = [];
+
         if (empty($name)) {
-            $_SESSION['error_message'] = "Vendor name is required";
+            $errors[] = "Vendor name is required";
+        } elseif (strlen($name) > 255) {
+            $errors[] = "Vendor name must be less than 255 characters";
+        }
+
+        if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Please enter a valid email address";
+        }
+
+        if (!empty($phone) && strlen($phone) > 20) {
+            $errors[] = "Phone number must be less than 20 characters";
+        }
+
+        if (!empty($tax_id) && strlen($tax_id) > 50) {
+            $errors[] = "Tax ID must be less than 50 characters";
+        }
+
+        if ($credit_limit < 0) {
+            $errors[] = "Credit limit cannot be negative";
+        }
+
+        if (!empty($notes) && strlen($notes) > 1000) {
+            $errors[] = "Notes must be less than 1000 characters";
+        }
+
+        if (!empty($errors)) {
+            $_SESSION['error_message'] = implode('<br>', $errors);
         } else {
             try {
                 $stmt = $conn->prepare("
@@ -64,12 +93,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmt->execute([$name, $contact_person, $email, $phone, $address, $tax_id, $payment_terms, $credit_limit, $notes]);
-                
+
                 $_SESSION['success_message'] = "Vendor added successfully";
                 header('Location: vendors.php');
                 exit();
             } catch (PDOException $e) {
-                $_SESSION['error_message'] = "Error adding vendor: " . $e->getMessage();
+                // Provide user-friendly error messages
+                $error_message = "Error adding vendor: ";
+
+                if (strpos($e->getMessage(), '1062') !== false) {
+                    $error_message .= "A vendor with this name already exists.";
+                } elseif (strpos($e->getMessage(), '1054') !== false) {
+                    $error_message .= "Database schema error. Please contact administrator.";
+                } elseif (strpos($e->getMessage(), '1406') !== false) {
+                    $error_message .= "One or more fields exceed the maximum allowed length.";
+                } elseif (strpos($e->getMessage(), '1048') !== false) {
+                    $error_message .= "Required field is missing.";
+                } else {
+                    $error_message .= "Please check your input and try again.";
+                }
+
+                $_SESSION['error_message'] = $error_message;
+
+                // Log the detailed error for debugging
+                error_log("Vendor creation error: " . $e->getMessage());
             }
         }
     } elseif ($action == 'edit_vendor') {
@@ -84,47 +131,113 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $credit_limit = floatval($_POST['credit_limit']);
         $notes = trim($_POST['notes']);
         $is_active = isset($_POST['is_active']) ? 1 : 0;
-        
+
+        // Input validation
+        $errors = [];
+
         if (empty($name)) {
-            $_SESSION['error_message'] = "Vendor name is required";
+            $errors[] = "Vendor name is required";
+        } elseif (strlen($name) > 255) {
+            $errors[] = "Vendor name must be less than 255 characters";
+        }
+
+        if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Please enter a valid email address";
+        }
+
+        if (!empty($phone) && strlen($phone) > 20) {
+            $errors[] = "Phone number must be less than 20 characters";
+        }
+
+        if (!empty($tax_id) && strlen($tax_id) > 50) {
+            $errors[] = "Tax ID must be less than 50 characters";
+        }
+
+        if ($credit_limit < 0) {
+            $errors[] = "Credit limit cannot be negative";
+        }
+
+        if (!empty($notes) && strlen($notes) > 1000) {
+            $errors[] = "Notes must be less than 1000 characters";
+        }
+
+        if (!empty($errors)) {
+            $_SESSION['error_message'] = implode('<br>', $errors);
         } else {
             try {
                 $stmt = $conn->prepare("
-                    UPDATE expense_vendors 
-                    SET name = ?, contact_person = ?, email = ?, phone = ?, address = ?, 
+                    UPDATE expense_vendors
+                    SET name = ?, contact_person = ?, email = ?, phone = ?, address = ?,
                         tax_id = ?, payment_terms = ?, credit_limit = ?, notes = ?, is_active = ?
                     WHERE id = ?
                 ");
                 $stmt->execute([$name, $contact_person, $email, $phone, $address, $tax_id, $payment_terms, $credit_limit, $notes, $is_active, $id]);
-                
+
                 $_SESSION['success_message'] = "Vendor updated successfully";
                 header('Location: vendors.php');
                 exit();
             } catch (PDOException $e) {
-                $_SESSION['error_message'] = "Error updating vendor: " . $e->getMessage();
+                // Provide user-friendly error messages
+                $error_message = "Error updating vendor: ";
+
+                if (strpos($e->getMessage(), '1062') !== false) {
+                    $error_message .= "A vendor with this name already exists.";
+                } elseif (strpos($e->getMessage(), '1054') !== false) {
+                    $error_message .= "Database schema error. Please contact administrator.";
+                } elseif (strpos($e->getMessage(), '1406') !== false) {
+                    $error_message .= "One or more fields exceed the maximum allowed length.";
+                } elseif (strpos($e->getMessage(), '1048') !== false) {
+                    $error_message .= "Required field is missing.";
+                } else {
+                    $error_message .= "Please check your input and try again.";
+                }
+
+                $_SESSION['error_message'] = $error_message;
+
+                // Log the detailed error for debugging
+                error_log("Vendor update error: " . $e->getMessage());
             }
         }
     } elseif ($action == 'delete_vendor') {
-        $id = $_POST['id'];
-        
-        try {
-            // Check if vendor is used in expenses
-            $stmt = $conn->prepare("SELECT COUNT(*) as count FROM expenses WHERE vendor_id = ?");
-            $stmt->execute([$id]);
-            $expense_count = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-            
-            if ($expense_count > 0) {
-                $_SESSION['error_message'] = "Cannot delete vendor that is used in expenses.";
-            } else {
-                $stmt = $conn->prepare("DELETE FROM expense_vendors WHERE id = ?");
+        $id = intval($_POST['id']);
+
+        // Input validation
+        if (empty($id) || $id <= 0) {
+            $_SESSION['error_message'] = "Invalid vendor ID";
+        } else {
+            try {
+                // Check if vendor is used in expenses
+                $stmt = $conn->prepare("SELECT COUNT(*) as count FROM expenses WHERE vendor_id = ?");
                 $stmt->execute([$id]);
-                
-                $_SESSION['success_message'] = "Vendor deleted successfully";
+                $expense_count = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+                if ($expense_count > 0) {
+                    $_SESSION['error_message'] = "Cannot delete vendor that is used in " . $expense_count . " expense(s). Please reassign or delete the expenses first.";
+                } else {
+                    $stmt = $conn->prepare("DELETE FROM expense_vendors WHERE id = ?");
+                    $stmt->execute([$id]);
+
+                    $_SESSION['success_message'] = "Vendor deleted successfully";
+                }
+                header('Location: vendors.php');
+                exit();
+            } catch (PDOException $e) {
+                // Provide user-friendly error messages
+                $error_message = "Error deleting vendor: ";
+
+                if (strpos($e->getMessage(), '1451') !== false) {
+                    $error_message .= "Cannot delete vendor that is referenced by other records.";
+                } elseif (strpos($e->getMessage(), '1054') !== false) {
+                    $error_message .= "Database schema error. Please contact administrator.";
+                } else {
+                    $error_message .= "Please try again or contact administrator.";
+                }
+
+                $_SESSION['error_message'] = $error_message;
+
+                // Log the detailed error for debugging
+                error_log("Vendor deletion error: " . $e->getMessage());
             }
-            header('Location: vendors.php');
-            exit();
-        } catch (PDOException $e) {
-            $_SESSION['error_message'] = "Error deleting vendor: " . $e->getMessage();
         }
     }
 }

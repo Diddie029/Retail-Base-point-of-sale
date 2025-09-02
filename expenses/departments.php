@@ -216,9 +216,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// Get departments with expense count and budget usage
+// Get departments with DISTINCT to prevent duplicates and use proper column mapping
 $departments = $conn->query("
-    SELECT d.*, 
+    SELECT DISTINCT d.id, d.name, d.description, d.manager_id, 
+           COALESCE(d.manager_name, '') as manager_name,
+           COALESCE(d.budget_limit, d.budget_amount, 0) as budget_limit,
+           d.budget_period, d.is_active, d.sort_order, d.created_at, d.updated_at,
            (SELECT COUNT(*) FROM expenses WHERE department_id = d.id) as expense_count,
            (SELECT COALESCE(SUM(total_amount), 0) FROM expenses WHERE department_id = d.id) as total_spent
     FROM expense_departments d
@@ -577,6 +580,41 @@ $departments = $conn->query("
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Form submission protection to prevent duplicates
+        let formSubmitting = false;
+        
+        // Add event listeners to all forms
+        document.addEventListener('DOMContentLoaded', function() {
+            const forms = document.querySelectorAll('form');
+            forms.forEach(form => {
+                form.addEventListener('submit', function(e) {
+                    if (formSubmitting) {
+                        e.preventDefault();
+                        return false;
+                    }
+                    formSubmitting = true;
+                    
+                    // Disable submit button
+                    const submitBtn = form.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.disabled = true;
+                        submitBtn.innerHTML = '<i class="spinner-border spinner-border-sm" role="status"></i> Processing...';
+                    }
+                    
+                    // Reset after 3 seconds in case something goes wrong
+                    setTimeout(() => {
+                        formSubmitting = false;
+                        if (submitBtn) {
+                            submitBtn.disabled = false;
+                            submitBtn.innerHTML = submitBtn.textContent.includes('Add') ? 'Add Department' : 
+                                                 submitBtn.textContent.includes('Update') ? 'Update Department' : 
+                                                 submitBtn.textContent.includes('Delete') ? 'Delete Department' : 'Confirm';
+                        }
+                    }, 3000);
+                });
+            });
+        });
+        
         function editDepartment(department) {
             document.getElementById('edit_id').value = department.id;
             document.getElementById('edit_name').value = department.name;

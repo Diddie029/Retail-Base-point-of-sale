@@ -908,85 +908,9 @@ function loadModalContent(modal, itemId, html) {
         `;
     }
 }
-    
-    // Add modal to page
-    document.body.appendChild(modal);
-    
-    // Show modal
-    setTimeout(() => modal.classList.add('show'), 10);
-    
-    // Handle modal close
-    const closeButtons = modal.querySelectorAll('.modal-close');
-    closeButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            modal.classList.remove('show');
-            setTimeout(() => modal.remove(), 300);
-        });
-    });
-    
-    // Handle form submission
-    const form = modal.querySelector('#handleExpiryForm');
-    form.addEventListener('submit', function(e) {
-        e.preventDefault();
-        
-        const submitBtn = this.querySelector('button[type="submit"]');
-        const originalText = submitBtn.innerHTML;
-        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
-        submitBtn.disabled = true;
-        
-                 // Submit form data
-         const formData = new FormData(this);
-         fetch(`handle_expiry.php?id=${itemId}`, {
-            method: 'POST',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: formData
-        })
-        .then(response => {
-            // Check if response is JSON
-            const contentType = response.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-                return response.json();
-            } else {
-                // If not JSON, throw an error
-                throw new Error('Server returned HTML instead of JSON. This usually means there was a PHP error.');
-            }
-        })
-        .then(data => {
-            if (data.success) {
-                showNotification('Action completed successfully!', 'success');
-                modal.classList.remove('show');
-                setTimeout(() => {
-                    modal.remove();
-                    location.reload(); // Refresh page to show updated data
-                }, 300);
-            } else {
-                showNotification(data.message || 'An error occurred', 'error');
-                submitBtn.innerHTML = originalText;
-                submitBtn.disabled = false;
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showNotification('An error occurred while processing the request: ' + error.message, 'error');
-            submitBtn.innerHTML = originalText;
-            submitBtn.disabled = false;
-        });
-    });
-    
-    // Close modal when clicking outside
-    modal.addEventListener('click', function(e) {
-        if (e.target === this) {
-            this.classList.remove('show');
-            setTimeout(() => this.remove(), 300);
-        }
-    });
-}
 
 function initializeEnhancedForm(modal, itemId) {
-    // Get the form elements
-    const form = modal.querySelector('.handle-expiry-form');
+    const form = modal.querySelector('#handleExpiryForm');
     const actionTypeSelect = modal.querySelector('#action_type');
     const quantityInput = modal.querySelector('#quantity_affected');
     const costInput = modal.querySelector('#cost');

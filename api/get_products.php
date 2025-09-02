@@ -14,6 +14,10 @@ try {
     $supplierId = $requestData['supplier_id'] ?? '';
     $statusFilter = $requestData['status_filter'] ?? '';
     $excludeBlocked = $requestData['exclude_blocked'] ?? 'false';
+    $categoryId = $requestData['category_id'] ?? '';
+    $productFamilyId = $requestData['product_family_id'] ?? '';
+    $enableVarieties = $requestData['enable_varieties'] ?? 'false';
+    $selectedProducts = $requestData['selected_products'] ?? '';
 
     // Validate and sanitize inputs
     $search = trim($search);
@@ -29,13 +33,25 @@ try {
         $supplierId = '';
     }
 
+    // Validate category_id if provided
+    if ($categoryId && !is_numeric($categoryId)) {
+        $categoryId = '';
+    }
+
+    // Validate product_family_id if provided
+    if ($productFamilyId && !is_numeric($productFamilyId)) {
+        $productFamilyId = '';
+    }
+
     // Build query
     $query = "
         SELECT p.id, p.name, p.sku, p.barcode, p.quantity, p.minimum_stock, p.cost_price, p.price as selling_price,
-               c.name as category_name, s.name as supplier_name
+               c.name as category_name, s.name as supplier_name, pf.name as product_family_name,
+               p.product_family_id, p.category_id, p.supplier_id
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
         LEFT JOIN suppliers s ON p.supplier_id = s.id
+        LEFT JOIN product_families pf ON p.product_family_id = pf.id
         WHERE 1=1
     ";
 
@@ -62,6 +78,29 @@ try {
     // Exclude blocked products if requested
     if ($excludeBlocked === 'true') {
         $query .= " AND p.status != 'blocked'";
+    }
+
+    // Add category filter if provided
+    if (!empty($categoryId)) {
+        $query .= " AND p.category_id = :category_id";
+        $params[':category_id'] = $categoryId;
+    }
+
+    // Add product family filter if provided
+    if (!empty($productFamilyId)) {
+        $query .= " AND p.product_family_id = :product_family_id";
+        $params[':product_family_id'] = $productFamilyId;
+    }
+
+    // Add selected products filter if provided (for multiple selection)
+    if (!empty($selectedProducts)) {
+        $productIds = explode(',', $selectedProducts);
+        $productIds = array_filter(array_map('intval', $productIds));
+        if (!empty($productIds)) {
+            $placeholders = str_repeat('?,', count($productIds) - 1) . '?';
+            $query .= " AND p.id IN ($placeholders)";
+            $params = array_merge($params, $productIds);
+        }
     }
 
     // Ensure products have valid cost_price for order creation
@@ -115,7 +154,11 @@ try {
             'cost_price' => (float)$product['cost_price'],
             'selling_price' => (float)$product['selling_price'],
             'category_name' => $product['category_name'] ?? '',
-            'supplier_name' => $product['supplier_name'] ?? ''
+            'supplier_name' => $product['supplier_name'] ?? '',
+            'product_family_name' => $product['product_family_name'] ?? '',
+            'category_id' => (int)($product['category_id'] ?? 0),
+            'product_family_id' => (int)($product['product_family_id'] ?? 0),
+            'supplier_id' => (int)($product['supplier_id'] ?? 0)
         ];
     }, $products);
 

@@ -54,6 +54,10 @@ $brands = $brands_stmt->fetchAll(PDO::FETCH_ASSOC);
 $suppliers_stmt = $conn->query("SELECT * FROM suppliers WHERE is_active = 1 ORDER BY name");
 $suppliers = $suppliers_stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Get product families
+$families_stmt = $conn->query("SELECT * FROM product_families WHERE status = 'active' ORDER BY name");
+$families = $families_stmt->fetchAll(PDO::FETCH_ASSOC);
+
 $errors = [];
 $success = '';
 
@@ -104,6 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // SKU and identifiers
     $sku = sanitizeProductInput($_POST['sku'] ?? '');
+    $product_number = sanitizeProductInput($_POST['product_number'] ?? '');
     $barcode = sanitizeProductInput($_POST['barcode'] ?? '');
 
     // Product type and pricing
@@ -235,6 +240,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // Check Product Number uniqueness if provided
+    if (!empty($product_number)) {
+        $stmt = $conn->prepare("SELECT COUNT(*) as count FROM products WHERE product_number = :product_number");
+        $stmt->bindParam(':product_number', $product_number);
+        $stmt->execute();
+        if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
+            $errors['product_number'] = 'This Product Number already exists';
+        }
+    }
+
     // Check barcode uniqueness if provided
     if (!empty($barcode)) {
         $stmt = $conn->prepare("SELECT COUNT(*) as count FROM products WHERE barcode = :barcode");
@@ -273,6 +288,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
+            // Auto-generate Product Number if not provided
+            if (empty($product_number)) {
+                // Check if auto-generate Product Number is enabled in system settings
+                if (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1') {
+                    $product_number = generateProductNumber($conn);
+                }
+            }
+
             // Determine actual status based on publication status
             $actual_status = $status;
             if ($publication_status === 'draft') {
@@ -285,14 +308,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $insert_stmt = $conn->prepare("
                 INSERT INTO products (
-                    name, description, category_id, sku, product_type, price, cost_price,
+                    name, description, category_id, sku, product_number, product_type, price, cost_price,
                     quantity, minimum_stock, maximum_stock, reorder_point, barcode, brand_id,
                     supplier_id, weight, length, width, height, status, tax_rate, tags,
                     warranty_period, is_serialized, allow_backorders, track_inventory,
                     sale_price, sale_start_date, sale_end_date, publication_status, scheduled_date,
                     created_at, updated_at
                 ) VALUES (
-                    :name, :description, :category_id, :sku, :product_type, :price, :cost_price,
+                    :name, :description, :category_id, :sku, :product_number, :product_type, :price, :cost_price,
                     :quantity, :minimum_stock, :maximum_stock, :reorder_point, :barcode, :brand_id,
                     :supplier_id, :weight, :length, :width, :height, :status, :tax_rate, :tags,
                     :warranty_period, :is_serialized, :allow_backorders, :track_inventory,
@@ -305,6 +328,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $insert_stmt->bindParam(':description', $description);
             $insert_stmt->bindParam(':category_id', $category_id);
             $insert_stmt->bindParam(':sku', $sku);
+            $insert_stmt->bindParam(':product_number', $product_number);
             $insert_stmt->bindParam(':product_type', $product_type);
             $insert_stmt->bindParam(':price', $price);
             $insert_stmt->bindParam(':cost_price', $cost_price);
@@ -390,6 +414,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_sku') {
     
     header('Content-Type: application/json');
     echo json_encode(['sku' => $sku]);
+    exit();
+}
+
+// Handle AJAX requests for Product Number generation
+if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
+    $product_number = generateProductNumber($conn);
+    
+    header('Content-Type: application/json');
+    echo json_encode(['product_number' => $product_number]);
     exit();
 }
 
@@ -549,6 +582,29 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
                                 <?php endif; ?>
                                 <div class="form-text">
                                     Unique identifier for inventory tracking. Leave empty to auto-generate.
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="product_number" class="form-label">Product Number</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control <?php echo isset($errors['product_number']) ? 'is-invalid' : ''; ?>"
+                                           id="product_number" name="product_number" value="<?php echo htmlspecialchars($_POST['product_number'] ?? ''); ?>"
+                                           placeholder="Leave empty for auto-generation" 
+                                           <?php echo (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1') ? 'readonly' : ''; ?>>
+                                    <button type="button" class="btn btn-outline-secondary" id="generateProductNumber">
+                                        <i class="bi bi-magic"></i>
+                                        Generate
+                                    </button>
+                                </div>
+                                <?php if (isset($errors['product_number'])): ?>
+                                <div class="invalid-feedback"><?php echo htmlspecialchars($errors['product_number']); ?></div>
+                                <?php endif; ?>
+                                <div class="form-text">
+                                    Internal product number for tracking. Leave empty to auto-generate.
+                                    <?php if (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1'): ?>
+                                    <span class="text-info"><i class="bi bi-info-circle"></i> Auto-generation is enabled in settings.</span>
+                                    <?php endif; ?>
                                 </div>
                             </div>
 
@@ -797,6 +853,22 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
 
                         <div class="form-row">
                             <div class="form-group">
+                                <label for="product_family_id" class="form-label">Product Family</label>
+                                <select class="form-control" id="product_family_id" name="product_family_id">
+                                    <option value="">Select Product Family</option>
+                                    <?php foreach ($families as $family): ?>
+                                    <option value="<?php echo $family['id']; ?>"
+                                            <?php echo ($_POST['product_family_id'] ?? '') == $family['id'] ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($family['name']); ?> (<?php echo htmlspecialchars($family['base_unit']); ?>)
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="form-text">
+                                    <a href="../product_families/add.php" target="_blank">Add new family</a>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
                                 <label for="supplier_id" class="form-label">Supplier</label>
                                 <select class="form-control" id="supplier_id" name="supplier_id">
                                     <option value="">Select Supplier</option>
@@ -811,7 +883,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
                                     <a href="../suppliers/add.php" target="_blank">Add new supplier</a>
                                 </div>
                             </div>
+                        </div>
 
+                        <div class="form-row">
                             <div class="form-group">
                                 <label for="status" class="form-label">Status</label>
                                 <select class="form-control" id="status" name="status">
@@ -819,6 +893,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
                                     <option value="inactive" <?php echo ($_POST['status'] ?? '') === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
                                     <option value="discontinued" <?php echo ($_POST['status'] ?? '') === 'discontinued' ? 'selected' : ''; ?>>Discontinued</option>
                                 </select>
+                            </div>
+
+                            <div class="form-group">
+                                <!-- Empty for balance -->
                             </div>
                         </div>
                     </div>
@@ -1048,6 +1126,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
 
             // Initialize UI on page load
             updatePublicationUI();
+
+            // Product Number Generation
+            const generateProductNumberBtn = document.getElementById('generateProductNumber');
+            if (generateProductNumberBtn) {
+                generateProductNumberBtn.addEventListener('click', function() {
+                    fetch('?action=generate_product_number')
+                        .then(response => response.json())
+                        .then(data => {
+                            document.getElementById('product_number').value = data.product_number;
+                        })
+                        .catch(error => {
+                            console.error('Error generating product number:', error);
+                        });
+                });
+            }
 
             // Form validation for scheduled date
             const scheduledDateInput = document.getElementById('scheduled_date');

@@ -9,19 +9,16 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Get user information
 $user_id = $_SESSION['user_id'];
-$username = $_SESSION['username'];
-$role_name = $_SESSION['role_name'] ?? 'User';
 $role_id = $_SESSION['role_id'] ?? 0;
 
 // Get user permissions
 $permissions = [];
 if ($role_id) {
     $stmt = $conn->prepare("
-        SELECT p.name
-        FROM permissions p
-        JOIN role_permissions rp ON p.id = rp.permission_id
+        SELECT p.name 
+        FROM permissions p 
+        JOIN role_permissions rp ON p.id = rp.permission_id 
         WHERE rp.role_id = :role_id
     ");
     $stmt->bindParam(':role_id', $role_id);
@@ -29,9 +26,9 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check if user has permission to view expiry alerts
-if (!in_array('view_expiry_alerts', $permissions) && !in_array('manage_expiry_tracker', $permissions)) {
-    header("Location: expiry_tracker.php?error=permission_denied");
+// Check permissions
+if (!hasPermission('view_expiry_alerts', $permissions) && !hasPermission('manage_expiry_tracker', $permissions)) {
+    header("Location: ../dashboard/dashboard.php");
     exit();
 }
 
@@ -40,6 +37,13 @@ $expiry_id = isset($_GET['id']) ? trim($_GET['id']) : null;
 if (!$expiry_id) {
     header("Location: expiry_tracker.php?error=invalid_item");
     exit();
+}
+
+// Get system settings
+$settings = [];
+$stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
+while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    $settings[$row['setting_key']] = $row['setting_value'];
 }
 
 // Get expiry item details
@@ -113,53 +117,487 @@ $page_title = "View Expiry Item";
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo $page_title; ?> - POS System</title>
-    <link rel="stylesheet" href="../assets/css/expiry_tracker.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <title><?php echo htmlspecialchars($expiry_item['product_name']); ?> - Expiry Details - <?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../assets/css/dashboard.css">
+    <style>
+        :root {
+            --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
+            --primary-rgb: <?php echo implode(',', sscanf($settings['theme_color'] ?? '#6366f1', '#%02x%02x%02x')); ?>;
+            --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
+            --sidebar-rgb: <?php echo implode(',', sscanf($settings['sidebar_color'] ?? '#1e293b', '#%02x%02x%02x')); ?>;
+        }
+        
+        .expiry-header {
+            background: linear-gradient(135deg, <?php echo $is_expired ? '#dc2626' : ($is_critical ? '#f59e0b' : 'var(--primary-color)'); ?>, <?php echo $is_expired ? '#b91c1c' : ($is_critical ? '#d97706' : '#8b5cf6'); ?>);
+            color: white;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .expiry-header::before {
+            content: '';
+            position: absolute;
+            top: -50px;
+            right: -50px;
+            width: 200px;
+            height: 200px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+        }
+        
+        .expiry-icon {
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+        
+        .info-card {
+            background: white;
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            margin-bottom: 2rem;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .info-card:hover {
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        
+        .stat-box {
+            text-align: center;
+            padding: 1.5rem;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+        }
+        
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-label {
+            color: rgba(255, 255, 255, 0.8);
+            font-weight: 500;
+        }
+        
+        .detail-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .detail-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .detail-group label {
+            font-weight: 600;
+            color: #64748b;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .detail-group span {
+            font-weight: 500;
+            color: #1e293b;
+            padding: 0.75rem;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .product-overview {
+            display: flex;
+            gap: 2rem;
+            margin-bottom: 2rem;
+            align-items: flex-start;
+        }
+        
+        .product-image-large {
+            width: 120px;
+            height: 120px;
+            border-radius: 12px;
+            object-fit: cover;
+            border: 2px solid #e2e8f0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .product-basic-info h2 {
+            margin: 0 0 1rem 0;
+            color: #1e293b;
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
+        
+        .product-sku, .product-category {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 0.875rem;
+            display: inline-block;
+            margin: 0.25rem 0.5rem 0.25rem 0;
+        }
+        
+        .product-sku {
+            background: #f1f5f9;
+            color: #475569;
+        }
+        
+        .product-category {
+            background: linear-gradient(135deg, var(--primary-color), #8b5cf6);
+            color: white;
+        }
+        
+        .expiry-date, .days-left {
+            font-weight: 600;
+        }
+        
+        .expiry-date.critical, .days-left.critical {
+            color: #f59e0b;
+        }
+        
+        .expiry-date.expired, .days-left.expired {
+            color: #dc2626;
+        }
+        
+        .status-badge {
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .status-active {
+            background: #dcfce7;
+            color: #166534;
+        }
+        
+        .status-expired {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .status-disposed {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        
+        .actions-timeline {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        
+        .action-item {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .action-item:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        
+        .action-header {
+            background: linear-gradient(135deg, #f8fafc, #e2e8f0);
+            padding: 1rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .action-type {
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .action-dispose { background: #fee2e2; color: #991b1b; }
+        .action-return { background: #dbeafe; color: #1e40af; }
+        .action-sell_at_discount { background: #dcfce7; color: #166534; }
+        .action-donate { background: #fef3c7; color: #92400e; }
+        .action-recall { background: #fecaca; color: #7f1d1d; }
+        .action-other { background: #e2e8f0; color: #475569; }
+        
+        .action-date {
+            font-size: 0.875rem;
+            color: #64748b;
+            font-weight: 500;
+        }
+        
+        .action-details {
+            padding: 1.5rem;
+        }
+        
+        .action-details p {
+            margin: 0.75rem 0;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+        
+        .action-details strong {
+            color: #1e293b;
+        }
+        
+        .btn {
+            transition: all 0.3s ease;
+            font-weight: 500;
+            border-radius: 8px;
+            padding: 0.75rem 1.5rem;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), #8b5cf6);
+            border: none;
+            box-shadow: 0 2px 8px rgba(var(--primary-rgb), 0.3);
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, var(--primary-color), #7c3aed);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(var(--primary-rgb), 0.4);
+        }
+        
+        .btn-warning {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            border: none;
+            color: white;
+        }
+        
+        .btn-warning:hover {
+            background: linear-gradient(135deg, #d97706, #b45309);
+            transform: translateY(-2px);
+        }
+        
+        .btn-outline-secondary {
+            background: transparent;
+            border: 2px solid #e2e8f0;
+            color: #64748b;
+        }
+        
+        .btn-outline-secondary:hover {
+            background: #f8fafc;
+            border-color: #cbd5e1;
+            color: #475569;
+            transform: translateY(-1px);
+        }
+        
+        /* Page Header Styling */
+        .page-header {
+            background: #fff;
+            border-bottom: 1px solid #e2e8f0;
+            padding: 1.5rem 0;
+            margin-bottom: 2rem;
+        }
+        
+        .page-icon {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, var(--primary-color), #8b5cf6);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            box-shadow: 0 4px 12px rgba(var(--primary-rgb), 0.15);
+            flex-shrink: 0;
+        }
+        
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #1e293b;
+            margin: 0;
+        }
+        
+        .page-subtitle {
+            color: #64748b;
+            font-size: 0.9rem;
+            margin: 0;
+        }
+        
+        .breadcrumb {
+            background: transparent;
+            padding: 0;
+            margin: 0;
+            font-size: 0.875rem;
+        }
+        
+        .breadcrumb-item {
+            color: #64748b;
+        }
+        
+        .breadcrumb-item.active {
+            color: var(--primary-color);
+            font-weight: 500;
+        }
+        
+        .breadcrumb-item + .breadcrumb-item::before {
+            content: '/';
+            color: #cbd5e1;
+        }
+        
+        .page-actions .btn {
+            font-size: 0.875rem;
+            padding: 0.625rem 1.25rem;
+        }
+        
+        @media (max-width: 768px) {
+            .page-header {
+                padding: 1rem 0;
+            }
+            
+            .page-title {
+                font-size: 1.5rem;
+            }
+            
+            .page-icon {
+                width: 50px;
+                height: 50px;
+                font-size: 1.25rem;
+            }
+            
+            .d-flex.justify-content-between {
+                flex-direction: column !important;
+                gap: 1rem;
+            }
+            
+            .page-actions {
+                justify-content: center;
+            }
+            
+            .product-overview {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .product-image-large {
+                width: 100px;
+                height: 100px;
+                margin: 0 auto 1rem;
+            }
+            
+            .detail-row {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+            
+            .action-header {
+                flex-direction: column;
+                gap: 0.75rem;
+                text-align: center;
+            }
+        }
+    </style>
 </head>
 <body>
-    <?php include '../include/navmenu.php'; ?>
-    
-    <div class="container">
-        <div class="header">
-            <h1><i class="fas fa-eye"></i> <?php echo $page_title; ?></h1>
-            <div class="header-actions">
-                <?php if (in_array('handle_expired_items', $permissions) && $expiry_item['status'] === 'active'): ?>
-                    <a href="handle_expiry.php?id=<?php echo $expiry_id; ?>" class="btn btn-warning">
-                        <i class="fas fa-tools"></i> Handle Expiry
-                    </a>
-                <?php endif; ?>
-                <?php if (in_array('manage_expiry_tracker', $permissions)): ?>
-                    <a href="edit_expiry_date.php?id=<?php echo $expiry_id; ?>" class="btn btn-primary">
-                        <i class="fas fa-edit"></i> Edit
-                    </a>
-                <?php endif; ?>
-                <a href="expiry_tracker.php" class="btn btn-secondary">
-                    <i class="fas fa-arrow-left"></i> Back to Tracker
-                </a>
+    <!-- Sidebar -->
+    <?php
+    $current_page = 'expiry_tracker';
+    include __DIR__ . '/../include/navmenu.php';
+    ?>
+
+    <div class="main-content">
+        <!-- Header -->
+        <div class="page-header">
+            <div class="container-fluid">
+                <!-- Breadcrumb -->
+                <nav aria-label="breadcrumb" class="mb-3">
+                    <ol class="breadcrumb mb-0">
+                        <li class="breadcrumb-item"><a href="../dashboard/dashboard.php" class="text-decoration-none">Dashboard</a></li>
+                        <li class="breadcrumb-item"><a href="expiry_tracker.php" class="text-decoration-none">Expiry Tracker</a></li>
+                        <li class="breadcrumb-item active" aria-current="page">View Item</li>
+                    </ol>
+                </nav>
+                
+                <!-- Page Title and Actions -->
+                <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+                    <div class="page-title-section">
+                        <div class="d-flex align-items-center mb-2">
+                            <div class="page-icon me-3">
+                                <i class="bi bi-calendar-x"></i>
+                            </div>
+                            <div>
+                                <h1 class="page-title mb-1">Expiry Item Details</h1>
+                                <p class="page-subtitle mb-0">View detailed information about this expiry item</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="page-actions d-flex flex-wrap gap-2">
+                        <?php if (hasPermission('handle_expired_items', $permissions) && $expiry_item['status'] === 'active'): ?>
+                            <a href="handle_expiry.php?id=<?php echo $expiry_id; ?>" class="btn btn-warning">
+                                <i class="bi bi-tools me-2"></i>Handle Expiry
+                            </a>
+                        <?php endif; ?>
+                        <?php if (hasPermission('manage_expiry_tracker', $permissions)): ?>
+                            <a href="edit_expiry_date.php?id=<?php echo $expiry_id; ?>" class="btn btn-primary">
+                                <i class="bi bi-pencil me-2"></i>Edit
+                            </a>
+                        <?php endif; ?>
+                        <a href="expiry_tracker.php" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left me-2"></i>Back to Tracker
+                        </a>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <?php if ($show_success): ?>
-            <div class="alert alert-success">
-                <i class="fas fa-check-circle"></i> Expiry date added successfully! You can now view the details below.
-            </div>
-        <?php endif; ?>
-        
-        <?php if (isset($_GET['success']) && $_GET['success'] === 'updated'): ?>
-            <div class="alert alert-success">
-                <i class="fas fa-check-circle"></i> Expiry date updated successfully! The changes are reflected below.
-            </div>
-        <?php endif; ?>
+        <!-- Content -->
+        <main class="content">
 
-        <!-- Item Details -->
-        <div class="item-details">
-            <div class="detail-card">
-                <div class="detail-header">
-                    <h3>Product Information</h3>
+            <!-- Alert Messages -->
+            <?php if ($show_success): ?>
+                <div class="alert alert-success alert-dismissible fade show mb-4" role="alert">
+                    <i class="bi bi-check-circle me-2"></i>
+                    <strong>Success!</strong> Expiry date added successfully! You can now view the details below.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                 </div>
-                <div class="detail-content">
+            <?php endif; ?>
+            
+            <?php if (isset($_GET['success']) && $_GET['success'] === 'updated'): ?>
+                <div class="alert alert-success alert-dismissible fade show mb-4" role="alert">
+                    <i class="bi bi-check-circle me-2"></i>
+                    <strong>Success!</strong> Expiry date updated successfully! The changes are reflected below.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            <?php endif; ?>
+
+            <!-- Product Information -->
+            <div class="info-card">
+                <h5 class="mb-4"><i class="bi bi-box-seam me-2"></i>Product Information</h5>
                     <div class="product-overview">
                         <?php if ($expiry_item['image_url']): ?>
                             <img src="<?php echo htmlspecialchars($expiry_item['image_url']); ?>" 
@@ -260,14 +698,10 @@ $page_title = "View Expiry Item";
             </div>
         </div>
 
-        <!-- Supplier Information -->
-        <?php if ($expiry_item['supplier_name']): ?>
-        <div class="supplier-info">
-            <div class="detail-card">
-                <div class="detail-header">
-                    <h3>Supplier Information</h3>
-                </div>
-                <div class="detail-content">
+            <!-- Supplier Information -->
+            <?php if ($expiry_item['supplier_name']): ?>
+            <div class="info-card">
+                <h5 class="mb-4"><i class="bi bi-truck me-2"></i>Supplier Information</h5>
                     <div class="detail-row">
                         <div class="detail-group">
                             <label>Supplier Name:</label>
@@ -296,15 +730,11 @@ $page_title = "View Expiry Item";
         </div>
         <?php endif; ?>
 
-        <!-- Actions History -->
-        <?php if (!empty($actions_history)): ?>
-        <div class="actions-history">
-            <div class="detail-card">
-                <div class="detail-header">
-                    <h3>Actions History</h3>
-                </div>
-                <div class="detail-content">
-                    <div class="actions-timeline">
+            <!-- Actions History -->
+            <?php if (!empty($actions_history)): ?>
+            <div class="info-card">
+                <h5 class="mb-4"><i class="bi bi-clock-history me-2"></i>Actions History</h5>
+                <div class="actions-timeline">
                         <?php foreach ($actions_history as $action): ?>
                             <div class="action-item">
                                 <div class="action-header">
@@ -337,20 +767,18 @@ $page_title = "View Expiry Item";
         </div>
         <?php endif; ?>
 
-        <!-- Notes -->
-        <?php if ($expiry_item['notes']): ?>
-        <div class="notes-section">
-            <div class="detail-card">
-                <div class="detail-header">
-                    <h3>Notes</h3>
-                </div>
-                <div class="detail-content">
-                    <p><?php echo nl2br(htmlspecialchars($expiry_item['notes'])); ?></p>
-                </div>
+            <!-- Notes -->
+            <?php if ($expiry_item['notes']): ?>
+            <div class="info-card">
+                <h5 class="mb-3"><i class="bi bi-journal-text me-2"></i>Notes</h5>
+                <p class="mb-0"><?php echo nl2br(htmlspecialchars($expiry_item['notes'])); ?></p>
             </div>
-        </div>
-        <?php endif; ?>
+            <?php endif; ?>
+        </main>
     </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
     <style>
         .product-overview {

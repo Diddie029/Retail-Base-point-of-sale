@@ -107,7 +107,8 @@ $total_pages = ceil($total_products / $per_page);
 // Get products
 $sql = "
     SELECT p.*, c.name as category_name, b.name as brand_name, s.name as supplier_name,
-           s.is_active as supplier_active, s.supplier_block_note
+           s.is_active as supplier_active, s.supplier_block_note,
+           p.is_auto_bom_enabled, p.auto_bom_type
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN brands b ON p.brand_id = b.id
@@ -125,6 +126,121 @@ $stmt->bindValue(':limit', $per_page, PDO::PARAM_INT);
 $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
 $stmt->execute();
 $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Handle bulk operations
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
+    $bulk_action = $_POST['bulk_action'];
+    $product_ids = isset($_POST['product_ids']) ? $_POST['product_ids'] : [];
+
+    if (empty($product_ids)) {
+        $_SESSION['error'] = 'No products selected for bulk operation.';
+        header("Location: products.php");
+        exit();
+    }
+
+    try {
+        $conn->beginTransaction();
+        $affected_count = 0;
+
+        switch ($bulk_action) {
+            case 'activate':
+                $stmt = $conn->prepare("UPDATE products SET status = 'active', updated_at = NOW() WHERE id = ?");
+                foreach ($product_ids as $product_id) {
+                    $stmt->execute([$product_id]);
+                    $affected_count += $stmt->rowCount();
+                }
+                $_SESSION['success'] = "Activated $affected_count products successfully.";
+                logActivity($conn, $user_id, 'bulk_activate_products', "Activated $affected_count products");
+                break;
+
+            case 'deactivate':
+                $stmt = $conn->prepare("UPDATE products SET status = 'inactive', updated_at = NOW() WHERE id = ?");
+                foreach ($product_ids as $product_id) {
+                    $stmt->execute([$product_id]);
+                    $affected_count += $stmt->rowCount();
+                }
+                $_SESSION['success'] = "Deactivated $affected_count products successfully.";
+                logActivity($conn, $user_id, 'bulk_deactivate_products', "Deactivated $affected_count products");
+                break;
+
+            case 'delete':
+                // Check permissions
+                if (!hasPermission('manage_products', $permissions)) {
+                    throw new Exception('You do not have permission to delete products.');
+                }
+
+                $stmt = $conn->prepare("DELETE FROM products WHERE id = ?");
+                foreach ($product_ids as $product_id) {
+                    $stmt->execute([$product_id]);
+                    $affected_count += $stmt->rowCount();
+                }
+                $_SESSION['success'] = "Deleted $affected_count products successfully.";
+                logActivity($conn, $user_id, 'bulk_delete_products', "Deleted $affected_count products");
+                break;
+
+            case 'bulk_pricing':
+                $new_price = isset($_POST['new_price']) ? (float) $_POST['new_price'] : null;
+                if ($new_price === null || $new_price < 0) {
+                    throw new Exception('Invalid price value.');
+                }
+
+                $stmt = $conn->prepare("UPDATE products SET price = ?, updated_at = NOW() WHERE id = ?");
+                foreach ($product_ids as $product_id) {
+                    $stmt->execute([$new_price, $product_id]);
+                    $affected_count += $stmt->rowCount();
+                }
+                $_SESSION['success'] = "Updated pricing for $affected_count products successfully.";
+                logActivity($conn, $user_id, 'bulk_update_pricing', "Updated pricing for $affected_count products to " . formatCurrency($new_price));
+                break;
+
+            case 'bulk_category':
+                $new_category_id = isset($_POST['new_category_id']) ? (int) $_POST['new_category_id'] : null;
+                if (!$new_category_id) {
+                    throw new Exception('Please select a category.');
+                }
+
+                $stmt = $conn->prepare("UPDATE products SET category_id = ?, updated_at = NOW() WHERE id = ?");
+                foreach ($product_ids as $product_id) {
+                    $stmt->execute([$new_category_id, $product_id]);
+                    $affected_count += $stmt->rowCount();
+                }
+                $_SESSION['success'] = "Updated category for $affected_count products successfully.";
+                logActivity($conn, $user_id, 'bulk_update_category', "Updated category for $affected_count products");
+                break;
+
+            case 'bulk_auto_bom':
+                $auto_bom_type = isset($_POST['auto_bom_type']) ? $_POST['auto_bom_type'] : 'unit_conversion';
+
+                $stmt = $conn->prepare("UPDATE products SET is_auto_bom_enabled = 1, auto_bom_type = ?, updated_at = NOW() WHERE id = ?");
+                foreach ($product_ids as $product_id) {
+                    $stmt->execute([$auto_bom_type, $product_id]);
+                    $affected_count += $stmt->rowCount();
+                }
+                $_SESSION['success'] = "Enabled Auto BOM for $affected_count products successfully.";
+                logActivity($conn, $user_id, 'bulk_enable_auto_bom', "Enabled Auto BOM for $affected_count products");
+                break;
+
+            case 'export_selected':
+                // Store selected product IDs in session for export
+                $_SESSION['export_product_ids'] = $product_ids;
+                header("Location: export_selected_products.php");
+                exit();
+
+            default:
+                throw new Exception('Invalid bulk action.');
+        }
+
+        $conn->commit();
+
+    } catch (Exception $e) {
+        $conn->rollBack();
+        $_SESSION['error'] = 'Bulk operation failed: ' . $e->getMessage();
+        logActivity($conn, $user_id, 'bulk_operation_failed', 'Failed bulk operation: ' . $e->getMessage());
+    }
+
+    header("Location: products.php");
+    exit();
+}
 
 // Handle individual toggle actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_product'])) {
@@ -283,12 +399,202 @@ unset($_SESSION['success'], $_SESSION['error']);
     <title>Products - <?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="../assets/css/products.css">
     <style>
         :root {
             --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
             --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
+        }
+        
+        .products-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            margin: -20px -20px 20px -20px;
+            border-radius: 8px;
+        }
+        
+        .products-header h1 {
+            color: white;
+            margin: 0;
+            font-size: 2rem;
+            font-weight: 600;
+        }
+        
+        .products-header p {
+            color: rgba(255, 255, 255, 0.9);
+            margin: 0.5rem 0 0 0;
+            font-size: 1.1rem;
+        }
+        
+        .products-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .products-stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .products-stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+        
+        .products-stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 0.5rem;
+        }
+        
+        .products-stat-label {
+            color: #666;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        
+        .products-filters-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .products-filters-row {
+            display: flex;
+            gap: 15px;
+            align-items: end;
+            flex-wrap: wrap;
+        }
+        
+        .products-filter-group {
+            display: flex;
+            flex-direction: column;
+            min-width: 180px;
+        }
+        
+        .products-filter-label {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #333;
+            font-size: 0.9rem;
+        }
+        
+        .products-filter-input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+        
+        .products-filter-input:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.25);
+            outline: none;
+        }
+        
+        .action-buttons-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        
+        .btn-modern {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-modern:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        
+        .product-table {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        .product-table table {
+            margin: 0;
+        }
+        
+        .product-table thead {
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .product-table th {
+            padding: 15px 12px;
+            font-weight: 600;
+            color: #333;
+            border-bottom: none;
+            font-size: 0.9rem;
+        }
+        
+        .product-table td {
+            padding: 12px;
+            vertical-align: middle;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        
+        .product-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .product-table tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .category-selection {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .column-visibility {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            margin-bottom: 15px;
+        }
+        
+        .bulk-actions {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .pagination-wrapper {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
     </style>
 </head>
@@ -319,6 +625,12 @@ unset($_SESSION['success'], $_SESSION['error']);
 
         <!-- Content -->
         <div class="content">
+            <!-- Products Header -->
+            <div class="products-header">
+                <h1><i class="bi bi-box-fill"></i> Product Management</h1>
+                <p>Manage your product inventory and track stock levels</p>
+            </div>
+            
             <?php if ($success): ?>
             <div class="alert alert-success alert-dismissible fade show">
                 <i class="bi bi-check-circle me-2"></i>
@@ -335,132 +647,115 @@ unset($_SESSION['success'], $_SESSION['error']);
             </div>
             <?php endif; ?>
 
-            <!-- Stats Cards -->
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon stat-primary">
-                            <i class="bi bi-box"></i>
-                        </div>
-                    </div>
-                    <div class="stat-value"><?php echo number_format($stats['total_products']); ?></div>
-                    <div class="stat-label">Total Products</div>
+            <!-- Statistics Cards -->
+            <div class="products-stats">
+                <div class="products-stat-card">
+                    <div class="products-stat-value"><?php echo number_format($stats['total_products']); ?></div>
+                    <div class="products-stat-label">Total Products</div>
                 </div>
                 
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon stat-warning">
-                            <i class="bi bi-exclamation-triangle"></i>
-                        </div>
-                    </div>
-                    <div class="stat-value"><?php echo number_format($stats['low_stock']); ?></div>
-                    <div class="stat-label">Low Stock</div>
+                <div class="products-stat-card">
+                    <div class="products-stat-value" style="color: #f59e0b;"><?php echo number_format($stats['low_stock']); ?></div>
+                    <div class="products-stat-label">Low Stock</div>
                 </div>
                 
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon stat-danger">
-                            <i class="bi bi-x-circle"></i>
-                        </div>
-                    </div>
-                    <div class="stat-value"><?php echo number_format($stats['out_of_stock']); ?></div>
-                    <div class="stat-label">Out of Stock</div>
+                <div class="products-stat-card">
+                    <div class="products-stat-value" style="color: #ef4444;"><?php echo number_format($stats['out_of_stock']); ?></div>
+                    <div class="products-stat-label">Out of Stock</div>
                 </div>
                 
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div class="stat-icon stat-success">
-                            <i class="bi bi-currency-dollar"></i>
-                        </div>
-                    </div>
-                    <div class="stat-value currency"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($stats['inventory_value'], 2); ?></div>
-                    <div class="stat-label">Inventory Value</div>
+                <div class="products-stat-card">
+                    <div class="products-stat-value" style="color: #10b981;"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($stats['inventory_value'], 2); ?></div>
+                    <div class="products-stat-label">Inventory Value</div>
                 </div>
             </div>
 
-            <!-- Product Header -->
-            <div class="product-header">
-                <h2 class="product-title">Product Management</h2>
-                <div class="product-actions">
-                    <a href="add.php" class="btn btn-primary">
-                        <i class="bi bi-plus"></i>
-                        Add Product
-                    </a>
-                    <a href="blocked.php" class="btn btn-warning">
-                        <i class="bi bi-x-circle"></i>
-                        Blocked Products
-                    </a>
-                    <a href="import.php" class="btn btn-success">
-                        <i class="bi bi-upload"></i>
-                        Import
-                    </a>
-                    <a href="export_products.php" class="btn btn-info">
-                        <i class="bi bi-download"></i>
-                        Export Products
-                    </a>
-                </div>
+            <!-- Action Buttons -->
+            <div class="action-buttons-row">
+                <a href="add.php" class="btn btn-primary btn-modern">
+                    <i class="bi bi-plus-circle"></i>
+                    Create Product
+                </a>
+                <a href="../bom/auto_bom_index.php" class="btn btn-secondary btn-modern">
+                    <i class="bi bi-gear"></i>
+                    Manage Auto BOM
+                </a>
+                <a href="blocked.php" class="btn btn-warning btn-modern">
+                    <i class="bi bi-x-circle"></i>
+                    Blocked Products
+                </a>
+                <a href="import.php" class="btn btn-success btn-modern">
+                    <i class="bi bi-upload"></i>
+                    Import
+                </a>
+                <a href="export_products.php" class="btn btn-info btn-modern">
+                    <i class="bi bi-download"></i>
+                    Export
+                </a>
             </div>
 
-            <!-- Filter Section -->
-            <div class="filter-section">
-                <form method="GET" id="filterForm">
-                    <div class="filter-row">
-                        <div class="form-group">
-                            <label for="searchInput" class="form-label">Search Products</label>
-                            <input type="text" class="form-control" id="searchInput" name="search" 
-                                   value="<?php echo htmlspecialchars($search); ?>" placeholder="Search by name or barcode...">
-                        </div>
-                        <div class="form-group">
-                            <label for="categoryFilter" class="form-label">Category</label>
-                            <select class="form-control" id="categoryFilter" name="category">
-                                <option value="">All Categories</option>
-                                <?php foreach ($categories as $category): ?>
+            <!-- Filters Section -->
+            <div class="products-filters-section">
+                <form method="GET" class="products-filters-row">
+                    <div class="products-filter-group">
+                        <label class="products-filter-label">Search</label>
+                        <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>"
+                               placeholder="Search by name or barcode..." class="products-filter-input">
+                    </div>
+
+                    <div class="products-filter-group">
+                        <label class="products-filter-label">Category</label>
+                        <select name="category" class="products-filter-input">
+                            <option value="">All Categories</option>
+                            <?php foreach ($categories as $category): ?>
                                 <option value="<?php echo $category['id']; ?>" <?php echo $category_filter == $category['id'] ? 'selected' : ''; ?>>
                                     <?php echo htmlspecialchars($category['name']); ?>
                                 </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="statusFilter" class="form-label">Stock Status</label>
-                            <select class="form-control" id="statusFilter" name="status">
-                                <option value="">All Products</option>
-                                <option value="in_stock" <?php echo $status_filter == 'in_stock' ? 'selected' : ''; ?>>In Stock</option>
-                                <option value="low_stock" <?php echo $status_filter == 'low_stock' ? 'selected' : ''; ?>>Low Stock</option>
-                                <option value="out_of_stock" <?php echo $status_filter == 'out_of_stock' ? 'selected' : ''; ?>>Out of Stock</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="noticeFilter" class="form-label">Notice Status</label>
-                            <select class="form-control" id="noticeFilter" name="notice">
-                                <option value="">All Products</option>
-                                <option value="supplier_blocked" <?php echo ($_GET['notice'] ?? '') == 'supplier_blocked' ? 'selected' : ''; ?>>Supplier Blocked</option>
-                                <option value="supplier_notice" <?php echo ($_GET['notice'] ?? '') == 'supplier_notice' ? 'selected' : ''; ?>>Supplier Notice</option>
-                                <option value="no_notices" <?php echo ($_GET['notice'] ?? '') == 'no_notices' ? 'selected' : ''; ?>>No Notices</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="perPage" class="form-label">Items per Page</label>
-                            <select class="form-control" id="perPage" name="per_page">
-                                <?php foreach ($per_page_options as $option): ?>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="products-filter-group">
+                        <label class="products-filter-label">Stock Status</label>
+                        <select name="status" class="products-filter-input">
+                            <option value="">All Status</option>
+                            <option value="in_stock" <?php echo $status_filter == 'in_stock' ? 'selected' : ''; ?>>In Stock</option>
+                            <option value="low_stock" <?php echo $status_filter == 'low_stock' ? 'selected' : ''; ?>>Low Stock</option>
+                            <option value="out_of_stock" <?php echo $status_filter == 'out_of_stock' ? 'selected' : ''; ?>>Out of Stock</option>
+                        </select>
+                    </div>
+
+                    <div class="products-filter-group">
+                        <label class="products-filter-label">Notice Status</label>
+                        <select name="notice" class="products-filter-input">
+                            <option value="">All Notices</option>
+                            <option value="supplier_blocked" <?php echo ($_GET['notice'] ?? '') == 'supplier_blocked' ? 'selected' : ''; ?>>Supplier Blocked</option>
+                            <option value="supplier_notice" <?php echo ($_GET['notice'] ?? '') == 'supplier_notice' ? 'selected' : ''; ?>>Supplier Notice</option>
+                            <option value="no_notices" <?php echo ($_GET['notice'] ?? '') == 'no_notices' ? 'selected' : ''; ?>>No Notices</option>
+                        </select>
+                    </div>
+
+                    <div class="products-filter-group">
+                        <label class="products-filter-label">Per Page</label>
+                        <select name="per_page" class="products-filter-input">
+                            <?php foreach ($per_page_options as $option): ?>
                                 <option value="<?php echo $option; ?>" <?php echo $per_page == $option ? 'selected' : ''; ?>>
                                     <?php echo $option; ?> items
                                 </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-search"></i>
-                                Filter
-                            </button>
-                            <?php if (!empty($search) || !empty($category_filter) || !empty($status_filter) || !empty($_GET['notice']) || $per_page != 50): ?>
-                            <a href="products.php" class="btn btn-outline-secondary">
-                                <i class="bi bi-x"></i>
-                                Clear
-                            </a>
-                            <?php endif; ?>
-                        </div>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="products-filter-group">
+                        <label class="products-filter-label">&nbsp;</label>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-search"></i> Filter
+                        </button>
+                        <?php if (!empty($search) || !empty($category_filter) || !empty($status_filter) || !empty($_GET['notice']) || $per_page != 50): ?>
+                        <a href="products.php" class="btn btn-secondary ms-2">
+                            <i class="bi bi-x"></i> Clear
+                        </a>
+                        <?php endif; ?>
                     </div>
                 </form>
             </div>
@@ -469,19 +764,69 @@ unset($_SESSION['success'], $_SESSION['error']);
             <form method="POST" id="bulkForm">
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <div class="bulk-actions" id="bulkActions" style="display: none;">
-                        <select class="form-control d-inline-block w-auto" name="bulk_action" required>
-                            <option value="">Choose action</option>
-                            <option value="activate">Activate</option>
-                            <option value="deactivate">Deactivate</option>
-                            <option value="delete">Delete</option>
-                        </select>
-                        <button type="submit" class="btn btn-primary btn-sm">
-                            <i class="bi bi-check"></i>
-                            Apply
-                        </button>
+                        <div class="d-flex gap-2 align-items-center">
+                            <span class="text-muted">Selected: <span id="selectedCount">0</span></span>
+
+                            <select class="form-control form-control-sm d-inline-block w-auto" name="bulk_action" required>
+                                <option value="">Choose action</option>
+                                <option value="activate">Activate</option>
+                                <option value="deactivate">Deactivate</option>
+                                <option value="delete">Delete</option>
+                                <option value="bulk_pricing">Update Pricing</option>
+                                <option value="bulk_category">Change Category</option>
+                                <option value="bulk_auto_bom">Setup Auto BOM</option>
+                                <option value="export_selected">Export Selected</option>
+                            </select>
+
+                            <button type="submit" class="btn btn-primary btn-sm">
+                                <i class="bi bi-check"></i>
+                                Apply
+                            </button>
+
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="clearSelection">
+                                <i class="bi bi-x-circle"></i>
+                                Clear
+                            </button>
+                        </div>
                     </div>
                     <div class="text-muted">
                         Showing <?php echo count($products); ?> of <?php echo $total_products; ?> products
+                    </div>
+                </div>
+
+                <!-- Category-Based Selection -->
+                <div class="category-selection mb-3" style="display: none;">
+                    <div class="alert alert-info">
+                        <h6><i class="bi bi-tags me-2"></i>Category-Based Selection</h6>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Select Category</label>
+                                <select class="form-control form-control-sm" id="categorySelector">
+                                    <option value="">Choose Category</option>
+                                    <?php foreach ($categories as $category): ?>
+                                        <option value="<?php echo $category['id']; ?>"><?php echo htmlspecialchars($category['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Action</label>
+                                <button type="button" class="btn btn-outline-primary btn-sm w-100" id="selectCategoryProducts">
+                                    <i class="bi bi-check-circle"></i> Select All in Category
+                                </button>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Filter</label>
+                                <button type="button" class="btn btn-outline-secondary btn-sm w-100" id="filterByCategory">
+                                    <i class="bi bi-funnel"></i> Filter by Category
+                                </button>
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label">&nbsp;</label>
+                                <button type="button" class="btn btn-outline-danger btn-sm w-100" id="hideCategorySelection">
+                                    <i class="bi bi-x"></i> Close
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -531,6 +876,10 @@ unset($_SESSION['success'], $_SESSION['error']);
                             <label class="form-check-label small" for="col-barcode">Barcode</label>
                         </div>
                         <div class="form-check form-check-inline">
+                            <input type="checkbox" class="form-check-input" id="col-auto-bom" checked>
+                            <label class="form-check-label small" for="col-auto-bom">Auto BOM</label>
+                        </div>
+                        <div class="form-check form-check-inline">
                             <input type="checkbox" class="form-check-input" id="col-created" checked>
                             <label class="form-check-label small" for="col-created">Created</label>
                         </div>
@@ -547,7 +896,8 @@ unset($_SESSION['success'], $_SESSION['error']);
                     <thead>
                         <tr>
                             <th>
-                                <input type="checkbox" id="selectAll">
+                                <input type="checkbox" id="selectAll" class="form-check-input">
+                                <label for="selectAll" class="visually-hidden">Select All</label>
                             </th>
                             <th class="col-product">Product</th>
                             <th class="col-category">Category</th>
@@ -560,6 +910,7 @@ unset($_SESSION['success'], $_SESSION['error']);
                             <th class="col-product-status">Product Status</th>
                             <th class="col-serial-number" style="display: none;">Serial Number</th>
                             <th class="col-barcode">Barcode</th>
+                            <th class="col-auto-bom">Auto BOM</th>
                             <th class="col-created">Created</th>
                             <th class="col-actions">Actions</th>
                         </tr>
@@ -689,6 +1040,34 @@ unset($_SESSION['success'], $_SESSION['error']);
                             </td>
                             <td class="col-barcode">
                                 <code><?php echo htmlspecialchars($product['barcode']); ?></code>
+                            </td>
+                            <td class="col-auto-bom">
+                                <?php if ($product['is_auto_bom_enabled']): ?>
+                                    <div class="auto-bom-indicator">
+                                        <span class="badge badge-info" title="Auto BOM Enabled">
+                                            <i class="fas fa-cogs"></i> <?php echo ucfirst(str_replace('_', ' ', $product['auto_bom_type'] ?? 'unit_conversion')); ?>
+                                        </span>
+                                        <?php
+                                        // Get selling units count
+                                        $stmt = $conn->prepare("
+                                            SELECT COUNT(*) as units_count
+                                            FROM auto_bom_configs abc
+                                            INNER JOIN auto_bom_selling_units su ON abc.id = su.auto_bom_config_id
+                                            WHERE abc.product_id = :product_id AND su.status = 'active'
+                                        ");
+                                        $stmt->execute([':product_id' => $product['id']]);
+                                        $units_count = $stmt->fetch(PDO::FETCH_ASSOC)['units_count'];
+                                        ?>
+                                        <small class="text-muted d-block"><?php echo $units_count; ?> units</small>
+                                    </div>
+                                <?php else: ?>
+                                    <button type="button" class="btn btn-sm btn-outline-primary create-auto-bom"
+                                            data-product-id="<?php echo $product['id']; ?>"
+                                            data-product-name="<?php echo htmlspecialchars($product['name']); ?>"
+                                            title="Create Auto BOM">
+                                        <i class="fas fa-plus"></i> Setup
+                                    </button>
+                                <?php endif; ?>
                             </td>
                             <td class="col-created">
                                 <small class="text-muted">
@@ -928,6 +1307,364 @@ unset($_SESSION['success'], $_SESSION['error']);
                 localStorage.setItem('productColumns', JSON.stringify(preferences));
             }
         });
+
+        // Auto BOM functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            // Handle Create Auto BOM button clicks
+            document.querySelectorAll('.create-auto-bom').forEach(button => {
+                button.addEventListener('click', function() {
+                    const productId = this.getAttribute('data-product-id');
+                    const productName = this.getAttribute('data-product-name');
+
+                    if (confirm(`Create Auto BOM configuration for "${productName}"?\n\nThis will redirect you to the Auto BOM setup wizard.`)) {
+                        window.location.href = `../bom/auto_bom_setup.php?product_id=${productId}`;
+                    }
+                });
+            });
+        });
+
+        // Enhanced Multi-Selection and Bulk Operations
+        document.addEventListener('DOMContentLoaded', function() {
+            let selectedProducts = new Set();
+            const selectAllCheckbox = document.getElementById('selectAll');
+            const bulkActions = document.getElementById('bulkActions');
+            const selectedCount = document.getElementById('selectedCount');
+            const categorySelection = document.querySelector('.category-selection');
+
+            // Individual product checkboxes
+            document.querySelectorAll('.product-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const productId = this.value;
+
+                    if (this.checked) {
+                        selectedProducts.add(productId);
+                    } else {
+                        selectedProducts.delete(productId);
+                    }
+
+                    updateBulkActionsVisibility();
+                    updateSelectAllCheckbox();
+                });
+            });
+
+            // Select all checkbox
+            selectAllCheckbox.addEventListener('change', function() {
+                const isChecked = this.checked;
+                document.querySelectorAll('.product-checkbox').forEach(checkbox => {
+                    checkbox.checked = isChecked;
+                    const productId = checkbox.value;
+
+                    if (isChecked) {
+                        selectedProducts.add(productId);
+                    } else {
+                        selectedProducts.clear();
+                    }
+                });
+
+                updateBulkActionsVisibility();
+            });
+
+            // Category-based selection
+            document.getElementById('showCategorySelection').addEventListener('click', function() {
+                categorySelection.style.display = 'block';
+                this.style.display = 'none';
+            });
+
+            document.getElementById('hideCategorySelection').addEventListener('click', function() {
+                categorySelection.style.display = 'none';
+                document.getElementById('showCategorySelection').style.display = 'inline-block';
+            });
+
+            // Select all products in category
+            document.getElementById('selectCategoryProducts').addEventListener('click', function() {
+                const categoryId = document.getElementById('categorySelector').value;
+                if (!categoryId) {
+                    alert('Please select a category first.');
+                    return;
+                }
+
+                // Select all visible products in the category
+                document.querySelectorAll('.product-checkbox').forEach(checkbox => {
+                    const row = checkbox.closest('tr');
+                    const categoryCell = row.querySelector('.col-category');
+                    if (categoryCell && categoryCell.textContent.trim() === getCategoryName(categoryId)) {
+                        checkbox.checked = true;
+                        selectedProducts.add(checkbox.value);
+                    }
+                });
+
+                updateBulkActionsVisibility();
+                updateSelectAllCheckbox();
+                categorySelection.style.display = 'none';
+                document.getElementById('showCategorySelection').style.display = 'inline-block';
+            });
+
+            // Filter by category
+            document.getElementById('filterByCategory').addEventListener('click', function() {
+                const categoryId = document.getElementById('categorySelector').value;
+                if (!categoryId) {
+                    alert('Please select a category first.');
+                    return;
+                }
+
+                // Redirect with category filter
+                const url = new URL(window.location);
+                url.searchParams.set('category', categoryId);
+                window.location.href = url.toString();
+            });
+
+            // Clear selection
+            document.getElementById('clearSelection').addEventListener('click', function() {
+                selectedProducts.clear();
+                document.querySelectorAll('.product-checkbox').forEach(checkbox => {
+                    checkbox.checked = false;
+                });
+                selectAllCheckbox.checked = false;
+                updateBulkActionsVisibility();
+            });
+
+            // Bulk action handlers
+            document.querySelector('select[name="bulk_action"]').addEventListener('change', function() {
+                const action = this.value;
+                const selectedIds = Array.from(selectedProducts);
+
+                if (selectedIds.length === 0) {
+                    alert('Please select products first.');
+                    this.value = '';
+                    return;
+                }
+
+                switch (action) {
+                    case 'bulk_pricing':
+                        showBulkPricingModal(selectedIds);
+                        break;
+                    case 'bulk_category':
+                        showBulkCategoryModal(selectedIds);
+                        break;
+                    case 'bulk_auto_bom':
+                        showBulkAutoBOMModal(selectedIds);
+                        break;
+                    case 'activate':
+                    case 'deactivate':
+                    case 'delete':
+                        submitBulkAction(action, selectedIds);
+                        break;
+                    case 'export_selected':
+                        submitBulkAction(action, selectedIds);
+                        break;
+                }
+            });
+
+            // Utility functions
+            function updateBulkActionsVisibility() {
+                if (selectedProducts.size > 0) {
+                    bulkActions.style.display = 'block';
+                    selectedCount.textContent = selectedProducts.size;
+                } else {
+                    bulkActions.style.display = 'none';
+                }
+            }
+
+            function updateSelectAllCheckbox() {
+                const totalCheckboxes = document.querySelectorAll('.product-checkbox').length;
+                const checkedCheckboxes = document.querySelectorAll('.product-checkbox:checked').length;
+
+                selectAllCheckbox.checked = checkedCheckboxes === totalCheckboxes && totalCheckboxes > 0;
+                selectAllCheckbox.indeterminate = checkedCheckboxes > 0 && checkedCheckboxes < totalCheckboxes;
+            }
+
+            function getCategoryName(categoryId) {
+                const categories = <?php echo json_encode($categories); ?>;
+                const category = categories.find(cat => cat.id == categoryId);
+                return category ? category.name : '';
+            }
+
+            function submitBulkAction(action, productIds) {
+                const form = document.getElementById('bulkForm');
+                const formData = new FormData(form);
+
+                // Clear existing product_ids
+                formData.delete('product_ids[]');
+
+                // Add selected product IDs
+                productIds.forEach(id => {
+                    formData.append('product_ids[]', id);
+                });
+
+                // Submit form
+                form.submit();
+            }
+
+            // Initialize
+            updateBulkActionsVisibility();
+            updateSelectAllCheckbox();
+        });
     </script>
+
+    <!-- Bulk Operation Modals -->
+    <!-- Bulk Pricing Modal -->
+    <div class="modal fade" id="bulkPricingModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-tags me-2"></i>Bulk Pricing Update</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        This will update the price for all selected products.
+                    </div>
+                    <div class="mb-3">
+                        <label for="bulkPriceInput" class="form-label">New Price</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><?php echo $settings['currency_symbol']; ?></span>
+                            <input type="number" class="form-control" id="bulkPriceInput" name="new_price" step="0.01" min="0" required>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirmBulkPricing">Update Prices</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Category Modal -->
+    <div class="modal fade" id="bulkCategoryModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-folder me-2"></i>Bulk Category Update</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        This will move all selected products to the chosen category.
+                    </div>
+                    <div class="mb-3">
+                        <label for="bulkCategorySelect" class="form-label">New Category</label>
+                        <select class="form-control" id="bulkCategorySelect" name="new_category_id" required>
+                            <option value="">Select Category</option>
+                            <?php foreach ($categories as $category): ?>
+                                <option value="<?php echo $category['id']; ?>"><?php echo htmlspecialchars($category['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirmBulkCategory">Update Category</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bulk Auto BOM Modal -->
+    <div class="modal fade" id="bulkAutoBOMModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-cogs me-2"></i>Bulk Auto BOM Setup</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        This will enable Auto BOM for all selected products. You can configure individual Auto BOM settings later.
+                    </div>
+                    <div class="mb-3">
+                        <label for="bulkAutoBOMType" class="form-label">Auto BOM Type</label>
+                        <select class="form-control" id="bulkAutoBOMType" name="auto_bom_type">
+                            <option value="unit_conversion">Unit Conversion</option>
+                            <option value="repackaging">Repackaging</option>
+                            <option value="bulk_selling">Bulk Selling</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="confirmBulkAutoBOM">Enable Auto BOM</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal JavaScript -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Modal functions
+            function showBulkPricingModal(productIds) {
+                const modal = new bootstrap.Modal(document.getElementById('bulkPricingModal'));
+                modal.show();
+
+                document.getElementById('confirmBulkPricing').onclick = function() {
+                    const newPrice = document.getElementById('bulkPriceInput').value;
+                    if (!newPrice || newPrice < 0) {
+                        alert('Please enter a valid price.');
+                        return;
+                    }
+                    submitBulkAction('bulk_pricing', productIds, { new_price: newPrice });
+                    modal.hide();
+                };
+            }
+
+            function showBulkCategoryModal(productIds) {
+                const modal = new bootstrap.Modal(document.getElementById('bulkCategoryModal'));
+                modal.show();
+
+                document.getElementById('confirmBulkCategory').onclick = function() {
+                    const newCategoryId = document.getElementById('bulkCategorySelect').value;
+                    if (!newCategoryId) {
+                        alert('Please select a category.');
+                        return;
+                    }
+                    submitBulkAction('bulk_category', productIds, { new_category_id: newCategoryId });
+                    modal.hide();
+                };
+            }
+
+            function showBulkAutoBOMModal(productIds) {
+                const modal = new bootstrap.Modal(document.getElementById('bulkAutoBOMModal'));
+                modal.show();
+
+                document.getElementById('confirmBulkAutoBOM').onclick = function() {
+                    const autoBOMType = document.getElementById('bulkAutoBOMType').value;
+                    submitBulkAction('bulk_auto_bom', productIds, { auto_bom_type: autoBOMType });
+                    modal.hide();
+                };
+            }
+
+            // Make functions global for the main JavaScript
+            window.showBulkPricingModal = showBulkPricingModal;
+            window.showBulkCategoryModal = showBulkCategoryModal;
+            window.showBulkAutoBOMModal = showBulkAutoBOMModal;
+        });
+    </script>
+
+    <style>
+        /* Auto BOM Styles */
+        .auto-bom-indicator {
+            text-align: center;
+        }
+
+        .auto-bom-indicator .badge {
+            display: inline-block;
+            margin-bottom: 4px;
+        }
+
+        .create-auto-bom {
+            font-size: 0.75rem;
+            padding: 2px 6px;
+        }
+
+        .create-auto-bom:hover {
+            background-color: #667eea !important;
+            border-color: #667eea !important;
+            color: white !important;
+        }
+    </style>
 </body>
 </html>

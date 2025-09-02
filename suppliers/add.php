@@ -79,6 +79,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $notes = sanitizeSupplierInput($_POST['notes'] ?? '', 'text');
     $is_active = isset($_POST['is_active']) ? 1 : 0;
 
+    // In-store pickup information
+    $pickup_available = isset($_POST['pickup_available']) ? 1 : 0;
+    $pickup_address = sanitizeSupplierInput($_POST['pickup_address'] ?? '', 'text');
+    $pickup_hours = sanitizeSupplierInput($_POST['pickup_hours'] ?? '');
+    $pickup_instructions = sanitizeSupplierInput($_POST['pickup_instructions'] ?? '', 'text');
+    $pickup_contact_person = sanitizeSupplierInput($_POST['pickup_contact_person'] ?? '');
+    $pickup_contact_phone = sanitizeSupplierInput($_POST['pickup_contact_phone'] ?? '', 'phone');
+
     // Validation
     if (empty($name)) {
         $errors['name'] = 'Supplier name is required';
@@ -125,6 +133,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors['payment_terms'] = 'Payment terms cannot exceed 100 characters';
     }
 
+    // Validate pickup fields if pickup is available
+    if ($pickup_available) {
+        if (empty($pickup_address)) {
+            $errors['pickup_address'] = 'Pickup address is required when in-store pickup is available';
+        } elseif (strlen($pickup_address) > 1000) {
+            $errors['pickup_address'] = 'Pickup address cannot exceed 1000 characters';
+        }
+
+        if (!empty($pickup_contact_person) && strlen($pickup_contact_person) > 100) {
+            $errors['pickup_contact_person'] = 'Pickup contact person name cannot exceed 100 characters';
+        }
+
+        if (!empty($pickup_contact_phone) && !preg_match('/^[\+]?[\d\s\-\(\)\.]{10,}$/', $pickup_contact_phone)) {
+            $errors['pickup_contact_phone'] = 'Please enter a valid pickup contact phone number';
+        }
+    }
+
     // If no errors, save the supplier with additional safety checks
     if (empty($errors)) {
         try {
@@ -146,9 +171,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $insert_stmt = $conn->prepare("
                 INSERT INTO suppliers (
-                    name, contact_person, email, phone, address, payment_terms, notes, is_active, created_at, updated_at
+                    name, contact_person, email, phone, address, payment_terms, notes, is_active,
+                    pickup_available, pickup_address, pickup_hours, pickup_instructions,
+                    pickup_contact_person, pickup_contact_phone, created_at, updated_at
                 ) VALUES (
-                    :name, :contact_person, :email, :phone, :address, :payment_terms, :notes, :is_active, NOW(), NOW()
+                    :name, :contact_person, :email, :phone, :address, :payment_terms, :notes, :is_active,
+                    :pickup_available, :pickup_address, :pickup_hours, :pickup_instructions,
+                    :pickup_contact_person, :pickup_contact_phone, NOW(), NOW()
                 )
             ");
 
@@ -161,6 +190,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $insert_stmt->bindParam(':payment_terms', $payment_terms, PDO::PARAM_STR);
             $insert_stmt->bindParam(':notes', $notes, PDO::PARAM_STR);
             $insert_stmt->bindParam(':is_active', $is_active, PDO::PARAM_INT);
+            $insert_stmt->bindParam(':pickup_available', $pickup_available, PDO::PARAM_INT);
+            $insert_stmt->bindParam(':pickup_address', $pickup_address, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':pickup_hours', $pickup_hours, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':pickup_instructions', $pickup_instructions, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':pickup_contact_person', $pickup_contact_person, PDO::PARAM_STR);
+            $insert_stmt->bindParam(':pickup_contact_phone', $pickup_contact_phone, PDO::PARAM_STR);
 
             if ($insert_stmt->execute()) {
                 $supplier_id = $conn->lastInsertId();
@@ -358,6 +393,107 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     </div>
 
+                    <!-- In-Store Pickup -->
+                    <div class="form-section">
+                        <h4 class="section-title">
+                            <i class="bi bi-shop me-2"></i>
+                            In-Store Pickup
+                        </h4>
+
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>In-Store Pickup:</strong> Enable this if customers can pick up their orders directly from this supplier's physical location instead of waiting for delivery.
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="pickup_available" name="pickup_available"
+                                       value="1" <?php echo (isset($_POST['pickup_available']) && $_POST['pickup_available']) ? 'checked' : ''; ?>
+                                       onclick="togglePickupFields()">
+                                <label class="form-check-label" for="pickup_available">
+                                    <strong>In-Store Pickup Available</strong>
+                                </label>
+                            </div>
+                            <div class="form-text">
+                                Check this if customers can pick up orders from this supplier's store
+                            </div>
+                        </div>
+
+                        <div id="pickup-fields" style="display: <?php echo (isset($_POST['pickup_available']) && $_POST['pickup_available']) ? 'block' : 'none'; ?>;">
+                            <div class="form-group">
+                                <label for="pickup_address" class="form-label">
+                                    Pickup Address *
+                                    <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top"
+                                       title="The physical address where customers can pick up their orders"></i>
+                                </label>
+                                <textarea class="form-control <?php echo isset($errors['pickup_address']) ? 'is-invalid' : ''; ?>"
+                                          id="pickup_address" name="pickup_address" rows="3"
+                                          placeholder="Full pickup address including street, city, state, postal code"><?php echo htmlspecialchars($_POST['pickup_address'] ?? ''); ?></textarea>
+                                <?php if (isset($errors['pickup_address'])): ?>
+                                <div class="invalid-feedback"><?php echo htmlspecialchars($errors['pickup_address']); ?></div>
+                                <?php endif; ?>
+                                <div class="form-text">Complete address for customer pickup location</div>
+                            </div>
+
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="pickup_hours" class="form-label">
+                                        Store Hours
+                                        <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top"
+                                           title="Business hours when customers can pick up their orders"></i>
+                                    </label>
+                                    <input type="text" class="form-control" id="pickup_hours" name="pickup_hours"
+                                           value="<?php echo htmlspecialchars($_POST['pickup_hours'] ?? ''); ?>"
+                                           placeholder="e.g., Mon-Fri 9AM-6PM, Sat 10AM-4PM">
+                                    <div class="form-text">When customers can pick up orders</div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="pickup_contact_person" class="form-label">
+                                        Pickup Contact Person
+                                        <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top"
+                                           title="Person customers should ask for when picking up orders"></i>
+                                    </label>
+                                    <input type="text" class="form-control <?php echo isset($errors['pickup_contact_person']) ? 'is-invalid' : ''; ?>"
+                                           id="pickup_contact_person" name="pickup_contact_person"
+                                           value="<?php echo htmlspecialchars($_POST['pickup_contact_person'] ?? ''); ?>"
+                                           placeholder="Person to contact for pickup" maxlength="100">
+                                    <?php if (isset($errors['pickup_contact_person'])): ?>
+                                    <div class="invalid-feedback"><?php echo htmlspecialchars($errors['pickup_contact_person']); ?></div>
+                                    <?php endif; ?>
+                                    <div class="form-text">Staff member for pickup inquiries</div>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="pickup_contact_phone" class="form-label">
+                                    Pickup Contact Phone
+                                    <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top"
+                                       title="Phone number for customers to call about pickup orders"></i>
+                                </label>
+                                <input type="tel" class="form-control <?php echo isset($errors['pickup_contact_phone']) ? 'is-invalid' : ''; ?>"
+                                       id="pickup_contact_phone" name="pickup_contact_phone"
+                                       value="<?php echo htmlspecialchars($_POST['pickup_contact_phone'] ?? ''); ?>"
+                                       placeholder="+1 (555) 123-4567">
+                                <?php if (isset($errors['pickup_contact_phone'])): ?>
+                                <div class="invalid-feedback"><?php echo htmlspecialchars($errors['pickup_contact_phone']); ?></div>
+                                <?php endif; ?>
+                                <div class="form-text">Phone number for pickup coordination</div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="pickup_instructions" class="form-label">
+                                    Pickup Instructions
+                                    <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" data-bs-placement="top"
+                                       title="Special instructions for customers picking up their orders"></i>
+                                </label>
+                                <textarea class="form-control" id="pickup_instructions" name="pickup_instructions" rows="3"
+                                          placeholder="Special pickup instructions, parking info, ID requirements, etc."><?php echo htmlspecialchars($_POST['pickup_instructions'] ?? ''); ?></textarea>
+                                <div class="form-text">Instructions and requirements for customers</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="form-group">
                         <div class="d-flex gap-3">
                             <button type="submit" class="btn btn-primary">
@@ -515,6 +651,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 return true;
             }
+
+            // Function to toggle pickup fields visibility
+            function togglePickupFields() {
+                const pickupCheckbox = document.getElementById('pickup_available');
+                const pickupFields = document.getElementById('pickup-fields');
+
+                if (pickupCheckbox.checked) {
+                    pickupFields.style.display = 'block';
+                } else {
+                    pickupFields.style.display = 'none';
+                    // Clear pickup fields when disabled
+                    const fields = ['pickup_address', 'pickup_hours', 'pickup_contact_person', 'pickup_contact_phone', 'pickup_instructions'];
+                    fields.forEach(fieldId => {
+                        const field = document.getElementById(fieldId);
+                        if (field) {
+                            field.value = '';
+                            field.classList.remove('is-invalid');
+                        }
+                    });
+                }
+            }
+
+            // Initialize pickup fields on page load
+            document.addEventListener('DOMContentLoaded', function() {
+                togglePickupFields();
+            });
         });
     </script>
 </body>

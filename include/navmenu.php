@@ -21,7 +21,7 @@
         </div>
         <?php endif; ?>
 
-        <?php if (hasPermission('manage_products', $permissions)): ?>
+        <?php if (hasPermission('manage_inventory', $permissions) || hasPermission('manage_categories', $permissions) || hasPermission('manage_product_brands', $permissions) || hasPermission('manage_product_suppliers', $permissions)): ?>
         <div class="nav-section">
             <div class="nav-section-title">
                 <i class="bi bi-box me-2"></i>
@@ -37,6 +37,12 @@
                 <a href="/categories/categories.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/categories/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/categories/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-tags"></i>
                     Categories
+                </a>
+            </div>
+            <div class="nav-item">
+                <a href="/product_families/families.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/product_families/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/product_families/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-diagram-3"></i>
+                    Product Families
                 </a>
             </div>
             <div class="nav-item">
@@ -82,6 +88,63 @@
                 <a href="/expiry_tracker/expiry_tracker.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-clock-history"></i>
                     Expiry Tracker
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <?php if (hasPermission('manage_boms', $permissions) || hasPermission('view_boms', $permissions)): ?>
+        <div class="nav-section">
+            <div class="nav-section-title">
+                <i class="bi bi-file-earmark-text me-2"></i>
+                Bill of Materials
+            </div>
+            <div class="nav-item">
+                <a href="/bom/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/') !== false && !strpos($_SERVER['REQUEST_URI'], '/bom/production.php') && !strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') && !strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/') !== false && !strpos($_SERVER['REQUEST_URI'], '/bom/production.php') && !strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') && !strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-list-ul"></i>
+                    BOM Management
+                </a>
+            </div>
+            <div class="nav-item">
+                <a href="/bom/auto_bom_index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_index.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_index.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-gear-fill"></i>
+                    Auto BOM
+                </a>
+            </div>
+            <div class="nav-item">
+                <a href="/bom/auto_bom_products.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_products.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_products.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-list-ul"></i>
+                    Auto BOM Products
+                </a>
+            </div>
+            <?php if (hasPermission('manage_boms', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/bom/add.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/add.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/add.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-plus-circle"></i>
+                    Create BOM
+                </a>
+            </div>
+            <?php endif; ?>
+            <?php if (hasPermission('manage_production_orders', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/bom/production.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/production.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/production.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-gear"></i>
+                    Production Orders
+                </a>
+            </div>
+            <?php endif; ?>
+            <?php if (hasPermission('view_production_reports', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/bom/reports.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-graph-up"></i>
+                    BOM Reports
+                </a>
+            </div>
+            <?php endif; ?>
+            <div class="nav-item">
+                <a href="/bom/demo_multilevel.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/demo_multilevel.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/demo_multilevel.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-diagram-3"></i>
+                    Multi-Level Demo
                 </a>
             </div>
         </div>
@@ -182,9 +245,18 @@
 
             <?php if (hasPermission('manage_users', $permissions)): ?>
             <div class="nav-item">
-                <a href="/admin/users/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/users/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/users/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/dashboard/users/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-person-gear"></i>
                     User Management
+                </a>
+            </div>
+            <?php endif; ?>
+
+            <?php if (hasPermission('manage_roles', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/dashboard/roles/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/roles/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/roles/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-shield-check"></i>
+                    Role Management
                 </a>
             </div>
             <?php endif; ?>
@@ -208,6 +280,14 @@
             <?php endif; ?>
         </div>
         <?php endif; ?>
+
+        <!-- My Profile - Available to all users -->
+        <div class="nav-item">
+            <a href="/dashboard/users/profile.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <i class="bi bi-person-gear"></i>
+                My Profile
+            </a>
+        </div>
 
         <div class="nav-item mt-auto">
             <a href="/auth/logout.php" class="nav-link text-danger">

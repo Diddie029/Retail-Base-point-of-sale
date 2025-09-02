@@ -445,6 +445,80 @@ unset($_SESSION['success'], $_SESSION['error']);
                             </div>
                             <?php endif; ?>
 
+                            <!-- In-Store Pickup Information -->
+                            <?php if (($supplier['pickup_available'] ?? false)): ?>
+                            <div class="mb-4">
+                                <h5 class="section-title mb-3">
+                                    <i class="bi bi-shop me-2"></i>In-Store Pickup
+                                </h5>
+                                <div class="alert alert-success">
+                                    <i class="bi bi-check-circle me-2"></i>
+                                    <strong>Pickup Available</strong> - Customers can pick up orders directly from this supplier's store
+                                </div>
+
+                                <?php if ($supplier['pickup_address']): ?>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">
+                                        <i class="bi bi-geo-alt me-2"></i>Pickup Address
+                                    </label>
+                                    <p class="mb-0"><?php echo nl2br(htmlspecialchars($supplier['pickup_address'])); ?></p>
+                                </div>
+                                <?php endif; ?>
+
+                                <div class="row">
+                                    <?php if ($supplier['pickup_hours']): ?>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">
+                                                <i class="bi bi-clock me-2"></i>Store Hours
+                                            </label>
+                                            <p class="mb-0"><?php echo htmlspecialchars($supplier['pickup_hours']); ?></p>
+                                        </div>
+                                    </div>
+                                    <?php endif; ?>
+
+                                    <?php if ($supplier['pickup_contact_person'] || $supplier['pickup_contact_phone']): ?>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">
+                                                <i class="bi bi-person me-2"></i>Pickup Contact
+                                            </label>
+                                            <p class="mb-0">
+                                                <?php if ($supplier['pickup_contact_person']): ?>
+                                                    <?php echo htmlspecialchars($supplier['pickup_contact_person']); ?><br>
+                                                <?php endif; ?>
+                                                <?php if ($supplier['pickup_contact_phone']): ?>
+                                                    <a href="tel:<?php echo htmlspecialchars($supplier['pickup_contact_phone']); ?>" class="text-decoration-none">
+                                                        <?php echo htmlspecialchars($supplier['pickup_contact_phone']); ?>
+                                                    </a>
+                                                <?php endif; ?>
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <?php endif; ?>
+                                </div>
+
+                                <?php if ($supplier['pickup_instructions']): ?>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">
+                                        <i class="bi bi-info-circle me-2"></i>Pickup Instructions
+                                    </label>
+                                    <p class="mb-0"><?php echo nl2br(htmlspecialchars($supplier['pickup_instructions'])); ?></p>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                            <?php else: ?>
+                            <div class="mb-3">
+                                <h5 class="section-title mb-2">
+                                    <i class="bi bi-truck me-2"></i>Ordering Method
+                                </h5>
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle me-2"></i>
+                                    <strong>Delivery Only</strong> - This supplier does not offer in-store pickup. Orders will be delivered.
+                                </div>
+                            </div>
+                            <?php endif; ?>
+
                             <div class="row">
                                 <div class="col-md-6">
                                     <div class="mb-3">

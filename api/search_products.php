@@ -28,12 +28,16 @@ try {
     // Build query for product suggestions
     $query = "
         SELECT p.id, p.name, p.sku, p.barcode, p.quantity, p.minimum_stock, p.cost_price,
-               c.name as category_name, s.name as supplier_name
+               c.name as category_name, s.name as supplier_name,
+               p.is_auto_bom_enabled, p.auto_bom_type,
+               COUNT(CASE WHEN su.status = 'active' THEN 1 END) as selling_units_count
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
         LEFT JOIN suppliers s ON p.supplier_id = s.id
+        LEFT JOIN auto_bom_configs abc ON p.id = abc.product_id
+        LEFT JOIN auto_bom_selling_units su ON abc.id = su.auto_bom_config_id
         WHERE p.status = 'active'
-        AND p.cost_price IS NOT NULL 
+        AND p.cost_price IS NOT NULL
         AND p.cost_price > 0
     ";
 
@@ -57,8 +61,8 @@ try {
     $params[':search_sku'] = $searchTerm;
     $params[':search_barcode'] = $searchTerm;
 
-    $query .= " ORDER BY 
-        CASE 
+    $query .= " GROUP BY p.id ORDER BY
+        CASE
             WHEN p.name LIKE :exact_name THEN 1
             WHEN p.sku LIKE :exact_sku THEN 2
             WHEN p.barcode LIKE :exact_barcode THEN 3
@@ -92,7 +96,7 @@ try {
     // Format the response
     $suggestions = array_map(function($product) {
         $stockStatus = $product['quantity'] <= $product['minimum_stock'] ? 'low' : 'ok';
-        
+
         return [
             'id' => (int)$product['id'],
             'name' => $product['name'],
@@ -104,9 +108,13 @@ try {
             'category_name' => $product['category_name'] ?? '',
             'supplier_name' => $product['supplier_name'] ?? '',
             'stock_status' => $stockStatus,
-            'display_text' => $product['name'] . 
+            'is_auto_bom_enabled' => (bool)$product['is_auto_bom_enabled'],
+            'auto_bom_type' => $product['auto_bom_type'] ?? null,
+            'selling_units_count' => (int)$product['selling_units_count'],
+            'display_text' => $product['name'] .
                             ($product['sku'] ? ' (SKU: ' . $product['sku'] . ')' : '') .
-                            ($product['barcode'] ? ' [' . $product['barcode'] . ']' : '')
+                            ($product['barcode'] ? ' [' . $product['barcode'] . ']' : '') .
+                            ($product['is_auto_bom_enabled'] ? ' [Auto BOM - ' . $product['selling_units_count'] . ' units]' : '')
         ];
     }, $products);
 

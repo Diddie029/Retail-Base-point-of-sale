@@ -1226,6 +1226,7 @@ unset($_SESSION['success'], $_SESSION['error']);
                                     <th>Email</th>
                                     <th>Phone</th>
                                     <th>Products</th>
+                                    <th>Pickup</th>
                                     <th>Status</th>
                                     <th>Created</th>
                                     <th>Actions</th>
@@ -1234,7 +1235,7 @@ unset($_SESSION['success'], $_SESSION['error']);
                             <tbody>
                                 <?php if (empty($suppliers)): ?>
                                 <tr>
-                                    <td colspan="9" class="text-center py-5">
+                                    <td colspan="10" class="text-center py-5">
                                         <i class="bi bi-truck text-muted" style="font-size: 3rem;"></i>
                                         <h5 class="mt-3 text-muted">No suppliers found</h5>
                                         <p class="text-muted">Start by adding your first supplier</p>
@@ -1286,6 +1287,17 @@ unset($_SESSION['success'], $_SESSION['error']);
                                             <span class="badge badge-primary">
                                                 <?php echo $supplier['active_product_count']; ?>/<?php echo $supplier['product_count']; ?>
                                             </span>
+                                        </td>
+                                        <td>
+                                            <?php if (($supplier['pickup_available'] ?? false)): ?>
+                                                <span class="badge badge-success" title="In-store pickup available">
+                                                    <i class="bi bi-shop me-1"></i>Pickup
+                                                </span>
+                                            <?php else: ?>
+                                                <span class="badge badge-secondary" title="Delivery only">
+                                                    <i class="bi bi-truck me-1"></i>Delivery
+                                                </span>
+                                            <?php endif; ?>
                                         </td>
                                         <td>
                                             <span class="badge <?php echo $supplier['is_active'] ? 'badge-success' : 'badge-secondary'; ?>">
