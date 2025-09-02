@@ -29,8 +29,8 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check if user has permission to manage products
-if (!hasPermission('manage_products', $permissions)) {
+// Check if user has permission to manage inventory
+if (!hasPermission('manage_inventory', $permissions)) {
     header("Location: ../dashboard/dashboard.php?error=permission_denied");
     exit();
 }
@@ -46,10 +46,10 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 $stmt = $conn->prepare("
     SELECT p.*, s.name as supplier_name, s.pickup_available, s.pickup_address, s.pickup_hours,
            s.pickup_contact_person, s.pickup_contact_phone, s.pickup_instructions,
-           (p.quantity <= COALESCE(p.minimum_stock_level, 0)) as low_stock
+           (p.quantity <= COALESCE(p.minimum_stock, 0)) as low_stock
     FROM products p
     LEFT JOIN suppliers s ON p.supplier_id = s.id
-    WHERE p.is_active = 1 AND p.quantity <= COALESCE(p.minimum_stock_level, 10)
+    WHERE p.status = 'active' AND p.quantity <= COALESCE(p.minimum_stock, 10)
     ORDER BY p.quantity ASC, p.name ASC
 ");
 $stmt->execute();
@@ -470,7 +470,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <select class="form-select" name="order_items[${itemIndex}][product_id]" onchange="updateProductInfo(this, ${itemIndex})" required>
                         <option value="">Choose a product...</option>
                         <?php
-                        $stmt = $conn->query("SELECT id, name, sku, cost_price FROM products WHERE is_active = 1 ORDER BY name ASC");
+                        $stmt = $conn->query("SELECT id, name, sku, cost_price FROM products WHERE status = 'active' ORDER BY name ASC");
                         while ($product = $stmt->fetch(PDO::FETCH_ASSOC)) {
                             echo '<option value="' . $product['id'] . '" data-price="' . $product['cost_price'] . '">' . htmlspecialchars($product['name'] . ' (' . $product['sku'] . ')') . '</option>';
                         }

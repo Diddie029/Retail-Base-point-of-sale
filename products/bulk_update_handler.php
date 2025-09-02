@@ -27,7 +27,7 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-if (!hasPermission('manage_products', $permissions)) {
+if (!hasPermission('bulk_edit_products', $permissions)) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Insufficient permissions']);
     exit();

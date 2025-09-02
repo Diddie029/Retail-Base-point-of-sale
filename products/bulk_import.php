@@ -29,8 +29,8 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check if user has permission to manage products
-if (!hasPermission('manage_products', $permissions)) {
+// Check if user has permission to import products
+if (!hasPermission('import_products', $permissions)) {
     header("Location: ../dashboard/dashboard.php");
     exit();
 }

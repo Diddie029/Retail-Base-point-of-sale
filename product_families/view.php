@@ -274,7 +274,7 @@ $total_pages = ceil($total_products / $per_page);
                     </div>
                     <h4>No Products Yet</h4>
                     <p>This product family doesn't have any products assigned to it yet.</p>
-                    <?php if (hasPermission('manage_products', $permissions)): ?>
+                    <?php if (hasPermission('manage_boms', $permissions)): ?>
                     <a href="../products/add.php?family_id=<?php echo $family_id; ?>" class="btn btn-primary">
                         <i class="bi bi-plus"></i>
                         Add First Product
@@ -335,7 +335,7 @@ $total_pages = ceil($total_products / $per_page);
                                         <a href="../products/view.php?id=<?php echo $product['id']; ?>" class="btn btn-outline-secondary btn-sm" title="View">
                                             <i class="bi bi-eye"></i>
                                         </a>
-                                        <?php if (hasPermission('manage_products', $permissions)): ?>
+                                        <?php if (hasPermission('manage_boms', $permissions)): ?>
                                         <a href="../products/edit.php?id=<?php echo $product['id']; ?>" class="btn btn-warning btn-sm" title="Edit">
                                             <i class="bi bi-pencil"></i>
                                         </a>

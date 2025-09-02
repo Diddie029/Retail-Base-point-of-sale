@@ -226,6 +226,92 @@ try {
     ");
     
     $conn->exec("
+        CREATE TABLE IF NOT EXISTS customers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            customer_number VARCHAR(20) UNIQUE NOT NULL COMMENT 'Unique customer identifier',
+            first_name VARCHAR(100) NOT NULL,
+            last_name VARCHAR(100) NOT NULL,
+            email VARCHAR(255) UNIQUE,
+            phone VARCHAR(20),
+            mobile VARCHAR(20),
+            address TEXT,
+            city VARCHAR(100),
+            state VARCHAR(100),
+            zip_code VARCHAR(20),
+            country VARCHAR(100) DEFAULT 'USA',
+            date_of_birth DATE,
+            gender ENUM('male', 'female', 'other') DEFAULT NULL,
+            customer_type ENUM('individual', 'business', 'vip', 'wholesale', 'walk_in') DEFAULT 'individual',
+            company_name VARCHAR(255),
+            tax_id VARCHAR(50),
+            credit_limit DECIMAL(10, 2) DEFAULT 0,
+            current_balance DECIMAL(10, 2) DEFAULT 0,
+            loyalty_points INT DEFAULT 0,
+            membership_status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
+            membership_level VARCHAR(50) DEFAULT 'Bronze',
+            preferred_payment_method VARCHAR(50),
+            notes TEXT,
+            created_by INT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )
+    ");
+
+    // Create held_transactions table for POS system
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS held_transactions (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            cart_data TEXT NOT NULL COMMENT 'JSON encoded cart data with items, customer, and total',
+            reason VARCHAR(255) DEFAULT NULL COMMENT 'Reason for holding the transaction',
+            customer_reference VARCHAR(255) DEFAULT NULL COMMENT 'Customer name, phone, or reference',
+            status ENUM('held', 'resumed', 'deleted', 'completed') DEFAULT 'held' COMMENT 'Transaction status',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'When transaction was held',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last updated timestamp',
+            
+            -- Indexes for better performance
+            INDEX idx_user_id (user_id),
+            INDEX idx_status (status),
+            INDEX idx_created_at (created_at),
+            
+            -- Foreign key constraint
+            CONSTRAINT fk_held_transactions_user_id 
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB 
+          DEFAULT CHARSET=utf8mb4 
+          COLLATE=utf8mb4_unicode_ci
+          COMMENT='Stores suspended POS transactions that can be resumed later'
+    ");
+
+    // Create default Walk-in Customer if it doesn't exist
+    try {
+        $walk_in_check = $conn->prepare("SELECT id FROM customers WHERE customer_number = 'WALK-IN-001' LIMIT 1");
+        $walk_in_check->execute();
+
+        if ($walk_in_check->rowCount() == 0) {
+            // Get the first admin user ID for created_by
+            $admin_user = $conn->prepare("SELECT id FROM users WHERE role = 'Admin' LIMIT 1");
+            $admin_user->execute();
+            $admin_id = $admin_user->fetch(PDO::FETCH_ASSOC)['id'] ?? 1;
+
+            $walk_in_stmt = $conn->prepare("
+                INSERT INTO customers (
+                    customer_number, first_name, last_name, customer_type,
+                    membership_status, membership_level, notes, created_by
+                ) VALUES (
+                    'WALK-IN-001', 'Walk-in', 'Customer', 'walk_in',
+                    'active', 'Bronze', 'Default customer for walk-in purchases', ?
+                )
+            ");
+            $walk_in_stmt->execute([$admin_id]);
+        }
+    } catch (Exception $e) {
+        // Silently continue if there's an issue creating the walk-in customer
+        // This prevents database setup failures
+    }
+
+    $conn->exec("
         CREATE TABLE IF NOT EXISTS sale_items (
             id INT AUTO_INCREMENT PRIMARY KEY,
             sale_id INT NOT NULL,
@@ -1064,6 +1150,35 @@ try {
         ['manage_sales', 'View sales history and details', 'Sales & Transactions'],
         ['process_sales', 'Process sales transactions', 'Sales & Transactions'],
         
+        // Customer Management - Comprehensive Permissions
+        ['view_customers', 'View customer accounts and profiles', 'Customer Management'],
+        ['create_customers', 'Create new customer accounts', 'Customer Management'],
+        ['edit_customers', 'Edit existing customer accounts', 'Customer Management'],
+        ['delete_customers', 'Delete customer accounts', 'Customer Management'],
+        ['manage_customers', 'Full customer management access', 'Customer Management'],
+        ['activate_customers', 'Activate and deactivate customer accounts', 'Customer Management'],
+        ['suspend_customers', 'Suspend and unsuspend customer accounts', 'Customer Management'],
+
+        // Customer Profile Management
+        ['view_customer_profiles', 'View detailed customer profiles and information', 'Customer Management'],
+        ['edit_customer_profiles', 'Edit customer profile information', 'Customer Management'],
+        ['manage_customer_personal_info', 'Manage customer personal information (name, phone, address)', 'Customer Management'],
+        ['manage_customer_business_info', 'Manage customer business details (company, tax ID, etc.)', 'Customer Management'],
+        ['view_customer_purchase_history', 'View customer purchase history and transaction records', 'Customer Management'],
+
+        // Customer Account Management
+        ['manage_customer_credit', 'Manage customer credit limits and balances', 'Customer Management'],
+        ['view_customer_credit_history', 'View customer credit and payment history', 'Customer Management'],
+        ['manage_customer_loyalty', 'Manage customer loyalty points and membership levels', 'Customer Management'],
+        ['manage_customer_memberships', 'Manage customer membership status and benefits', 'Customer Management'],
+
+        // Customer Communication
+        ['send_customer_notifications', 'Send notifications and communications to customers', 'Customer Management'],
+        ['manage_customer_communications', 'Manage customer communication preferences and history', 'Customer Management'],
+        ['export_customer_data', 'Export customer data for external use', 'Customer Management'],
+        ['import_customers', 'Import customer data from external sources', 'Customer Management'],
+        ['bulk_manage_customers', 'Perform bulk operations on customer accounts', 'Customer Management'],
+
         // User Management - Comprehensive Permissions
         ['view_users', 'View user accounts and profiles', 'User Management'],
         ['create_users', 'Create new user accounts', 'User Management'],

@@ -360,7 +360,7 @@ $username = $_SESSION['username'] ?? 'User';
             </div>
             <?php endif; ?>
 
-            <?php if (hasPermission('manage_products', $permissions)): ?>
+            <?php if (hasPermission('manage_settings', $permissions)): ?>
             <div class="nav-item">
                 <a href="../../products/products.php" class="nav-link">
                     <i class="bi bi-box"></i>

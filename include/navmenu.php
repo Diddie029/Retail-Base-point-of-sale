@@ -14,7 +14,7 @@
 
         <?php if (hasPermission('process_sales', $permissions)): ?>
         <div class="nav-item">
-            <a href="/pos/index.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'index' && strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'index' && strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="/pos/sale.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-cart-plus"></i>
                 Point of Sale
             </a>
@@ -85,15 +85,23 @@
                 Expiry Management
             </div>
             <div class="nav-item">
-                <a href="/expiry_tracker/expiry_tracker.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                <a href="/expiry_tracker/expiry_tracker.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/expiry_tracker.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/expiry_tracker.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-clock-history"></i>
                     Expiry Tracker
                 </a>
             </div>
+            <?php if (hasPermission('manage_expiry_tracker', $permissions)): ?>
+            <div class="nav-item">
+                <a href="/expiry_tracker/add_expiry_date.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/add_expiry_date.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/add_expiry_date.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+                    <i class="bi bi-plus-circle"></i>
+                    Add Expiry Date
+                </a>
+            </div>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
 
-        <?php if (hasPermission('manage_boms', $permissions) || hasPermission('view_boms', $permissions)): ?>
+        <?php if (hasPermission('create_boms', $permissions) || hasPermission('edit_boms', $permissions) || hasPermission('delete_boms', $permissions) || hasPermission('view_boms', $permissions) || hasPermission('view_bom_components', $permissions) || hasPermission('view_bom_costing', $permissions)): ?>
         <div class="nav-section">
             <div class="nav-section-title">
                 <i class="bi bi-file-earmark-text me-2"></i>
@@ -117,7 +125,7 @@
                     Auto BOM Products
                 </a>
             </div>
-            <?php if (hasPermission('manage_boms', $permissions)): ?>
+            <?php if (hasPermission('create_boms', $permissions)): ?>
             <div class="nav-item">
                 <a href="/bom/add.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/add.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/add.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-plus-circle"></i>
@@ -125,7 +133,7 @@
                 </a>
             </div>
             <?php endif; ?>
-            <?php if (hasPermission('manage_production_orders', $permissions)): ?>
+            <?php if (hasPermission('create_production_orders', $permissions) || hasPermission('manage_production_orders', $permissions) || hasPermission('approve_production_orders', $permissions) || hasPermission('view_production_orders', $permissions)): ?>
             <div class="nav-item">
                 <a href="/bom/production.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/production.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/production.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-gear"></i>
@@ -133,7 +141,7 @@
                 </a>
             </div>
             <?php endif; ?>
-            <?php if (hasPermission('view_production_reports', $permissions)): ?>
+            <?php if (hasPermission('view_production_reports', $permissions) || hasPermission('view_bom_reports', $permissions) || hasPermission('analyze_bom_performance', $permissions)): ?>
             <div class="nav-item">
                 <a href="/bom/reports.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                     <i class="bi bi-graph-up"></i>
@@ -165,12 +173,14 @@
         </div>
         <?php endif; ?>
 
+        <?php if (hasPermission('view_customers', $permissions)): ?>
         <div class="nav-item">
             <a href="/customers/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-people"></i>
                 Customers
             </a>
         </div>
+        <?php endif; ?>
 
         <?php if (hasPermission('view_analytics', $permissions)): ?>
         <div class="nav-item">

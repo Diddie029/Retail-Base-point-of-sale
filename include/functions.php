@@ -1983,4 +1983,56 @@ function getSystemSettings($conn) {
     }
 }
 
+/**
+ * Get the walk-in customer ID
+ *
+ * @param PDO $conn Database connection
+ * @return int|null Walk-in customer ID or null if not found
+ */
+function getWalkInCustomerId($conn) {
+    try {
+        $stmt = $conn->prepare("SELECT id FROM customers WHERE customer_type = 'walk_in' AND customer_number = 'WALK-IN-001' LIMIT 1");
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result ? $result['id'] : null;
+    } catch (PDOException $e) {
+        return null;
+    }
+}
+
+/**
+ * Get walk-in customer details
+ *
+ * @param PDO $conn Database connection
+ * @return array|null Walk-in customer data or null if not found
+ */
+function getWalkInCustomer($conn) {
+    try {
+        $stmt = $conn->prepare("SELECT * FROM customers WHERE customer_type = 'walk_in' AND customer_number = 'WALK-IN-001' LIMIT 1");
+        $stmt->execute();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        return null;
+    }
+}
+
+/**
+ * Check if a customer is the walk-in customer
+ *
+ * @param int $customerId Customer ID to check
+ * @param PDO $conn Database connection
+ * @return bool True if customer is walk-in, false otherwise
+ */
+function isWalkInCustomer($customerId, $conn) {
+    try {
+        $stmt = $conn->prepare("SELECT customer_type FROM customers WHERE id = :customer_id");
+        $stmt->bindParam(':customer_id', $customerId);
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result && $result['customer_type'] === 'walk_in';
+    } catch (PDOException $e) {
+        return false;
+    }
+}
+
 ?>

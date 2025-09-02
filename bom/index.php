@@ -29,12 +29,15 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check BOM permissions
-$can_manage_boms = hasPermission('manage_boms', $permissions);
+// Check BOM permissions - use more granular permissions
+$can_create_boms = hasPermission('create_boms', $permissions);
+$can_edit_boms = hasPermission('edit_boms', $permissions);
+$can_delete_boms = hasPermission('delete_boms', $permissions);
 $can_view_boms = hasPermission('view_boms', $permissions);
 $can_approve_boms = hasPermission('approve_boms', $permissions);
+$can_manage_versions = hasPermission('manage_bom_versions', $permissions);
 
-if (!$can_manage_boms && !$can_view_boms) {
+if (!$can_create_boms && !$can_edit_boms && !$can_delete_boms && !$can_view_boms) {
     header("Location: ../inventory/inventory.php");
     exit();
 }

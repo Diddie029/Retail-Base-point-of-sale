@@ -29,10 +29,10 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check BOM permissions
-$can_manage_boms = hasPermission('manage_boms', $permissions);
+// Check BOM permissions - use granular permission
+$can_create_boms = hasPermission('create_boms', $permissions);
 
-if (!$can_manage_boms) {
+if (!$can_create_boms) {
     header("Location: index.php");
     exit();
 }

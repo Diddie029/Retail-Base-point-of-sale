@@ -137,7 +137,7 @@ $recent_activities = [];
 
 // Low Stock Alert Products
 $low_stock_products = [];
-if (hasPermission('manage_products', $permissions)) {
+if (hasPermission('manage_inventory', $permissions)) {
     $stmt = $conn->prepare("
         SELECT id, name, quantity, minimum_stock, cost_price
         FROM products
@@ -384,7 +384,7 @@ if (hasPermission('manage_products', $permissions)) {
                     
                     <!-- Quick Actions Row 1: Product & Order Management -->
                     <div class="quick-actions mb-3">
-                        <?php if (hasPermission('manage_products', $permissions)): ?>
+                        <?php if (hasPermission('manage_inventory', $permissions)): ?>
                         <a href="../products/add.php" class="action-btn">
                             <i class="bi bi-box-seam"></i>
                             Add Product

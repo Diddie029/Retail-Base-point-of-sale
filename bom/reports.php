@@ -29,11 +29,13 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check BOM permissions
+// Check BOM reports permissions - use granular permissions
 $can_view_boms = hasPermission('view_boms', $permissions);
-$can_view_reports = hasPermission('view_production_reports', $permissions);
+$can_view_production_reports = hasPermission('view_production_reports', $permissions);
+$can_view_bom_reports = hasPermission('view_bom_reports', $permissions);
+$can_analyze_performance = hasPermission('analyze_bom_performance', $permissions);
 
-if (!$can_view_boms && !$can_view_reports) {
+if (!$can_view_boms && !$can_view_production_reports && !$can_view_bom_reports && !$can_analyze_performance) {
     header("Location: index.php");
     exit();
 }

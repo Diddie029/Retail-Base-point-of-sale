@@ -33,8 +33,8 @@ if ($role_id) {
     }
 }
 
-// Check if user has permission to manage suppliers
-if (!hasPermission('manage_products', $permissions)) {
+// Check if user has permission to manage product suppliers
+if (!hasPermission('manage_product_suppliers', $permissions)) {
     header("Location: ../dashboard/dashboard.php");
     exit();
 }

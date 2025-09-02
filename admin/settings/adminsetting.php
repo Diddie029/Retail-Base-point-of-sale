@@ -35,6 +35,17 @@ if (!hasPermission('manage_settings', $permissions)) {
     exit();
 }
 
+// Define granular permissions for different sections
+$can_manage_company = hasPermission('manage_settings', $permissions) || hasPermission('configure_company_settings', $permissions);
+$can_manage_currency = hasPermission('manage_settings', $permissions) || hasPermission('configure_currency_settings', $permissions) || hasPermission('manage_financial_settings', $permissions);
+$can_manage_receipts = hasPermission('manage_settings', $permissions) || hasPermission('configure_receipt_settings', $permissions);
+$can_manage_system = hasPermission('manage_settings', $permissions) || hasPermission('configure_system_settings', $permissions);
+$can_manage_inventory = hasPermission('manage_settings', $permissions) || hasPermission('configure_inventory_settings', $permissions);
+$can_manage_appearance = hasPermission('manage_settings', $permissions) || hasPermission('manage_theme_settings', $permissions);
+$can_manage_email = hasPermission('manage_settings', $permissions) || hasPermission('configure_email_settings', $permissions);
+$can_manage_security = hasPermission('manage_settings', $permissions) || hasPermission('configure_security_settings', $permissions);
+$can_manage_backup = hasPermission('manage_settings', $permissions) || hasPermission('configure_backup_settings', $permissions);
+
 // Get system settings
 $settings = [];
 $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
@@ -249,6 +260,28 @@ function generateProductionOrderPreview($settings) {
 
 // Active tab
 $active_tab = isset($_GET['tab']) ? $_GET['tab'] : 'company';
+
+// Validate active tab permissions and redirect if needed
+$valid_tabs = [
+    'company' => $can_manage_company,
+    'currency' => $can_manage_currency,
+    'receipt' => $can_manage_receipts,
+    'system' => $can_manage_system,
+    'inventory' => $can_manage_inventory,
+    'appearance' => $can_manage_appearance,
+    'email' => $can_manage_email,
+    'security' => $can_manage_security
+];
+
+if (!isset($valid_tabs[$active_tab]) || !$valid_tabs[$active_tab]) {
+    // Find first available tab
+    foreach ($valid_tabs as $tab => $has_permission) {
+        if ($has_permission) {
+            $active_tab = $tab;
+            break;
+        }
+    }
+}
 
 // Process form submission
 if($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -637,45 +670,61 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             <!-- Settings Navigation -->
             <div class="settings-navigation">
                 <div class="nav nav-tabs" role="tablist">
+                    <?php if ($can_manage_company): ?>
                     <a href="?tab=company" class="nav-link <?php echo $active_tab == 'company' ? 'active' : ''; ?>">
                         <i class="bi bi-building me-2"></i>
                         Company Details
                     </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_currency): ?>
                     <a href="?tab=currency" class="nav-link <?php echo $active_tab == 'currency' ? 'active' : ''; ?>">
                         <i class="bi bi-currency-exchange me-2"></i>
                         Currency & Tax
                     </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_receipts): ?>
                     <a href="?tab=receipt" class="nav-link <?php echo $active_tab == 'receipt' ? 'active' : ''; ?>">
                         <i class="bi bi-receipt me-2"></i>
                         Receipt Settings
                     </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_system): ?>
                     <a href="?tab=system" class="nav-link <?php echo $active_tab == 'system' ? 'active' : ''; ?>">
                         <i class="bi bi-gear me-2"></i>
                         System Settings
                     </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_inventory): ?>
                     <a href="?tab=inventory" class="nav-link <?php echo $active_tab == 'inventory' ? 'active' : ''; ?>">
                         <i class="bi bi-boxes me-2"></i>
                         Inventory Settings
                     </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_appearance): ?>
                     <a href="?tab=appearance" class="nav-link <?php echo $active_tab == 'appearance' ? 'active' : ''; ?>">
                         <i class="bi bi-palette me-2"></i>
                         Appearance
                     </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_email): ?>
                     <a href="?tab=email" class="nav-link <?php echo $active_tab == 'email' ? 'active' : ''; ?>">
                         <i class="bi bi-envelope me-2"></i>
                         Email Settings
                     </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_security): ?>
                     <a href="?tab=security" class="nav-link <?php echo $active_tab == 'security' ? 'active' : ''; ?>">
                         <i class="bi bi-shield-check me-2"></i>
                         Security Settings
                     </a>
+                    <?php endif; ?>
                 </div>
             </div>
 
             <!-- Settings Content -->
             <div class="settings-content">
                 <!-- Company Details Tab -->
-                <?php if ($active_tab == 'company'): ?>
+                <?php if ($active_tab == 'company' && $can_manage_company): ?>
                 <div class="data-section">
                     <div class="section-header">
                         <h3 class="section-title">
@@ -760,7 +809,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <!-- Currency & Tax Tab -->
-                <?php if ($active_tab == 'currency'): ?>
+                <?php if ($active_tab == 'currency' && $can_manage_currency): ?>
                 <div class="data-section">
                     <div class="section-header">
                         <h3 class="section-title">
@@ -856,7 +905,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <!-- Receipt Settings Tab -->
-                <?php if ($active_tab == 'receipt'): ?>
+                <?php if ($active_tab == 'receipt' && $can_manage_receipts): ?>
                 <div class="data-section">
                     <div class="section-header">
                         <h3 class="section-title">
@@ -961,7 +1010,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <!-- System Settings Tab -->
-                <?php if ($active_tab == 'system'): ?>
+                <?php if ($active_tab == 'system' && $can_manage_system): ?>
                 <div class="data-section">
                     <div class="section-header">
                         <h3 class="section-title">
@@ -1109,6 +1158,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <div class="row mt-3">
                                         <div class="col-12">
                                                                     <div class="d-flex gap-2">
+                            <?php if ($can_manage_backup): ?>
                             <a href="../backup/create_backup.php" class="btn btn-sm btn-primary">
                                 <i class="bi bi-download me-1"></i>Create Backup
                             </a>
@@ -1118,6 +1168,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <a href="../backup/restore_backup.php" class="btn btn-sm btn-warning">
                                 <i class="bi bi-upload me-1"></i>Restore
                             </a>
+                            <?php else: ?>
+                            <div class="text-muted small">
+                                <i class="bi bi-info-circle me-1"></i>
+                                You don't have permission to manage backups
+                            </div>
+                            <?php endif; ?>
                         </div>
                         <div class="mt-2">
                             <small class="text-muted">
@@ -1159,7 +1215,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <!-- Inventory Settings Tab -->
-                <?php if ($active_tab == 'inventory'): ?>
+                <?php if ($active_tab == 'inventory' && $can_manage_inventory): ?>
                 <div class="data-section">
                     <div class="section-header">
                         <h3 class="section-title">
@@ -1702,7 +1758,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <!-- Appearance Tab -->
-                <?php if ($active_tab == 'appearance'): ?>
+                <?php if ($active_tab == 'appearance' && $can_manage_appearance): ?>
                 <div class="data-section">
                     <div class="section-header">
                         <h3 class="section-title">
@@ -1774,7 +1830,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <!-- Email Settings Tab -->
-                <?php if ($active_tab == 'email'): ?>
+                <?php if ($active_tab == 'email' && $can_manage_email): ?>
                 <div class="data-section">
                     <div class="section-header">
                         <h3 class="section-title">
@@ -1964,7 +2020,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <?php endif; ?>
 
                 <!-- Security Settings Tab -->
-                <?php if ($active_tab == 'security'): ?>
+                <?php if ($active_tab == 'security' && $can_manage_security): ?>
                 <div class="data-section">
                     <div class="section-header">
                         <h3 class="section-title">
@@ -2132,10 +2188,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <i class="bi bi-save"></i>
                                     Save Security Settings
                                 </button>
+                                <?php if (hasPermission('manage_system_cleanup', $permissions)): ?>
                                 <button type="button" class="btn btn-info" onclick="clearSecurityLogs()">
                                     <i class="bi bi-trash"></i>
                                     Clear Old Logs (30+ days)
                                 </button>
+                                <?php endif; ?>
                                 <button type="reset" class="btn btn-outline-secondary">
                                     <i class="bi bi-arrow-clockwise"></i>
                                     Reset

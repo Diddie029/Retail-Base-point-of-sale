@@ -29,8 +29,8 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check if user has permission to manage products
-if (!hasPermission('manage_products', $permissions)) {
+// Check if user has permission to delete products
+if (!hasPermission('delete_products', $permissions)) {
     $_SESSION['error'] = 'You do not have permission to delete products.';
     header("Location: index.php");
     exit();

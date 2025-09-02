@@ -30,7 +30,7 @@ if ($role_id) {
 }
 
 // Check if user has permission to manage products
-if (!hasPermission('manage_products', $permissions)) {
+if (!hasPermission('manage_inventory', $permissions)) {
     header("Location: ../dashboard/dashboard.php?error=access_denied");
     exit();
 }

@@ -42,12 +42,10 @@ if ($role_id) {
     }
 }
 
-// Check if user has permission to manage products (includes suppliers)
-if (!hasPermission('manage_products', $permissions)) {
-    echo "<!-- Debug: User doesn't have manage_products permission -->";
-    // For debugging, allow access anyway
-    // header("Location: ../dashboard/dashboard.php");
-    // exit();
+// Check if user has permission to manage product suppliers
+if (!hasPermission('manage_product_suppliers', $permissions)) {
+    header("Location: ../dashboard/dashboard.php");
+    exit();
 }
 
 // Get system settings

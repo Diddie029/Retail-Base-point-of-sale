@@ -34,3 +34,7 @@
 [2025-08-28 23:54:18] [INFO] [Admin] Starting backup: pos_system_backup_2025-08-28_23-54-18.sql
 [2025-08-28 23:54:18] [INFO] [Admin] Command: "C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe" --opt --single-transaction --routines --triggers --host="localhost" --user="root" "pos_system" > "C:\laragon\www\pointofsale\admin\backup/../../backups/database/pos_system_backup_2025-08-28_23-54-18.sql"
 [2025-08-28 23:54:18] [SUCCESS] [Admin] Backup created successfully: pos_system_backup_2025-08-28_23-54-18.sql (14.61 KB)
+[2025-09-02 19:27:06] [INFO] [Admin] Found working mysqldump at: C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe
+[2025-09-02 19:27:06] [INFO] [Admin] Starting backup: pos_system_backup_2025-09-02_19-27-06.sql
+[2025-09-02 19:27:06] [INFO] [Admin] Command: "C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqldump.exe" --opt --single-transaction --routines --triggers --host="localhost" --user="root" "pos_system" > "C:\laragon\www\pointofsale\admin\backup/../../backups/database/pos_system_backup_2025-09-02_19-27-06.sql"
+[2025-09-02 19:27:07] [SUCCESS] [Admin] Backup created successfully: pos_system_backup_2025-09-02_19-27-06.sql (884.17 KB)

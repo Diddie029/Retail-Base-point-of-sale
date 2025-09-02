@@ -30,10 +30,13 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check Auto BOM permissions
-$can_manage_auto_boms = hasPermission('manage_auto_boms', $permissions);
+// Check Auto BOM setup permissions - use granular permissions
+$can_create_auto_boms = hasPermission('create_auto_boms', $permissions);
+$can_edit_auto_boms = hasPermission('edit_auto_boms', $permissions);
+$can_manage_configs = hasPermission('manage_auto_bom_configs', $permissions);
+$can_activate_auto_boms = hasPermission('activate_auto_boms', $permissions);
 
-if (!$can_manage_auto_boms) {
+if (!$can_create_auto_boms && !$can_edit_auto_boms && !$can_manage_configs && !$can_activate_auto_boms) {
     header("Location: ../dashboard/dashboard.php");
     exit();
 }

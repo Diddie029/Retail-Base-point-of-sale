@@ -29,12 +29,12 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check BOM permissions
-$can_manage_boms = hasPermission('manage_boms', $permissions);
+// Check BOM permissions - use more granular permissions
 $can_view_boms = hasPermission('view_boms', $permissions);
-$can_approve_boms = hasPermission('approve_boms', $permissions);
+$can_view_components = hasPermission('view_bom_components', $permissions);
+$can_view_costing = hasPermission('view_bom_costing', $permissions);
 
-if (!$can_manage_boms && !$can_view_boms) {
+if (!$can_view_boms && !$can_view_components && !$can_view_costing) {
     header("Location: index.php");
     exit();
 }

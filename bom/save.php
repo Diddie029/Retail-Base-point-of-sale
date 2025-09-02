@@ -27,14 +27,26 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-$can_manage_boms = hasPermission('manage_boms', $permissions);
+$action = $_POST['action'] ?? '';
 
-if (!$can_manage_boms) {
+// Check permissions based on action
+$can_create_boms = hasPermission('create_boms', $permissions);
+$can_edit_boms = hasPermission('edit_boms', $permissions);
+$can_delete_boms = hasPermission('delete_boms', $permissions);
+
+if ($action === 'create' && !$can_create_boms) {
+    header("Location: index.php?error=permission_denied");
+    exit();
+} elseif ($action === 'update' && !$can_edit_boms) {
+    header("Location: index.php?error=permission_denied");
+    exit();
+} elseif ($action === 'delete' && !$can_delete_boms) {
+    header("Location: index.php?error=permission_denied");
+    exit();
+} elseif (!$can_create_boms && !$can_edit_boms && !$can_delete_boms) {
     header("Location: index.php?error=permission_denied");
     exit();
 }
-
-$action = $_POST['action'] ?? '';
 
 if ($action === 'create') {
     // Create new BOM

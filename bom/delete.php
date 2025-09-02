@@ -27,9 +27,9 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-$can_manage_boms = hasPermission('manage_boms', $permissions);
+$can_delete_boms = hasPermission('delete_boms', $permissions);
 
-if (!$can_manage_boms) {
+if (!$can_delete_boms) {
     header("Location: index.php?error=permission_denied");
     exit();
 }

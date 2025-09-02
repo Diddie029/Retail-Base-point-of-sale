@@ -30,11 +30,13 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check Auto BOM permissions
-$can_manage_auto_boms = hasPermission('manage_auto_boms', $permissions);
+// Check Auto BOM pricing permissions - use granular permissions
 $can_view_auto_boms = hasPermission('view_auto_boms', $permissions);
+$can_view_pricing = hasPermission('view_auto_bom_pricing', $permissions);
+$can_manage_pricing = hasPermission('manage_auto_bom_pricing', $permissions);
+$can_analyze_pricing = hasPermission('analyze_auto_bom_pricing', $permissions);
 
-if (!$can_manage_auto_boms && !$can_view_auto_boms) {
+if (!$can_view_auto_boms && !$can_view_pricing && !$can_manage_pricing && !$can_analyze_pricing) {
     header("Location: ../dashboard/dashboard.php");
     exit();
 }

@@ -27,7 +27,7 @@ if ($role_id) {
 // No duplicate function needed - using centralized function
 
 // Check if user has permission to manage products
-if (!hasPermission('manage_products', $permissions)) {
+if (!hasPermission('export_products', $permissions)) {
     http_response_code(403);
     echo "Access denied";
     exit();

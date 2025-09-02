@@ -29,11 +29,13 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check BOM permissions
+// Check BOM production permissions - use granular permissions
+$can_create_production = hasPermission('create_production_orders', $permissions);
 $can_manage_production = hasPermission('manage_production_orders', $permissions);
-$can_manage_boms = hasPermission('manage_boms', $permissions);
+$can_approve_production = hasPermission('approve_production_orders', $permissions);
+$can_view_production = hasPermission('view_production_orders', $permissions);
 
-if (!$can_manage_production && !$can_manage_boms) {
+if (!$can_create_production && !$can_manage_production && !$can_approve_production && !$can_view_production) {
     header("Location: index.php");
     exit();
 }
