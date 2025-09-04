@@ -2035,4 +2035,33 @@ function isWalkInCustomer($customerId, $conn) {
     }
 }
 
+/**
+ * Generate formatted receipt number
+ * 
+ * @param int $sale_id Sale ID from database
+ * @param string $date Sale date (optional, defaults to current date)
+ * @return string Formatted receipt number (e.g., R241204000123)
+ */
+function generateReceiptNumber($sale_id, $date = null) {
+    if ($date === null) {
+        $date = date('ymd');
+    } else {
+        $date = date('ymd', strtotime($date));
+    }
+    
+    $padded_id = str_pad($sale_id, 6, '0', STR_PAD_LEFT);
+    return "R{$date}{$padded_id}";
+}
+
+/**
+ * Generate barcode-friendly receipt number
+ * 
+ * @param int $sale_id Sale ID from database
+ * @param string $date Sale date (optional, defaults to current date)
+ * @return string Barcode-ready receipt number
+ */
+function generateBarcodeReceiptNumber($sale_id, $date = null) {
+    return generateReceiptNumber($sale_id, $date);
+}
+
 ?>

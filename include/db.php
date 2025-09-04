@@ -12,7 +12,7 @@ try {
     $conn->exec("CREATE DATABASE IF NOT EXISTS `$dbname`");
     $conn->exec("USE `$dbname`");
     
-    // Create tables
+    // Create users table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -20,10 +20,12 @@ try {
             email VARCHAR(100) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
             role ENUM('Admin', 'Cashier') NOT NULL,
+            role_id INT DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ");
     
+    // Create categories table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS categories (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -76,7 +78,6 @@ try {
             FOREIGN KEY (category_id) REFERENCES categories(id),
             FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE SET NULL,
             FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
-            FOREIGN KEY (product_family_id) REFERENCES product_families(id) ON DELETE SET NULL,
             INDEX idx_sku (sku),
             INDEX idx_product_number (product_number),
             INDEX idx_product_type (product_type),
@@ -93,9 +94,92 @@ try {
             base_unit VARCHAR(50) DEFAULT 'each' COMMENT 'Base unit for Auto BOM calculations',
             base_quantity DECIMAL(10,3) DEFAULT 1 COMMENT 'Base quantity for Auto BOM calculations',
             product_family_id INT DEFAULT NULL COMMENT 'Reference to product family',
-            INDEX idx_auto_bom_enabled (is_auto_bom_enabled)
+            INDEX idx_auto_bom_enabled (is_auto_bom_enabled),
+            INDEX idx_product_family_id (product_family_id)
         )
     ");
+
+    // Create product_families table for Auto BOM
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS product_families (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            family_name VARCHAR(255) NOT NULL UNIQUE,
+            description TEXT,
+            base_product_id INT NOT NULL COMMENT 'Reference to the base/main product',
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (base_product_id) REFERENCES products(id) ON DELETE CASCADE,
+            INDEX idx_family_name (family_name),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+
+    // Create auto_bom_configs table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS auto_bom_configs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            product_family_id INT NOT NULL,
+            base_product_id INT NOT NULL,
+            conversion_ratio DECIMAL(10,3) NOT NULL DEFAULT 1 COMMENT 'How many base units make one selling unit',
+            min_stock_level INT DEFAULT 0,
+            auto_reorder TINYINT(1) DEFAULT 0,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (product_family_id) REFERENCES product_families(id) ON DELETE CASCADE,
+            FOREIGN KEY (base_product_id) REFERENCES products(id) ON DELETE CASCADE,
+            INDEX idx_product_family_id (product_family_id),
+            INDEX idx_base_product_id (base_product_id),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+
+    // Create auto_bom_selling_units table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS auto_bom_selling_units (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            config_id INT NOT NULL,
+            unit_name VARCHAR(100) NOT NULL,
+            unit_description TEXT,
+            quantity_per_base DECIMAL(10,3) NOT NULL COMMENT 'How many of this unit per base unit',
+            selling_price DECIMAL(10,2) NOT NULL,
+            cost_price DECIMAL(10,2) DEFAULT 0,
+            sku_suffix VARCHAR(20) COMMENT 'Suffix for generating SKU',
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (config_id) REFERENCES auto_bom_configs(id) ON DELETE CASCADE,
+            INDEX idx_config_id (config_id),
+            INDEX idx_unit_name (unit_name),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+
+    // Create auto_bom_price_history table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS auto_bom_price_history (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            selling_unit_id INT NOT NULL,
+            old_price DECIMAL(10,2),
+            new_price DECIMAL(10,2) NOT NULL,
+            changed_by INT NOT NULL,
+            change_reason VARCHAR(255),
+            effective_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (selling_unit_id) REFERENCES auto_bom_selling_units(id) ON DELETE CASCADE,
+            FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_selling_unit_id (selling_unit_id),
+            INDEX idx_effective_date (effective_date)
+        )
+    ");
+
+    // Add foreign key constraint for product_family_id in products table
+    try {
+        $conn->exec("ALTER TABLE products ADD CONSTRAINT fk_products_product_family_id FOREIGN KEY (product_family_id) REFERENCES product_families(id) ON DELETE SET NULL");
+    } catch (PDOException $e) {
+        // Foreign key might already exist, continue silently
+    }
 
     // Create product_images table for multiple images support
     $conn->exec("
@@ -316,12 +400,85 @@ try {
             id INT AUTO_INCREMENT PRIMARY KEY,
             sale_id INT NOT NULL,
             product_id INT NOT NULL,
+            selling_unit_id INT DEFAULT NULL COMMENT 'Auto BOM selling unit ID',
+            product_name VARCHAR(255) NOT NULL DEFAULT '' COMMENT 'Product name at time of sale',
             quantity INT NOT NULL,
-            price DECIMAL(10, 2) NOT NULL,
+            unit_price DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT 'Unit price at time of sale',
+            price DECIMAL(10, 2) NOT NULL DEFAULT 0,
+            total_price DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT 'Total price for this line item',
+            is_auto_bom TINYINT(1) DEFAULT 0 COMMENT 'Whether this is an Auto BOM item',
+            base_quantity_deducted DECIMAL(10,3) DEFAULT 0 COMMENT 'Base quantity deducted from inventory',
             FOREIGN KEY (sale_id) REFERENCES sales(id),
-            FOREIGN KEY (product_id) REFERENCES products(id)
+            FOREIGN KEY (product_id) REFERENCES products(id),
+            FOREIGN KEY (selling_unit_id) REFERENCES auto_bom_selling_units(id) ON DELETE SET NULL,
+            INDEX idx_selling_unit_id (selling_unit_id),
+            INDEX idx_is_auto_bom (is_auto_bom)
         )
     ");
+
+    // Create sale_payments table for split payments
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS sale_payments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            sale_id INT NOT NULL,
+            payment_method VARCHAR(50) NOT NULL,
+            amount DECIMAL(10, 2) NOT NULL,
+            reference VARCHAR(255) DEFAULT NULL COMMENT 'Transaction reference, last 4 digits, etc.',
+            received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+            INDEX idx_sale_id (sale_id),
+            INDEX idx_payment_method (payment_method)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Ensure sales table has columns needed for checkout and split payments
+    try {
+        $stmt = $conn->query("DESCRIBE sales");
+        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        // Add subtotal
+        if (!in_array('subtotal', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN subtotal DECIMAL(10,2) DEFAULT 0 AFTER user_id");
+        }
+        // Add tax_rate
+        if (!in_array('tax_rate', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN tax_rate DECIMAL(5,2) DEFAULT 0 AFTER subtotal");
+        }
+        // Add customer_notes
+        if (!in_array('customer_notes', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN customer_notes TEXT AFTER payment_method");
+        }
+        // Add split_payment flag
+        if (!in_array('split_payment', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN split_payment TINYINT(1) DEFAULT 0 AFTER payment_method");
+        }
+        // Add total_paid
+        if (!in_array('total_paid', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN total_paid DECIMAL(10,2) DEFAULT 0 AFTER final_amount");
+        }
+        // Add change_due
+        if (!in_array('change_due', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN change_due DECIMAL(10,2) DEFAULT 0 AFTER total_paid");
+        }
+        // Add cash_received
+        if (!in_array('cash_received', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN cash_received DECIMAL(10,2) DEFAULT NULL COMMENT 'Cash amount received'");
+        }
+        // Add change_amount
+        if (!in_array('change_amount', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN change_amount DECIMAL(10,2) DEFAULT 0 COMMENT 'Change amount given'");
+        }
+        // Add amount_given
+        if (!in_array('amount_given', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN amount_given DECIMAL(10,2) DEFAULT NULL COMMENT 'Total amount given by customer'");
+        }
+        // Add balance_due
+        if (!in_array('balance_due', $columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN balance_due DECIMAL(10,2) DEFAULT 0 COMMENT 'Remaining balance due'");
+        }
+    } catch (PDOException $e) {
+        error_log("Could not alter sales table for split payments: " . $e->getMessage());
+    }
         // Create roles table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS roles (
@@ -1146,9 +1303,170 @@ try {
         // Category Management
         ['manage_categories', 'Add, edit, delete categories', 'Product Management'],
         
-        // Sales & Transactions
+        // Sales & Transactions - Comprehensive Permissions
         ['manage_sales', 'View sales history and details', 'Sales & Transactions'],
         ['process_sales', 'Process sales transactions', 'Sales & Transactions'],
+
+        // Cart Management
+        ['view_cart', 'View shopping cart contents', 'Sales & Transactions'],
+        ['edit_cart', 'Edit items in shopping cart', 'Sales & Transactions'],
+        ['manage_cart', 'Full cart management including add, edit, remove items', 'Sales & Transactions'],
+        ['clear_cart', 'Clear all items from cart', 'Sales & Transactions'],
+        ['apply_cart_discounts', 'Apply discounts to cart items', 'Sales & Transactions'],
+        ['modify_cart_prices', 'Modify prices in cart for special cases', 'Sales & Transactions'],
+        ['split_cart_items', 'Split cart items across multiple transactions', 'Sales & Transactions'],
+
+        // Held Transactions Management
+        ['view_held_transactions', 'View list of held transactions', 'Sales & Transactions'],
+        ['create_held_transactions', 'Create and hold transactions for later', 'Sales & Transactions'],
+        ['resume_held_transactions', 'Resume previously held transactions', 'Sales & Transactions'],
+        ['cancel_held_transactions', 'Cancel held transactions', 'Sales & Transactions'],
+        ['delete_held_transactions', 'Delete held transactions permanently', 'Sales & Transactions'],
+        ['manage_held_transactions', 'Full management of held transactions', 'Sales & Transactions'],
+        ['remove_held', 'Remove items from held transactions', 'Sales & Transactions'],
+        ['transfer_held_transactions', 'Transfer held transactions to other users', 'Sales & Transactions'],
+
+        // Sales Processing and Checkout
+        ['process_checkout', 'Process checkout and payment', 'Sales & Transactions'],
+        ['apply_discounts', 'Apply discounts to sales', 'Sales & Transactions'],
+        ['override_prices', 'Override item prices during sale', 'Sales & Transactions'],
+        ['void_sales', 'Void completed sales transactions', 'Sales & Transactions'],
+        ['refund_sales', 'Process refunds for sales', 'Sales & Transactions'],
+        ['exchange_items', 'Process item exchanges', 'Sales & Transactions'],
+        ['suspend_sales', 'Suspend active sales transactions', 'Sales & Transactions'],
+        ['complete_sales', 'Complete and finalize sales', 'Sales & Transactions'],
+
+        // Customer Order Management
+        ['manage_customer_orders', 'Full customer order management', 'Sales & Transactions'],
+        ['view_customer_orders', 'View customer order details', 'Sales & Transactions'],
+        ['create_customer_orders', 'Create new customer orders', 'Sales & Transactions'],
+        ['edit_customer_orders', 'Edit existing customer orders', 'Sales & Transactions'],
+        ['delete_customer_orders', 'Delete customer orders', 'Sales & Transactions'],
+        ['approve_customer_orders', 'Approve customer orders for processing', 'Sales & Transactions'],
+        ['cancel_customer_orders', 'Cancel customer orders', 'Sales & Transactions'],
+        ['fulfill_customer_orders', 'Mark orders as fulfilled', 'Sales & Transactions'],
+        ['track_customer_orders', 'Track order status and updates', 'Sales & Transactions'],
+
+        // Payment Processing
+        ['process_payments', 'Process customer payments', 'Sales & Transactions'],
+        ['manage_payment_methods', 'Manage available payment methods', 'Sales & Transactions'],
+        ['handle_split_payments', 'Handle split payments across methods', 'Sales & Transactions'],
+        ['process_card_payments', 'Process credit/debit card payments', 'Sales & Transactions'],
+        ['process_cash_payments', 'Process cash payments', 'Sales & Transactions'],
+        ['process_mobile_payments', 'Process mobile money payments', 'Sales & Transactions'],
+        ['issue_change', 'Issue change for cash payments', 'Sales & Transactions'],
+        ['refund_payments', 'Process payment refunds', 'Sales & Transactions'],
+        ['void_payments', 'Void processed payments', 'Sales & Transactions'],
+
+        // Sales Reports and Analytics
+        ['view_sales_reports', 'View detailed sales reports', 'Sales & Transactions'],
+        ['generate_sales_reports', 'Generate custom sales reports', 'Sales & Transactions'],
+        ['export_sales_data', 'Export sales data and reports', 'Sales & Transactions'],
+        ['view_sales_analytics', 'View sales analytics and insights', 'Sales & Transactions'],
+        ['view_daily_sales', 'View daily sales summaries', 'Sales & Transactions'],
+        ['view_monthly_sales', 'View monthly sales reports', 'Sales & Transactions'],
+        ['view_sales_by_product', 'View sales performance by product', 'Sales & Transactions'],
+        ['view_sales_by_category', 'View sales performance by category', 'Sales & Transactions'],
+        ['view_sales_by_payment_method', 'View sales by payment method', 'Sales & Transactions'],
+        ['view_top_selling_products', 'View top selling products reports', 'Sales & Transactions'],
+        ['view_sales_trends', 'View sales trends and patterns', 'Sales & Transactions'],
+        ['view_customer_sales_history', 'View sales history for specific customers', 'Sales & Transactions'],
+
+        // Transaction Management
+        ['view_transaction_history', 'View transaction history and details', 'Sales & Transactions'],
+        ['manage_transaction_logs', 'Manage transaction logging and auditing', 'Sales & Transactions'],
+        ['view_transaction_logs', 'View transaction logs and audit trails', 'Sales & Transactions'],
+        ['audit_transaction_logs', 'Audit and review transaction logs', 'Sales & Transactions'],
+        ['export_transaction_data', 'Export transaction data for external use', 'Sales & Transactions'],
+        ['search_transactions', 'Search and filter transactions', 'Sales & Transactions'],
+        ['reconcile_transactions', 'Reconcile transaction records', 'Sales & Transactions'],
+
+        // Receipt and Printing Management
+        ['print_receipts', 'Print sales receipts', 'Sales & Transactions'],
+        ['reprint_receipts', 'Reprint previously printed receipts', 'Sales & Transactions'],
+        ['email_receipts', 'Email receipts to customers', 'Sales & Transactions'],
+        ['customize_receipts', 'Customize receipt templates and formats', 'Sales & Transactions'],
+        ['manage_receipt_templates', 'Manage receipt template designs', 'Sales & Transactions'],
+        ['view_receipt_history', 'View receipt printing history', 'Sales & Transactions'],
+
+        // Point of Sale (POS) Settings
+        ['manage_pos_settings', 'Manage POS system settings', 'Sales & Transactions'],
+        ['configure_pos_settings', 'Configure POS interface and behavior', 'Sales & Transactions'],
+        ['view_pos_settings', 'View current POS configuration', 'Sales & Transactions'],
+        ['customize_pos_layout', 'Customize POS screen layout', 'Sales & Transactions'],
+        ['manage_pos_shortcuts', 'Manage POS keyboard shortcuts', 'Sales & Transactions'],
+        ['configure_receipt_printer', 'Configure receipt printer settings', 'Sales & Transactions'],
+        ['manage_pos_users', 'Manage users with POS access', 'Sales & Transactions'],
+
+        // Cash Drawer Management
+        ['manage_cash_drawer', 'Full cash drawer management', 'Sales & Transactions'],
+        ['open_cash_drawer', 'Open cash drawer for transactions', 'Sales & Transactions'],
+        ['close_cash_drawer', 'Close and secure cash drawer', 'Sales & Transactions'],
+        ['view_cash_drawer_balance', 'View current cash drawer balance', 'Sales & Transactions'],
+        ['count_cash_drawer', 'Perform cash drawer counts', 'Sales & Transactions'],
+        ['reconcile_cash_drawer', 'Reconcile cash drawer with sales', 'Sales & Transactions'],
+        ['reset_cash_drawer', 'Reset cash drawer for new shift', 'Sales & Transactions'],
+        ['view_cash_drawer_logs', 'View cash drawer activity logs', 'Sales & Transactions'],
+        ['audit_cash_drawer', 'Audit cash drawer transactions', 'Sales & Transactions'],
+        ['transfer_cash_drawer_funds', 'Transfer funds between cash drawers', 'Sales & Transactions'],
+
+        // Shift Management
+        ['manage_shift_management', 'Full shift management system', 'Sales & Transactions'],
+        ['start_shift', 'Start a new work shift', 'Sales & Transactions'],
+        ['end_shift', 'End current work shift', 'Sales & Transactions'],
+        ['view_shift_reports', 'View shift performance reports', 'Sales & Transactions'],
+        ['manage_shift_transfers', 'Manage transfers between shifts', 'Sales & Transactions'],
+        ['transfer_shift_funds', 'Transfer funds between shifts', 'Sales & Transactions'],
+        ['reconcile_shift_funds', 'Reconcile shift funds and sales', 'Sales & Transactions'],
+        ['view_shift_history', 'View historical shift data', 'Sales & Transactions'],
+        ['approve_shift_changes', 'Approve shift-related changes', 'Sales & Transactions'],
+
+        // Tax Management
+        ['manage_sales_taxes', 'Manage sales tax calculations and rates', 'Sales & Transactions'],
+        ['calculate_sales_taxes', 'Calculate taxes for sales transactions', 'Sales & Transactions'],
+        ['view_sales_taxes', 'View tax breakdown for sales', 'Sales & Transactions'],
+        ['override_tax_rates', 'Override tax rates for special cases', 'Sales & Transactions'],
+        ['view_tax_reports', 'View tax-related reports and summaries', 'Sales & Transactions'],
+        ['manage_tax_exemptions', 'Manage tax exemptions for customers', 'Sales & Transactions'],
+
+        // Customer Management in Sales Context
+        ['manage_sales_customers', 'Manage customer information during sales', 'Sales & Transactions'],
+        ['view_customer_purchase_history', 'View customer purchase history during sales', 'Sales & Transactions'],
+        ['apply_customer_discounts', 'Apply customer-specific discounts', 'Sales & Transactions'],
+        ['manage_customer_loyalty', 'Manage customer loyalty points during sales', 'Sales & Transactions'],
+        ['create_customer_accounts', 'Create customer accounts during checkout', 'Sales & Transactions'],
+        ['update_customer_info', 'Update customer information during transactions', 'Sales & Transactions'],
+
+        // Inventory Integration
+        ['view_inventory_during_sale', 'View inventory levels during sales process', 'Sales & Transactions'],
+        ['reserve_inventory', 'Reserve inventory for pending sales', 'Sales & Transactions'],
+        ['check_inventory_availability', 'Check product availability during sales', 'Sales & Transactions'],
+        ['manage_backorders', 'Manage backorders during sales process', 'Sales & Transactions'],
+        ['handle_out_of_stock', 'Handle out-of-stock situations during sales', 'Sales & Transactions'],
+
+        // Advanced Sales Features
+        ['manage_sales_promotions', 'Manage sales promotions and campaigns', 'Sales & Transactions'],
+        ['apply_bulk_discounts', 'Apply bulk purchase discounts', 'Sales & Transactions'],
+        ['manage_price_overrides', 'Manage price override permissions and limits', 'Sales & Transactions'],
+        ['handle_sales_exceptions', 'Handle exceptional sales situations', 'Sales & Transactions'],
+        ['manage_sales_approvals', 'Manage multi-level sales approvals', 'Sales & Transactions'],
+        ['view_sales_dashboard', 'View comprehensive sales dashboard', 'Sales & Transactions'],
+        ['manage_sales_goals', 'Set and manage sales targets and goals', 'Sales & Transactions'],
+        ['track_sales_performance', 'Track individual and team sales performance', 'Sales & Transactions'],
+
+        // Transaction Security and Compliance
+        ['audit_sales_transactions', 'Audit sales transactions for compliance', 'Sales & Transactions'],
+        ['view_transaction_security_logs', 'View security logs for transactions', 'Sales & Transactions'],
+        ['manage_transaction_limits', 'Set transaction limits and restrictions', 'Sales & Transactions'],
+        ['handle_suspicious_transactions', 'Handle and flag suspicious transactions', 'Sales & Transactions'],
+        ['comply_with_sales_regulations', 'Ensure compliance with sales regulations', 'Sales & Transactions'],
+
+        // Integration and API
+        ['sync_sales_data', 'Synchronize sales data with external systems', 'Sales & Transactions'],
+        ['export_sales_to_accounting', 'Export sales data to accounting systems', 'Sales & Transactions'],
+        ['integrate_payment_gateways', 'Integrate with external payment gateways', 'Sales & Transactions'],
+        ['manage_sales_api', 'Manage sales-related API access', 'Sales & Transactions'],
+        ['automate_sales_processes', 'Automate repetitive sales processes', 'Sales & Transactions'],
         
         // Customer Management - Comprehensive Permissions
         ['view_customers', 'View customer accounts and profiles', 'Customer Management'],
@@ -3380,6 +3698,140 @@ try {
         // Log migration error but don't fail the entire database initialization
         error_log("Warning: Could not add credit_limit/current_balance columns to expense_vendors: " . $e->getMessage());
     }
+    
+    // Enhanced migration logic to ensure database compatibility
+    try {
+        // Check and update sale_items table for Auto BOM compatibility
+        $stmt = $conn->query("DESCRIBE sale_items");
+        $sale_items_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        // Add missing columns to sale_items table if they don't exist
+        $missing_sale_items_columns = [
+            'selling_unit_id' => 'INT DEFAULT NULL COMMENT "Auto BOM selling unit ID"',
+            'product_name' => 'VARCHAR(255) NOT NULL DEFAULT "" COMMENT "Product name at time of sale"',
+            'unit_price' => 'DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT "Unit price at time of sale"',
+            'total_price' => 'DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT "Total price for this line item"',
+            'is_auto_bom' => 'TINYINT(1) DEFAULT 0 COMMENT "Whether this is an Auto BOM item"',
+            'base_quantity_deducted' => 'DECIMAL(10,3) DEFAULT 0 COMMENT "Base quantity deducted from inventory"'
+        ];
+        
+        foreach ($missing_sale_items_columns as $column_name => $column_def) {
+            if (!in_array($column_name, $sale_items_columns)) {
+                $conn->exec("ALTER TABLE sale_items ADD COLUMN $column_name $column_def");
+                error_log("Added missing column: sale_items.$column_name");
+            }
+        }
+        
+        // Add foreign key for selling_unit_id if it doesn't exist
+        try {
+            $conn->exec("ALTER TABLE sale_items ADD CONSTRAINT fk_sale_items_selling_unit_id FOREIGN KEY (selling_unit_id) REFERENCES auto_bom_selling_units(id) ON DELETE SET NULL");
+        } catch (PDOException $e) {
+            // Foreign key might already exist, continue silently
+        }
+        
+        // Add indexes for better performance
+        try {
+            $conn->exec("CREATE INDEX IF NOT EXISTS idx_sale_items_selling_unit ON sale_items(selling_unit_id)");
+            $conn->exec("CREATE INDEX IF NOT EXISTS idx_sale_items_auto_bom ON sale_items(is_auto_bom)");
+        } catch (PDOException $e) {
+            // Indexes might already exist, continue silently
+        }
+        
+        // Update existing sale_items data
+        $conn->exec("
+            UPDATE sale_items si 
+            JOIN products p ON si.product_id = p.id 
+            SET si.product_name = p.name 
+            WHERE si.product_name = '' OR si.product_name IS NULL
+        ");
+        
+        $conn->exec("
+            UPDATE sale_items 
+            SET unit_price = price, 
+                total_price = (price * quantity) 
+            WHERE unit_price = 0 OR total_price = 0
+        ");
+        
+        // Check and update sales table for cash handling
+        $stmt = $conn->query("DESCRIBE sales");
+        $sales_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        $missing_sales_columns = [
+            'cash_received' => 'DECIMAL(10,2) DEFAULT NULL COMMENT "Cash amount received"',
+            'change_amount' => 'DECIMAL(10,2) DEFAULT 0 COMMENT "Change amount given"', 
+            'amount_given' => 'DECIMAL(10,2) DEFAULT NULL COMMENT "Total amount given by customer"',
+            'balance_due' => 'DECIMAL(10,2) DEFAULT 0 COMMENT "Remaining balance due"'
+        ];
+        
+        foreach ($missing_sales_columns as $column_name => $column_def) {
+            if (!in_array($column_name, $sales_columns)) {
+                $conn->exec("ALTER TABLE sales ADD COLUMN $column_name $column_def");
+                error_log("Added missing column: sales.$column_name");
+            }
+        }
+        
+        // Add performance indexes for sales table
+        try {
+            $conn->exec("CREATE INDEX IF NOT EXISTS idx_sales_cash_received ON sales(cash_received)");
+        } catch (PDOException $e) {
+            // Index might already exist, continue silently
+        }
+        
+        // Update price column in sale_items to have default value
+        if (in_array('price', $sale_items_columns)) {
+            try {
+                $conn->exec("ALTER TABLE sale_items MODIFY COLUMN price DECIMAL(10,2) NOT NULL DEFAULT 0");
+            } catch (Exception $e) {
+                // Column modification might fail, continue silently
+                error_log("Warning: Could not modify price column: " . $e->getMessage());
+            }
+        }
+        
+    } catch (Exception $e) {
+        // Log migration errors but don't fail database initialization
+        error_log("Database migration warning: " . $e->getMessage());
+    }
+    
+    // Create receipt_reprint_log table for tracking receipt reprints
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS receipt_reprint_log (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            sale_id INT NOT NULL,
+            user_id INT NOT NULL,
+            reprint_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+            status ENUM('success', 'failed') NOT NULL DEFAULT 'success',
+            notes TEXT,
+            user_ip VARCHAR(45),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_sale_id (sale_id),
+            INDEX idx_user_id (user_id),
+            INDEX idx_reprint_time (reprint_time),
+            INDEX idx_status (status),
+            FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ");
+    
+    // Add receipt reprint settings
+    $conn->exec("
+        INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
+        ('allow_receipt_reprint', '1'),
+        ('max_reprint_attempts', '3'),
+        ('require_password_for_reprint', '1')
+    ");
+    
+    // Create receipt reprint permission (if permissions table exists)
+    $conn->exec("
+        INSERT IGNORE INTO permissions (name, description) VALUES
+        ('reprint_receipt', 'Allow reprinting of receipts')
+    ");
+    
+    // Grant reprint permission to admin role (if role_permissions table exists)
+    $conn->exec("
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT r.id, p.id FROM roles r, permissions p 
+        WHERE r.name = 'admin' AND p.name = 'reprint_receipt'
+    ");
     
 } catch(PDOException $e) {
     // Store connection error for login page

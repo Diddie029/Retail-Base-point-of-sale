@@ -136,7 +136,19 @@ $defaults = [
 
     // BOM Cost Calculation Settings
     'bom_cost_calculation_method' => 'standard',
-    'bom_default_waste_percentage' => '5.0'
+    'bom_default_waste_percentage' => '5.0',
+
+    // Receipt Number Settings
+    'auto_generate_receipt_number' => '1',
+    'receipt_number_prefix' => 'RCP',
+    'receipt_number_length' => '6',
+    'receipt_number_separator' => '-',
+    'receipt_number_format' => 'prefix-date-number',
+    
+    // Receipt Reprint Settings
+    'allow_receipt_reprint' => '1',
+    'max_reprint_attempts' => '3',
+    'require_password_for_reprint' => '1'
 ];
 
 // Merge with defaults
@@ -256,6 +268,31 @@ function generateProductionOrderPreview($settings) {
     $currentDate = date('Ymd');
 
     return $prefix . '-' . $currentDate . '-' . $sampleNumber;
+}
+
+// Function to generate receipt number preview
+function generateReceiptNumberPreview($settings) {
+    $prefix = $settings['receipt_number_prefix'] ?? 'RCP';
+    $length = intval($settings['receipt_number_length'] ?? 6);
+    $separator = $settings['receipt_number_separator'] ?? '-';
+    $format = $settings['receipt_number_format'] ?? 'prefix-date-number';
+
+    // Generate sample number
+    $sampleNumber = str_pad('1', $length, '0', STR_PAD_LEFT);
+    $currentDate = date('Ymd');
+
+    switch ($format) {
+        case 'prefix-date-number':
+            return $prefix . $separator . $currentDate . $separator . $sampleNumber;
+        case 'prefix-number':
+            return $prefix . $separator . $sampleNumber;
+        case 'date-prefix-number':
+            return $currentDate . $separator . $prefix . $separator . $sampleNumber;
+        case 'number-only':
+            return $sampleNumber;
+        default:
+            return $prefix . $separator . $currentDate . $separator . $sampleNumber;
+    }
 }
 
 // Active tab
@@ -408,13 +445,38 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Invoice separator cannot exceed 5 characters.";
         }
     }
+
+    // Receipt Number Settings Validation
+    if (isset($_POST['receipt_number_prefix'])) {
+        $receipt_prefix = trim($_POST['receipt_number_prefix']);
+        if (strlen($receipt_prefix) > 10) {
+            $errors[] = "Receipt number prefix cannot exceed 10 characters.";
+        }
+        if (!preg_match('/^[A-Za-z0-9_-]*$/', $receipt_prefix)) {
+            $errors[] = "Receipt number prefix can only contain letters, numbers, hyphens, and underscores.";
+        }
+    }
+
+    if (isset($_POST['receipt_number_length'])) {
+        $receipt_length = intval($_POST['receipt_number_length']);
+        if ($receipt_length < 3 || $receipt_length > 10) {
+            $errors[] = "Receipt number length must be between 3 and 10 digits.";
+        }
+    }
+
+    if (isset($_POST['receipt_number_separator'])) {
+        $receipt_separator = trim($_POST['receipt_number_separator']);
+        if (strlen($receipt_separator) > 5) {
+            $errors[] = "Receipt number separator cannot exceed 5 characters.";
+        }
+    }
     
     if (empty($errors)) {
         try {
             $conn->beginTransaction();
             
             // Handle checkbox values
-            $checkbox_fields = ['receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate'];
+            $checkbox_fields = ['receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_receipt_number', 'allow_receipt_reprint', 'require_password_for_reprint'];
             foreach($checkbox_fields as $field) {
                 if (!isset($_POST[$field])) {
                     $_POST[$field] = '0';
@@ -990,6 +1052,130 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <label class="form-check-label" for="auto_print_receipt">
                                     Automatically Print Receipt After Sale
                                 </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Receipt Number Settings Section -->
+                        <div class="form-group mt-5">
+                            <h5 class="mb-3 text-primary">
+                                <i class="bi bi-hash me-2"></i>
+                                Receipt Number Settings
+                            </h5>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="auto_generate_receipt_number" name="auto_generate_receipt_number" value="1"
+                                       <?php echo (isset($settings['auto_generate_receipt_number']) && $settings['auto_generate_receipt_number'] == '1') ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="auto_generate_receipt_number">
+                                    Auto-generate Receipt Numbers
+                                </label>
+                            </div>
+                            <div class="form-text">Automatically generate receipt numbers when processing sales.</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="receipt_number_prefix" class="form-label">Receipt Number Prefix</label>
+                                    <input type="text" class="form-control" id="receipt_number_prefix" name="receipt_number_prefix"
+                                           value="<?php echo htmlspecialchars($settings['receipt_number_prefix'] ?? 'RCP'); ?>"
+                                           placeholder="RCP" maxlength="10">
+                                    <div class="form-text">Prefix for all receipt numbers (e.g., RCP, REC, RECEIPT).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="receipt_number_length" class="form-label">Receipt Number Length</label>
+                                    <input type="number" min="3" max="10" class="form-control" id="receipt_number_length" name="receipt_number_length"
+                                           value="<?php echo htmlspecialchars($settings['receipt_number_length'] ?? '6'); ?>"
+                                           placeholder="6">
+                                    <div class="form-text">Number of digits in the receipt number (3-10).</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="receipt_number_separator" class="form-label">Receipt Number Separator</label>
+                                    <input type="text" class="form-control" id="receipt_number_separator" name="receipt_number_separator"
+                                           value="<?php echo htmlspecialchars($settings['receipt_number_separator'] ?? '-'); ?>"
+                                           placeholder="-" maxlength="5">
+                                    <div class="form-text">Separator between prefix and numbers (e.g., -, _, space).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="receipt_number_format" class="form-label">Receipt Number Format</label>
+                                    <select class="form-control" id="receipt_number_format" name="receipt_number_format">
+                                        <option value="prefix-date-number" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'prefix-date-number' ? 'selected' : ''; ?>>Prefix-Date-Number (RCP-20241201-000001)</option>
+                                        <option value="prefix-number" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'prefix-number' ? 'selected' : ''; ?>>Prefix-Number (RCP-000001)</option>
+                                        <option value="date-prefix-number" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'date-prefix-number' ? 'selected' : ''; ?>>Date-Prefix-Number (20241201-RCP-000001)</option>
+                                        <option value="number-only" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'number-only' ? 'selected' : ''; ?>>Number Only (000001)</option>
+                                    </select>
+                                    <div class="form-text">Format for generating receipt numbers.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="receipt_number_preview" class="form-label">Receipt Number Preview</label>
+                            <div class="alert alert-info">
+                                <i class="bi bi-eye me-2"></i>
+                                <strong>Preview:</strong>
+                                <span id="receiptNumberPreview"><?php echo generateReceiptNumberPreview($settings); ?></span>
+                            </div>
+                        </div>
+                        
+                        <!-- Receipt Reprint Settings Section -->
+                        <div class="form-group mt-5">
+                            <h5 class="mb-3 text-primary">
+                                <i class="bi bi-arrow-repeat me-2"></i>
+                                Receipt Reprint Settings
+                            </h5>
+                        </div>
+                        
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="allow_receipt_reprint" name="allow_receipt_reprint" value="1"
+                                       <?php echo (isset($settings['allow_receipt_reprint']) && $settings['allow_receipt_reprint'] == '1') ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="allow_receipt_reprint">
+                                    Allow Receipt Reprinting
+                                </label>
+                            </div>
+                            <div class="form-text">Enable the ability to reprint receipts after completing a sale.</div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="max_reprint_attempts" class="form-label">Maximum Reprint Attempts</label>
+                                    <input type="number" min="1" max="10" class="form-control" id="max_reprint_attempts" name="max_reprint_attempts"
+                                           value="<?php echo htmlspecialchars($settings['max_reprint_attempts'] ?? '3'); ?>"
+                                           placeholder="3">
+                                    <div class="form-text">Maximum number of times a receipt can be reprinted (1-10).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="require_password_for_reprint" name="require_password_for_reprint" value="1"
+                                               <?php echo (isset($settings['require_password_for_reprint']) && $settings['require_password_for_reprint'] == '1') ? 'checked' : ''; ?>>
+                                        <label class="form-check-label" for="require_password_for_reprint">
+                                            Require Password for Reprint
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Require password verification before allowing receipt reprints.</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle me-2"></i>
+                                <strong>Security Note:</strong> Receipt reprints are logged with user details, timestamp, and IP address for audit purposes. 
+                                All reprint attempts (successful and failed) are tracked in the system.
                             </div>
                         </div>
                         
@@ -2852,6 +3038,51 @@ Best regards,
 
             // Initial production order preview update
             updateProductionOrderPreview();
+
+            // Receipt Number Preview Functionality
+            function updateReceiptNumberPreview() {
+                const prefix = document.getElementById('receipt_number_prefix').value || 'RCP';
+                const separator = document.getElementById('receipt_number_separator').value || '-';
+                const length = parseInt(document.getElementById('receipt_number_length').value) || 6;
+                const format = document.getElementById('receipt_number_format').value || 'prefix-date-number';
+
+                // Generate sample number
+                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+                let preview = '';
+                switch(format) {
+                    case 'prefix-date-number':
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                        break;
+                    case 'prefix-number':
+                        preview = prefix + separator + sampleNumber;
+                        break;
+                    case 'date-prefix-number':
+                        preview = currentDate + separator + prefix + separator + sampleNumber;
+                        break;
+                    case 'number-only':
+                        preview = sampleNumber;
+                        break;
+                    default:
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                }
+
+                document.getElementById('receiptNumberPreview').textContent = preview;
+            }
+
+            // Add event listeners for receipt number preview updates
+            const receiptNumberInputs = ['receipt_number_prefix', 'receipt_number_separator', 'receipt_number_length', 'receipt_number_format'];
+            receiptNumberInputs.forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.addEventListener('input', updateReceiptNumberPreview);
+                    input.addEventListener('change', updateReceiptNumberPreview);
+                }
+            });
+
+            // Initial receipt number preview update
+            updateReceiptNumberPreview();
         });
     </script>
 </body>
