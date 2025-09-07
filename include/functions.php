@@ -2638,4 +2638,72 @@ function getAvailablePagesForUser($conn, $isAdmin, $permissions) {
     return $pages;
 }
 
+/**
+ * Get available pages grouped by section for filtering
+ */
+function getAvailablePagesBySection($conn, $isAdmin, $permissions) {
+    if ($isAdmin) {
+        // Admin gets all active pages
+        $stmt = $conn->prepare("
+            SELECT page_name, page_url, page_category 
+            FROM available_pages 
+            WHERE is_active = 1 
+            ORDER BY page_category, sort_order, page_name
+        ");
+        $stmt->execute();
+    } else {
+        // Non-admin gets pages based on permissions
+        $permissionConditions = [];
+        $params = [];
+        
+        // Always include basic pages
+        $permissionConditions[] = "required_permission IS NULL";
+        
+        // Add pages based on user permissions
+        foreach ($permissions as $permission) {
+            $permissionConditions[] = "required_permission = ?";
+            $params[] = $permission;
+        }
+        
+        $whereClause = implode(' OR ', $permissionConditions);
+        
+        $stmt = $conn->prepare("
+            SELECT page_name, page_url, page_category 
+            FROM available_pages 
+            WHERE is_active = 1 AND ({$whereClause})
+            ORDER BY page_category, sort_order, page_name
+        ");
+        $stmt->execute($params);
+    }
+    
+    $pagesBySection = [];
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $category = $row['page_category'];
+        if (!isset($pagesBySection[$category])) {
+            $pagesBySection[$category] = [];
+        }
+        $pagesBySection[$category][$row['page_name']] = $row['page_url'];
+    }
+    
+    return $pagesBySection;
+}
+
+/**
+ * Map section keys to page categories for filtering
+ */
+function getSectionToCategoryMapping() {
+    return [
+        'inventory' => ['Inventory', 'Products'],
+        'expiry' => ['Inventory'],
+        'bom' => ['BOM Management'],
+        'finance' => ['Finance'],
+        'expenses' => ['Expenses'],
+        'admin' => ['Administration', 'Dashboard'],
+        'analytics' => ['Analytics', 'Sales'],
+        'pos' => ['Point of Sale'],
+        'customers' => ['Customers'],
+        'auth' => ['Authentication']
+    ];
+}
+
 ?>

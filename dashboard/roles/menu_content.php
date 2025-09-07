@@ -155,6 +155,12 @@ syncPagesWithDatabase($conn);
 // Get available pages based on user permissions
 $available_pages = getAvailablePagesForUser($conn, $isAdmin, $permissions);
 
+// Get pages grouped by section for filtering
+$pages_by_section = getAvailablePagesBySection($conn, $isAdmin, $permissions);
+
+// Get section to category mapping
+$section_category_mapping = getSectionToCategoryMapping();
+
 ?>
 
 <!DOCTYPE html>
@@ -276,15 +282,10 @@ $available_pages = getAvailablePagesForUser($conn, $isAdmin, $permissions);
                                 <div class="col-md-3">
                                     <label class="form-label">Page <span class="text-danger">*</span></label>
                                     <select class="form-select" name="page_name" required>
-                                        <option value="">Select Page (<?php echo count($available_pages); ?> available)</option>
-                                        <?php foreach ($available_pages as $page_name => $page_url): ?>
-                                        <option value="<?php echo htmlspecialchars($page_name); ?>">
-                                            <?php echo htmlspecialchars($page_name); ?>
-                                        </option>
-                                        <?php endforeach; ?>
+                                        <option value="">Select Page</option>
                                     </select>
-                                    <div class="form-text">
-                                        Choose from <?php echo count($available_pages); ?> available pages
+                                    <div class="form-text" id="pageHelperText">
+                                        Choose a section first to see available pages
                                         <?php if (!$isAdmin): ?>
                                         <br><small class="text-muted">Limited by your permissions</small>
                                         <?php endif; ?>
@@ -359,16 +360,93 @@ $available_pages = getAvailablePagesForUser($conn, $isAdmin, $permissions);
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Page selection functionality
+        // Page selection functionality with section filtering
         document.addEventListener('DOMContentLoaded', function() {
+            const sectionSelect = document.querySelector('select[name="section_key"]');
             const pageSelect = document.querySelector('select[name="page_name"]');
-            const formText = document.querySelector('.form-text');
+            const formText = document.getElementById('pageHelperText');
             
             if (pageSelect && formText) {
                 // Available pages data
                 const availablePages = <?php echo json_encode($available_pages); ?>;
+                const pagesBySection = <?php echo json_encode($pages_by_section); ?>;
+                const sectionCategoryMapping = <?php echo json_encode($section_category_mapping); ?>;
                 const isAdmin = <?php echo $isAdmin ? 'true' : 'false'; ?>;
                 
+                // Function to filter pages based on selected section
+                function filterPagesBySection(selectedSection) {
+                    // Show loading state
+                    pageSelect.innerHTML = '<option value="">Loading pages...</option>';
+                    pageSelect.disabled = true;
+                    formText.innerHTML = 'Filtering pages for selected section...';
+                    formText.className = 'form-text text-info';
+                    
+                    // Small delay to show loading state
+                    setTimeout(() => {
+                        // Clear current options except the first one
+                        pageSelect.innerHTML = '<option value="">Select Page</option>';
+                        pageSelect.disabled = false;
+                        
+                        if (!selectedSection) {
+                            // If no section selected, show all pages
+                            Object.keys(availablePages).forEach(pageName => {
+                                const option = document.createElement('option');
+                                option.value = pageName;
+                                option.textContent = pageName;
+                                pageSelect.appendChild(option);
+                            });
+                            formText.innerHTML = 'Choose from ' + Object.keys(availablePages).length + ' available pages' +
+                                (isAdmin ? '' : '<br><small class="text-muted">Limited by your permissions</small>');
+                            formText.className = 'form-text';
+                            return;
+                        }
+                    
+                        // Get categories for the selected section
+                        const categories = sectionCategoryMapping[selectedSection] || [];
+                        let filteredPages = [];
+                        
+                        // Collect pages from relevant categories
+                        categories.forEach(category => {
+                            if (pagesBySection[category]) {
+                                Object.keys(pagesBySection[category]).forEach(pageName => {
+                                    filteredPages.push({
+                                        name: pageName,
+                                        url: pagesBySection[category][pageName]
+                                    });
+                                });
+                            }
+                        });
+                        
+                        // Sort pages alphabetically
+                        filteredPages.sort((a, b) => a.name.localeCompare(b.name));
+                        
+                        // Add filtered pages to dropdown
+                        filteredPages.forEach(page => {
+                            const option = document.createElement('option');
+                            option.value = page.name;
+                            option.textContent = page.name;
+                            pageSelect.appendChild(option);
+                        });
+                        
+                        // Update helper text
+                        const count = filteredPages.length;
+                        formText.innerHTML = 'Choose from ' + count + ' pages in this section' +
+                            (isAdmin ? '' : '<br><small class="text-muted">Limited by your permissions</small>');
+                        formText.className = 'form-text';
+                        
+                        // Reset page selection
+                        pageSelect.value = '';
+                    }, 100); // Small delay for better UX
+                }
+                
+                // Section change handler
+                if (sectionSelect) {
+                    sectionSelect.addEventListener('change', function() {
+                        filterPagesBySection(this.value);
+                    });
+                }
+                
+                // Page change handler
                 pageSelect.addEventListener('change', function() {
                     const selectedPage = this.value;
                     if (selectedPage && availablePages[selectedPage]) {
@@ -376,11 +454,32 @@ $available_pages = getAvailablePagesForUser($conn, $isAdmin, $permissions);
                             (isAdmin ? '' : '<br><small class="text-muted">Limited by your permissions</small>');
                         formText.className = 'form-text text-success';
                     } else {
-                        formText.innerHTML = 'Choose from ' + Object.keys(availablePages).length + ' available pages' +
-                            (isAdmin ? '' : '<br><small class="text-muted">Limited by your permissions</small>');
+                        // Get current section to show appropriate message
+                        const currentSection = sectionSelect ? sectionSelect.value : '';
+                        if (currentSection) {
+                            const categories = sectionCategoryMapping[currentSection] || [];
+                            let filteredPages = [];
+                            categories.forEach(category => {
+                                if (pagesBySection[category]) {
+                                    Object.keys(pagesBySection[category]).forEach(pageName => {
+                                        filteredPages.push(pageName);
+                                    });
+                                }
+                            });
+                            formText.innerHTML = 'Choose from ' + filteredPages.length + ' pages in this section' +
+                                (isAdmin ? '' : '<br><small class="text-muted">Limited by your permissions</small>');
+                        } else {
+                            formText.innerHTML = 'Choose from ' + Object.keys(availablePages).length + ' available pages' +
+                                (isAdmin ? '' : '<br><small class="text-muted">Limited by your permissions</small>');
+                        }
                         formText.className = 'form-text';
                     }
                 });
+                
+                // Initialize with all pages if no section is pre-selected
+                if (!sectionSelect || !sectionSelect.value) {
+                    filterPagesBySection('');
+                }
                 
                 // Show total available pages count
                 const totalPages = Object.keys(availablePages).length;
