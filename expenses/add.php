@@ -3,6 +3,88 @@ session_start();
 require_once '../include/db.php';
 require_once '../include/functions.php';
 
+// Security function for input sanitization and validation
+function sanitize_input($input, $type) {
+    if ($input === null || $input === '') {
+        return '';
+    }
+    
+    // Remove null bytes and control characters
+    $input = str_replace(["\0", "\x00"], '', $input);
+    $input = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $input);
+    
+    switch ($type) {
+        case 'name':
+            // Allow letters, spaces, hyphens, apostrophes, and periods
+            $input = preg_replace('/[^a-zA-Z\s\-\'\.]/', '', $input);
+            $input = trim($input);
+            return substr($input, 0, 50); // Max 50 characters
+            
+        case 'email':
+            $input = filter_var(trim($input), FILTER_SANITIZE_EMAIL);
+            return substr($input, 0, 100); // Max 100 characters
+            
+        case 'phone':
+            // Allow digits, spaces, hyphens, parentheses, plus, and periods
+            $input = preg_replace('/[^0-9\s\-\(\)\+\.]/', '', $input);
+            $input = trim($input);
+            return substr($input, 0, 20); // Max 20 characters
+            
+        case 'text':
+            // Allow letters, numbers, spaces, and common punctuation
+            $input = preg_replace('/[^a-zA-Z0-9\s\-\'\.\,\!\?\(\)]/', '', $input);
+            $input = trim($input);
+            return substr($input, 0, 500); // Max 500 characters
+            
+        case 'alphanumeric':
+            // Allow only letters and numbers
+            $input = preg_replace('/[^a-zA-Z0-9]/', '', $input);
+            return substr($input, 0, 20); // Max 20 characters
+            
+        case 'date':
+            // Validate date format (YYYY-MM-DD)
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $input)) {
+                return $input;
+            }
+            return '';
+            
+        case 'gender':
+            $allowed_genders = ['male', 'female', 'other'];
+            return in_array($input, $allowed_genders) ? $input : '';
+            
+        case 'customer_type':
+            $allowed_types = ['individual', 'business', 'vip', 'wholesale'];
+            return in_array($input, $allowed_types) ? $input : 'individual';
+            
+        case 'payment_method':
+            $allowed_methods = ['cash', 'credit_card', 'debit_card', 'bank_transfer', 'check', 'paypal'];
+            return in_array($input, $allowed_methods) ? $input : '';
+            
+        case 'membership_status':
+            $allowed_statuses = ['active', 'inactive', 'suspended'];
+            return in_array($input, $allowed_statuses) ? $input : 'active';
+            
+        case 'membership_level':
+            $allowed_levels = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'];
+            return in_array($input, $allowed_levels) ? $input : 'Bronze';
+            
+        case 'numeric':
+            return is_numeric($input) ? floatval($input) : 0;
+            
+        case 'expense_status':
+            $allowed_statuses = ['pending', 'approved', 'rejected', 'paid'];
+            return in_array($input, $allowed_statuses) ? $input : 'pending';
+            
+        case 'expense_type':
+            $allowed_types = ['operational', 'marketing', 'travel', 'office', 'utilities', 'other'];
+            return in_array($input, $allowed_types) ? $input : 'operational';
+            
+        default:
+            // Basic HTML entity encoding for unknown types
+            return htmlspecialchars(trim($input), ENT_QUOTES, 'UTF-8');
+    }
+}
+
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
     header('Location: ../auth/login.php');
@@ -40,46 +122,106 @@ if (!hasPermission('create_expenses', $permissions)) {
     exit();
 }
 
+// Generate CSRF token if not exists
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $title = trim($_POST['title']);
-    $description = trim($_POST['description']);
-    $category_id = $_POST['category_id'];
-    $subcategory_id = $_POST['subcategory_id'] ?: null;
-    $vendor_id = $_POST['vendor_id'] ?: null;
-    $department_id = $_POST['department_id'] ?: null;
-    $amount = floatval($_POST['amount']);
-    $tax_amount = floatval($_POST['tax_amount']);
-    $total_amount = $amount + $tax_amount;
-    $payment_method_id = $_POST['payment_method_id'] ?: null;
-    $payment_status = $_POST['payment_status'];
-    $payment_date = $_POST['payment_date'] ?: null;
-    $due_date = $_POST['due_date'] ?: null;
-    $expense_date = $_POST['expense_date'];
-    $is_tax_deductible = isset($_POST['is_tax_deductible']) ? 1 : 0;
-    $is_recurring = isset($_POST['is_recurring']) ? 1 : 0;
-    $recurring_frequency = $_POST['recurring_frequency'] ?: null;
-    $recurring_end_date = $_POST['recurring_end_date'] ?: null;
-    $notes = trim($_POST['notes']);
+    // CSRF Protection
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        $_SESSION['error'] = 'Invalid security token. Please try again.';
+        header("Location: add.php?error=csrf");
+        exit();
+    }
+    // Rate limiting check
+    $rate_limit_key = 'add_expense_' . $user_id;
+    if (!isset($_SESSION[$rate_limit_key])) {
+        $_SESSION[$rate_limit_key] = ['count' => 0, 'last_attempt' => time()];
+    }
+    
+    $rate_limit = $_SESSION[$rate_limit_key];
+    if ($rate_limit['count'] >= 5 && (time() - $rate_limit['last_attempt']) < 300) { // 5 attempts per 5 minutes
+        $_SESSION['error'] = 'Too many attempts. Please wait 5 minutes before trying again.';
+        header("Location: add.php?error=rate_limit");
+        exit();
+    } else {
+        // Reset rate limit if more than 5 minutes have passed
+        if ((time() - $rate_limit['last_attempt']) >= 300) {
+            $_SESSION[$rate_limit_key] = ['count' => 0, 'last_attempt' => time()];
+        }
+        
+        // Input sanitization with security validation
+        $title = sanitize_input($_POST['title'] ?? '', 'text');
+        $description = sanitize_input($_POST['description'] ?? '', 'text');
+        $category_id = sanitize_input($_POST['category_id'] ?? '', 'numeric');
+        $subcategory_id = sanitize_input($_POST['subcategory_id'] ?? '', 'numeric') ?: null;
+        $vendor_id = sanitize_input($_POST['vendor_id'] ?? '', 'numeric') ?: null;
+        $department_id = sanitize_input($_POST['department_id'] ?? '', 'numeric') ?: null;
+        $amount = sanitize_input($_POST['amount'] ?? 0, 'numeric');
+        $tax_amount = sanitize_input($_POST['tax_amount'] ?? 0, 'numeric');
+        $total_amount = $amount + $tax_amount;
+        $payment_method_id = sanitize_input($_POST['payment_method_id'] ?? '', 'numeric') ?: null;
+        $payment_status = sanitize_input($_POST['payment_status'] ?? '', 'expense_status');
+        $payment_date = sanitize_input($_POST['payment_date'] ?? '', 'date') ?: null;
+        $due_date = sanitize_input($_POST['due_date'] ?? '', 'date') ?: null;
+        $expense_date = sanitize_input($_POST['expense_date'] ?? '', 'date');
+        $is_tax_deductible = isset($_POST['is_tax_deductible']) ? 1 : 0;
+        $is_recurring = isset($_POST['is_recurring']) ? 1 : 0;
+        $recurring_frequency = sanitize_input($_POST['recurring_frequency'] ?? '', 'alphanumeric') ?: null;
+        $recurring_end_date = sanitize_input($_POST['recurring_end_date'] ?? '', 'date') ?: null;
+        $notes = sanitize_input($_POST['notes'] ?? '', 'text');
 
-    // Validation
-    $errors = [];
-    
-    if (empty($title)) {
-        $errors[] = "Title is required";
-    }
-    
-    if (empty($category_id)) {
-        $errors[] = "Category is required";
-    }
-    
-    if (empty($amount) || $amount <= 0) {
-        $errors[] = "Amount must be greater than 0";
-    }
-    
-    if (empty($expense_date)) {
-        $errors[] = "Expense date is required";
-    }
+        // Enhanced validation with security checks
+        $errors = [];
+        
+        if (empty($title)) {
+            $errors[] = "Title is required";
+        } elseif (strlen($title) < 3) {
+            $errors[] = "Title must be at least 3 characters long";
+        } elseif (strlen($title) > 200) {
+            $errors[] = "Title cannot exceed 200 characters";
+        }
+        
+        if (empty($category_id)) {
+            $errors[] = "Category is required";
+        } elseif (!is_numeric($category_id) || $category_id <= 0) {
+            $errors[] = "Invalid category selected";
+        }
+        
+        if (empty($amount) || $amount <= 0) {
+            $errors[] = "Amount must be greater than 0";
+        } elseif ($amount > 999999.99) {
+            $errors[] = "Amount cannot exceed $999,999.99";
+        }
+        
+        if (empty($expense_date)) {
+            $errors[] = "Expense date is required";
+        } elseif (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $expense_date)) {
+            $errors[] = "Invalid expense date format";
+        }
+        
+        // Additional security validations
+        if (!empty($payment_date) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $payment_date)) {
+            $errors[] = "Invalid payment date format";
+        }
+        
+        if (!empty($due_date) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $due_date)) {
+            $errors[] = "Invalid due date format";
+        }
+        
+        if (!empty($recurring_end_date) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $recurring_end_date)) {
+            $errors[] = "Invalid recurring end date format";
+        }
+        
+        if ($tax_amount < 0) {
+            $errors[] = "Tax amount cannot be negative";
+        }
+        
+        if ($tax_amount > $amount) {
+            $errors[] = "Tax amount cannot exceed the base amount";
+        }
     
     if ($is_recurring && empty($recurring_frequency)) {
         $errors[] = "Recurring frequency is required for recurring expenses";
@@ -144,6 +286,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             header('Location: index.php');
             exit();
             
+        } else {
+            // Increment rate limit counter
+            $_SESSION[$rate_limit_key]['count']++;
+            $_SESSION[$rate_limit_key]['last_attempt'] = time();
+        }
+            
         } catch (PDOException $e) {
             $errors[] = "Database error: " . $e->getMessage();
         }
@@ -165,6 +313,11 @@ $default_tax_deductible = getSetting($conn, 'expense_tax_deductible_default', '0
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-Frame-Options" content="DENY">
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:;">
     <title>Add Expense - <?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
@@ -214,13 +367,16 @@ $default_tax_deductible = getSetting($conn, 'expense_tax_deductible_default', '0
                     </div>
                     <div class="card-body">
                         <form method="POST" enctype="multipart/form-data" id="expenseForm">
+                            <!-- CSRF Protection -->
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                            
                             <div class="row">
                                 <!-- Basic Information -->
                                 <div class="col-md-8">
                                     <div class="row mb-3">
                                         <div class="col-md-6">
                                             <label class="form-label">Title <span class="text-danger">*</span></label>
-                                            <input type="text" class="form-control" name="title" value="<?= htmlspecialchars($_POST['title'] ?? '') ?>" required>
+                                            <input type="text" class="form-control" name="title" value="<?= htmlspecialchars($_POST['title'] ?? '') ?>" required maxlength="200">
                                         </div>
                                         <div class="col-md-6">
                                             <label class="form-label">Expense Date <span class="text-danger">*</span></label>
@@ -230,7 +386,7 @@ $default_tax_deductible = getSetting($conn, 'expense_tax_deductible_default', '0
 
                                     <div class="mb-3">
                                         <label class="form-label">Description</label>
-                                        <textarea class="form-control" name="description" rows="3"><?= htmlspecialchars($_POST['description'] ?? '') ?></textarea>
+                                        <textarea class="form-control" name="description" rows="3" maxlength="500"><?= htmlspecialchars($_POST['description'] ?? '') ?></textarea>
                                     </div>
 
                                     <div class="row mb-3">
@@ -395,7 +551,7 @@ $default_tax_deductible = getSetting($conn, 'expense_tax_deductible_default', '0
                                             <h6 class="mb-0">Notes</h6>
                                         </div>
                                         <div class="card-body">
-                                            <textarea class="form-control" name="notes" rows="4" placeholder="Additional notes..."><?= htmlspecialchars($_POST['notes'] ?? '') ?></textarea>
+                                            <textarea class="form-control" name="notes" rows="4" placeholder="Additional notes..." maxlength="500"><?= htmlspecialchars($_POST['notes'] ?? '') ?></textarea>
                                         </div>
                                     </div>
                                 </div>

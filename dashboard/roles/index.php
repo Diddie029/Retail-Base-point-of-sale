@@ -176,6 +176,12 @@ $stats['users_with_roles'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
                     <a href="add.php" class="btn btn-primary">
                         <i class="bi bi-plus-circle me-1"></i>Add New Role
                     </a>
+                    <a href="menu_management.php" class="btn btn-outline-primary">
+                        <i class="bi bi-gear me-1"></i>Menu Management
+                    </a>
+                    <a href="menu_role_assignment.php" class="btn btn-outline-secondary">
+                        <i class="bi bi-list-ul me-1"></i>Assign Menus
+                    </a>
                     <a href="permissions.php" class="btn btn-outline-secondary">
                         <i class="bi bi-key me-1"></i>Manage Permissions
                     </a>

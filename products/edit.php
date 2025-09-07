@@ -73,6 +73,10 @@ $brands = $brands_stmt->fetchAll(PDO::FETCH_ASSOC);
 $suppliers_stmt = $conn->query("SELECT * FROM suppliers ORDER BY name");
 $suppliers = $suppliers_stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Get tax categories
+$tax_categories_stmt = $conn->query("SELECT * FROM tax_categories WHERE is_active = 1 ORDER BY name");
+$tax_categories = $tax_categories_stmt->fetchAll(PDO::FETCH_ASSOC);
+
 // Get product families
 $families_stmt = $conn->query("SELECT * FROM product_families WHERE status = 'active' ORDER BY name");
 $families = $families_stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -108,6 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $supplier_id = !empty($_POST['supplier_id']) ? (int)$_POST['supplier_id'] : null;
     $status = sanitizeProductInput($_POST['status'] ?? 'active');
     $tax_rate = !empty($_POST['tax_rate']) ? (float)$_POST['tax_rate'] : null;
+    $tax_category_id = !empty($_POST['tax_category_id']) ? (int)$_POST['tax_category_id'] : null;
     $tags = sanitizeProductInput($_POST['tags'] ?? '');
     $warranty_period = sanitizeProductInput($_POST['warranty_period'] ?? '');
 
@@ -234,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     quantity = :quantity, minimum_stock = :minimum_stock, maximum_stock = :maximum_stock,
                     reorder_point = :reorder_point, barcode = :barcode, brand_id = :brand_id,
                     supplier_id = :supplier_id, weight = :weight, length = :length, width = :width,
-                    height = :height, status = :status, tax_rate = :tax_rate, tags = :tags,
+                    height = :height, status = :status, tax_rate = :tax_rate, tax_category_id = :tax_category_id, tags = :tags,
                     warranty_period = :warranty_period, is_serialized = :is_serialized,
                     allow_backorders = :allow_backorders, track_inventory = :track_inventory,
                     sale_price = :sale_price, sale_start_date = :sale_start_date, sale_end_date = :sale_end_date,
@@ -263,6 +268,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $update_stmt->bindParam(':height', $height);
             $update_stmt->bindParam(':status', $status);
             $update_stmt->bindParam(':tax_rate', $tax_rate);
+            $update_stmt->bindParam(':tax_category_id', $tax_category_id);
             $update_stmt->bindParam(':tags', $tags);
             $update_stmt->bindParam(':warranty_period', $warranty_period);
             $update_stmt->bindParam(':is_serialized', $is_serialized, PDO::PARAM_INT);
@@ -571,6 +577,27 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
 
                         <div class="form-row">
                             <div class="form-group">
+                                <label for="tax_category_id" class="form-label">Tax Category</label>
+                                <select class="form-control" id="tax_category_id" name="tax_category_id">
+                                    <option value="">Select Tax Category (Optional)</option>
+                                    <?php foreach ($tax_categories as $category): ?>
+                                    <option value="<?php echo $category['id']; ?>" 
+                                            <?php echo ($product['tax_category_id'] == $category['id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($category['name']); ?>
+                                        <?php if (!empty($category['description'])): ?>
+                                        - <?php echo htmlspecialchars($category['description']); ?>
+                                        <?php endif; ?>
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="form-text">
+                                    Select a tax category for automatic tax calculation
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
                                 <label for="tax_rate" class="form-label">Tax Rate (%)</label>
                                 <input type="number" class="form-control <?php echo isset($errors['tax_rate']) ? 'is-invalid' : ''; ?>"
                                        id="tax_rate" name="tax_rate" value="<?php echo htmlspecialchars($product['tax_rate'] ?? ''); ?>"
@@ -579,7 +606,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['tax_rate']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Product-specific tax rate (leave empty to use system default)
+                                    Product-specific tax rate (overrides tax category rates if set)
                                 </div>
                             </div>
 

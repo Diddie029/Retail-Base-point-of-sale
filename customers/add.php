@@ -3,6 +3,80 @@ session_start();
 require_once __DIR__ . '/../include/db.php';
 require_once __DIR__ . '/../include/functions.php';
 
+// Security function for input sanitization and validation
+function sanitize_input($input, $type) {
+    if ($input === null || $input === '') {
+        return '';
+    }
+    
+    // Remove null bytes and control characters
+    $input = str_replace(["\0", "\x00"], '', $input);
+    $input = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $input);
+    
+    switch ($type) {
+        case 'name':
+            // Allow letters, spaces, hyphens, apostrophes, and periods
+            $input = preg_replace('/[^a-zA-Z\s\-\'\.]/', '', $input);
+            $input = trim($input);
+            return substr($input, 0, 50); // Max 50 characters
+            
+        case 'email':
+            $input = filter_var(trim($input), FILTER_SANITIZE_EMAIL);
+            return substr($input, 0, 100); // Max 100 characters
+            
+        case 'phone':
+            // Allow digits, spaces, hyphens, parentheses, plus, and periods
+            $input = preg_replace('/[^0-9\s\-\(\)\+\.]/', '', $input);
+            $input = trim($input);
+            return substr($input, 0, 20); // Max 20 characters
+            
+        case 'text':
+            // Allow letters, numbers, spaces, and common punctuation
+            $input = preg_replace('/[^a-zA-Z0-9\s\-\'\.\,\!\?\(\)]/', '', $input);
+            $input = trim($input);
+            return substr($input, 0, 500); // Max 500 characters
+            
+        case 'alphanumeric':
+            // Allow only letters and numbers
+            $input = preg_replace('/[^a-zA-Z0-9]/', '', $input);
+            return substr($input, 0, 20); // Max 20 characters
+            
+        case 'date':
+            // Validate date format (YYYY-MM-DD)
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $input)) {
+                return $input;
+            }
+            return '';
+            
+        case 'gender':
+            $allowed_genders = ['male', 'female', 'other'];
+            return in_array($input, $allowed_genders) ? $input : '';
+            
+        case 'customer_type':
+            $allowed_types = ['individual', 'business', 'vip', 'wholesale'];
+            return in_array($input, $allowed_types) ? $input : 'individual';
+            
+        case 'payment_method':
+            $allowed_methods = ['cash', 'credit_card', 'debit_card', 'bank_transfer', 'check', 'paypal'];
+            return in_array($input, $allowed_methods) ? $input : '';
+            
+        case 'membership_status':
+            $allowed_statuses = ['active', 'inactive', 'suspended'];
+            return in_array($input, $allowed_statuses) ? $input : 'active';
+            
+        case 'membership_level':
+            $allowed_levels = ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond'];
+            return in_array($input, $allowed_levels) ? $input : 'Bronze';
+            
+        case 'numeric':
+            return is_numeric($input) ? floatval($input) : 0;
+            
+        default:
+            // Basic HTML entity encoding for unknown types
+            return htmlspecialchars(trim($input), ENT_QUOTES, 'UTF-8');
+    }
+}
+
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../auth/login.php");
@@ -42,10 +116,34 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
-// Generate customer number
-function generateCustomerNumber($conn) {
+// Generate customer number using settings
+function generateCustomerNumber($conn, $settings) {
+    $prefix = $settings['customer_number_prefix'] ?? 'CUST';
+    $length = intval($settings['customer_number_length'] ?? 6);
+    $separator = $settings['customer_number_separator'] ?? '-';
+    $format = $settings['customer_number_format'] ?? 'prefix-date-number';
+    
     do {
-        $number = 'CUST' . date('Y') . str_pad(rand(1, 99999), 5, '0', STR_PAD_LEFT);
+        $sampleNumber = str_pad(rand(1, pow(10, $length) - 1), $length, '0', STR_PAD_LEFT);
+        $currentDate = date('Ymd');
+        
+        switch ($format) {
+            case 'prefix-date-number':
+                $number = $prefix . $separator . $currentDate . $separator . $sampleNumber;
+                break;
+            case 'prefix-number':
+                $number = $prefix . $separator . $sampleNumber;
+                break;
+            case 'date-prefix-number':
+                $number = $currentDate . $separator . $prefix . $separator . $sampleNumber;
+                break;
+            case 'number-only':
+                $number = $sampleNumber;
+                break;
+            default:
+                $number = $prefix . $separator . $currentDate . $separator . $sampleNumber;
+        }
+        
         $stmt = $conn->prepare("SELECT COUNT(*) as count FROM customers WHERE customer_number = :number");
         $stmt->bindParam(':number', $number);
         $stmt->execute();
@@ -59,38 +157,64 @@ $errors = [];
 $success = '';
 $form_data = [];
 
+// Generate CSRF token if not exists
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // CSRF Protection
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        $errors[] = 'Invalid security token. Please try again.';
+        header("Location: add.php?error=csrf");
+        exit();
+    }
     try {
-        // Basic information
-        $first_name = trim($_POST['first_name'] ?? '');
-        $last_name = trim($_POST['last_name'] ?? '');
-        $email = trim($_POST['email'] ?? '');
-        $phone = trim($_POST['phone'] ?? '');
-        $mobile = trim($_POST['mobile'] ?? '');
+        // Rate limiting check
+        $rate_limit_key = 'add_customer_' . $user_id;
+        if (!isset($_SESSION[$rate_limit_key])) {
+            $_SESSION[$rate_limit_key] = ['count' => 0, 'last_attempt' => time()];
+        }
+        
+        $rate_limit = $_SESSION[$rate_limit_key];
+        if ($rate_limit['count'] >= 5 && (time() - $rate_limit['last_attempt']) < 300) { // 5 attempts per 5 minutes
+            $errors[] = 'Too many attempts. Please wait 5 minutes before trying again.';
+        } else {
+            // Reset rate limit if more than 5 minutes have passed
+            if ((time() - $rate_limit['last_attempt']) >= 300) {
+                $_SESSION[$rate_limit_key] = ['count' => 0, 'last_attempt' => time()];
+            }
+            
+            // Basic information with security validation
+            $first_name = sanitize_input($_POST['first_name'] ?? '', 'name');
+            $last_name = sanitize_input($_POST['last_name'] ?? '', 'name');
+            $email = sanitize_input($_POST['email'] ?? '', 'email');
+            $phone = sanitize_input($_POST['phone'] ?? '', 'phone');
+            $mobile = sanitize_input($_POST['mobile'] ?? '', 'phone');
 
-        // Address information
-        $address = trim($_POST['address'] ?? '');
-        $city = trim($_POST['city'] ?? '');
-        $state = trim($_POST['state'] ?? '');
-        $zip_code = trim($_POST['zip_code'] ?? '');
-        $country = trim($_POST['country'] ?? 'USA');
+            // Address information with security validation
+            $address = sanitize_input($_POST['address'] ?? '', 'text');
+            $city = sanitize_input($_POST['city'] ?? '', 'name');
+            $state = sanitize_input($_POST['state'] ?? '', 'name');
+            $zip_code = sanitize_input($_POST['zip_code'] ?? '', 'alphanumeric');
+            $country = sanitize_input($_POST['country'] ?? 'USA', 'name');
 
-        // Personal information
-        $date_of_birth = trim($_POST['date_of_birth'] ?? '');
-        $gender = trim($_POST['gender'] ?? '');
+            // Personal information with security validation
+            $date_of_birth = sanitize_input($_POST['date_of_birth'] ?? '', 'date');
+            $gender = sanitize_input($_POST['gender'] ?? '', 'gender');
 
-        // Business information
-        $customer_type = trim($_POST['customer_type'] ?? 'individual');
-        $company_name = trim($_POST['company_name'] ?? '');
-        $tax_id = trim($_POST['tax_id'] ?? '');
+            // Business information with security validation
+            $customer_type = sanitize_input($_POST['customer_type'] ?? 'individual', 'customer_type');
+            $company_name = sanitize_input($_POST['company_name'] ?? '', 'text');
+            $tax_id = sanitize_input($_POST['tax_id'] ?? '', 'alphanumeric');
 
-        // Financial information
-        $credit_limit = floatval($_POST['credit_limit'] ?? 0);
-        $preferred_payment_method = trim($_POST['preferred_payment_method'] ?? '');
+            // Financial information with security validation
+            $credit_limit = sanitize_input($_POST['credit_limit'] ?? 0, 'numeric');
+            $preferred_payment_method = sanitize_input($_POST['preferred_payment_method'] ?? '', 'payment_method');
 
-        // Notes
-        $notes = trim($_POST['notes'] ?? '');
+            // Notes with security validation
+            $notes = sanitize_input($_POST['notes'] ?? '', 'text');
 
         // Validation
         if (empty($first_name)) {
@@ -115,21 +239,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        if (empty($phone) && empty($mobile) && empty($email)) {
-            $errors[] = 'At least one contact method (phone, mobile, or email) is required';
+        if (empty($phone)) {
+            $errors[] = 'Phone number is required';
         }
 
         if ($customer_type === 'business' && empty($company_name)) {
             $errors[] = 'Company name is required for business customers';
         }
 
-        if ($credit_limit < 0) {
-            $errors[] = 'Credit limit cannot be negative';
-        }
+            if ($credit_limit < 0) {
+                $errors[] = 'Credit limit cannot be negative';
+            }
 
-        if (empty($errors)) {
+            if ($credit_limit > 999999.99) {
+                $errors[] = 'Credit limit cannot exceed $999,999.99';
+            }
+
+            // Additional security validations
+            if (!empty($date_of_birth) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_of_birth)) {
+                $errors[] = 'Invalid date format for date of birth';
+            }
+
+            if (!empty($zip_code) && !preg_match('/^[A-Za-z0-9\s\-]{3,10}$/', $zip_code)) {
+                $errors[] = 'Invalid ZIP/postal code format';
+            }
+
+            if (empty($errors)) {
             // Generate customer number
-            $customer_number = generateCustomerNumber($conn);
+            $customer_number = generateCustomerNumber($conn, $settings);
 
             // Insert customer
             $stmt = $conn->prepare("
@@ -191,9 +328,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Reset form data
             $form_data = [];
-        } else {
-            // Store form data for repopulation
-            $form_data = $_POST;
+            } else {
+                // Increment rate limit counter
+                $_SESSION[$rate_limit_key]['count']++;
+                $_SESSION[$rate_limit_key]['last_attempt'] = time();
+                
+                // Store form data for repopulation
+                $form_data = $_POST;
+            }
         }
 
     } catch (Exception $e) {
@@ -207,6 +349,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-Frame-Options" content="DENY">
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:;">
     <title>Add Customer - <?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
@@ -377,6 +524,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="row">
                 <div class="col-lg-8 mx-auto">
                     <form method="POST" class="form-card">
+                        <!-- CSRF Protection -->
+                        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                        
                         <!-- Customer Type Selection -->
                         <div class="form-section">
                             <h5 class="section-title">
@@ -407,6 +557,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             <input type="hidden" name="customer_type" id="customer_type" value="<?php echo htmlspecialchars($form_data['customer_type'] ?? 'individual'); ?>">
                         </div>
 
+                        <!-- Customer Number Display -->
+                        <div class="form-section">
+                            <h5 class="section-title">
+                                <i class="bi bi-hash"></i>Customer Number
+                            </h5>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <div class="form-floating">
+                                        <input type="text" class="form-control" id="customer_number_display" 
+                                               value="<?php echo htmlspecialchars($form_data['customer_number'] ?? generateCustomerNumber($conn, $settings)); ?>" 
+                                               readonly style="background-color: #f8f9fa;">
+                                        <label for="customer_number_display">Customer Number (Auto-generated)</label>
+                                    </div>
+                                    <div class="form-text">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        This number will be automatically generated when you create the customer
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Basic Information -->
                         <div class="form-section">
                             <h5 class="section-title">
@@ -416,7 +587,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <div class="col-md-6">
                                     <div class="form-floating">
                                         <input type="text" class="form-control" id="first_name" name="first_name"
-                                               placeholder="First Name" required
+                                               placeholder="First Name" required maxlength="50"
                                                value="<?php echo htmlspecialchars($form_data['first_name'] ?? ''); ?>">
                                         <label for="first_name" class="required-field">First Name</label>
                                     </div>
@@ -424,7 +595,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <div class="col-md-6">
                                     <div class="form-floating">
                                         <input type="text" class="form-control" id="last_name" name="last_name"
-                                               placeholder="Last Name" required
+                                               placeholder="Last Name" required maxlength="50"
                                                value="<?php echo htmlspecialchars($form_data['last_name'] ?? ''); ?>">
                                         <label for="last_name" class="required-field">Last Name</label>
                                     </div>
@@ -432,7 +603,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <div class="col-md-6">
                                     <div class="form-floating">
                                         <input type="email" class="form-control" id="email" name="email"
-                                               placeholder="Email Address"
+                                               placeholder="Email Address" maxlength="100"
                                                value="<?php echo htmlspecialchars($form_data['email'] ?? ''); ?>">
                                         <label for="email">Email Address</label>
                                     </div>
@@ -440,9 +611,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <div class="col-md-6">
                                     <div class="form-floating">
                                         <input type="tel" class="form-control" id="phone" name="phone"
-                                               placeholder="Phone Number"
+                                               placeholder="Phone Number" required maxlength="20"
                                                value="<?php echo htmlspecialchars($form_data['phone'] ?? ''); ?>">
-                                        <label for="phone">Phone Number</label>
+                                        <label for="phone" class="required-field">Phone Number</label>
                                     </div>
                                 </div>
                                 <div class="col-md-6">

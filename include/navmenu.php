@@ -1,10 +1,150 @@
+<?php
+// Dynamic role-based navigation logic using database-driven menu access
+$role_name = $_SESSION['role_name'] ?? 'User';
+$role_id = $_SESSION['role_id'] ?? 0;
+
+// Get menu access settings for this role from database
+$showSections = [];
+$prioritySections = [];
+
+// Check if user is admin - admins get full access to everything
+$isAdmin = (
+    $role_name === 'Admin' || 
+    $role_name === 'admin' || 
+    $role_name === 'Administrator' || 
+    $role_name === 'administrator' ||
+    hasPermission('view_all_menus', $permissions) ||
+    hasPermission('manage_roles', $permissions) ||
+    hasPermission('manage_users', $permissions)
+);
+
+
+if ($isAdmin) {
+    // Admin gets full access to all menu sections
+    $stmt = $conn->prepare("
+        SELECT section_key, section_name, section_icon, section_description
+        FROM menu_sections 
+        WHERE is_active = 1
+        ORDER BY sort_order, section_name
+    ");
+    $stmt->execute();
+    $menuAccess = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    foreach ($menuAccess as $access) {
+        $sectionKey = $access['section_key'];
+        $showSections[$sectionKey] = true; // Admin sees everything
+        $prioritySections[] = $sectionKey; // All sections are priority for admin
+    }
+} elseif ($role_id) {
+    $stmt = $conn->prepare("
+        SELECT ms.section_key, rma.is_visible, rma.is_priority, ms.section_name, ms.section_icon, ms.section_description
+        FROM menu_sections ms
+        LEFT JOIN role_menu_access rma ON ms.id = rma.menu_section_id AND rma.role_id = :role_id
+        WHERE ms.is_active = 1
+        ORDER BY ms.sort_order, ms.section_name
+    ");
+    $stmt->bindParam(':role_id', $role_id);
+    $stmt->execute();
+    $menuAccess = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    foreach ($menuAccess as $access) {
+        $sectionKey = $access['section_key'];
+        $isVisible = $access['is_visible'] ?? 0;
+        $isPriority = $access['is_priority'] ?? 0;
+        
+        $showSections[$sectionKey] = (bool)$isVisible;
+        if ($isPriority) {
+            $prioritySections[] = $sectionKey;
+        }
+    }
+} else {
+    // Fallback for users without roles - show basic sections based on permissions
+    // Check if user has admin-like permissions and give them full access
+    $hasAdminPermissions = (
+        hasPermission('manage_roles', $permissions) || 
+        hasPermission('manage_users', $permissions) || 
+        hasPermission('manage_settings', $permissions) ||
+        hasPermission('view_all_menus', $permissions)
+    );
+    
+    if ($hasAdminPermissions) {
+        // User has admin permissions - give them access to everything
+        $stmt = $conn->prepare("
+            SELECT section_key, section_name, section_icon, section_description
+            FROM menu_sections 
+            WHERE is_active = 1
+            ORDER BY sort_order, section_name
+        ");
+        $stmt->execute();
+        $menuAccess = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        foreach ($menuAccess as $access) {
+            $sectionKey = $access['section_key'];
+            $showSections[$sectionKey] = true; // Admin sees everything
+            $prioritySections[] = $sectionKey; // All sections are priority for admin
+        }
+    } else {
+        // Regular user - show sections based on permissions
+        $showSections = [
+            'inventory' => hasPermission('manage_inventory', $permissions) || hasPermission('manage_categories', $permissions) || hasPermission('manage_product_brands', $permissions) || hasPermission('manage_product_suppliers', $permissions),
+            'expiry' => hasPermission('view_expiry_alerts', $permissions) || hasPermission('manage_expiry_tracker', $permissions),
+            'bom' => hasPermission('create_boms', $permissions) || hasPermission('edit_boms', $permissions) || hasPermission('delete_boms', $permissions) || hasPermission('view_boms', $permissions) || hasPermission('view_bom_components', $permissions) || hasPermission('view_bom_costing', $permissions),
+            'finance' => hasPermission('view_finance', $permissions),
+            'expenses' => hasPermission('view_expense_reports', $permissions) || hasPermission('create_expenses', $permissions),
+            'admin' => hasPermission('manage_users', $permissions) || hasPermission('manage_settings', $permissions) || hasPermission('manage_backup', $permissions) || hasPermission('view_security_logs', $permissions)
+        ];
+        $prioritySections = array_keys(array_filter($showSections));
+    }
+}
+
+// Count visible sections for role-based styling
+$visibleSections = array_filter($showSections);
+$totalVisibleSections = count($visibleSections);
+
+// Emergency fallback: If admin has no visible sections, give them everything
+if ($totalVisibleSections == 0 && (
+    $role_name === 'Admin' || 
+    $role_name === 'admin' || 
+    $role_name === 'Administrator' || 
+    $role_name === 'administrator' ||
+    hasPermission('manage_roles', $permissions) ||
+    hasPermission('manage_users', $permissions)
+)) {
+    error_log("Emergency Admin Fallback: Admin user has no visible sections, enabling all sections");
+    
+    $stmt = $conn->prepare("
+        SELECT section_key, section_name, section_icon, section_description
+        FROM menu_sections 
+        WHERE is_active = 1
+        ORDER BY sort_order, section_name
+    ");
+    $stmt->execute();
+    $menuAccess = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    foreach ($menuAccess as $access) {
+        $sectionKey = $access['section_key'];
+        $showSections[$sectionKey] = true; // Admin sees everything
+        $prioritySections[] = $sectionKey; // All sections are priority for admin
+    }
+    
+    // Recalculate visible sections
+    $visibleSections = array_filter($showSections);
+    $totalVisibleSections = count($visibleSections);
+}
+?>
+
 <!-- Sidebar Navigation -->
-<nav class="sidebar" style="background-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;">
+<nav class="sidebar <?php echo $totalVisibleSections <= 3 ? 'simplified' : ''; ?>" style="background-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;">
     <div class="sidebar-header">
         <h4><i class="bi bi-shop me-2"></i><?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></h4>
         <small>Point of Sale System</small>
+        <div class="role-badge">
+            <i class="bi bi-person-badge"></i>
+            <?php echo htmlspecialchars($role_name); ?>
+        </div>
     </div>
     <div class="sidebar-nav">
+        <!-- Dashboard - Always visible -->
         <div class="nav-item">
             <a href="/pointofsale/dashboard/dashboard.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? 'active' : ''; ?>" style="background-color: <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-speedometer2"></i>
@@ -12,6 +152,7 @@
             </a>
         </div>
 
+        <!-- Point of Sale - Always visible if permission exists -->
         <?php if (hasPermission('process_sales', $permissions)): ?>
         <div class="nav-item">
             <a href="/pointofsale/pos/sale.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
@@ -21,158 +162,7 @@
         </div>
         <?php endif; ?>
 
-        <?php if (hasPermission('manage_inventory', $permissions) || hasPermission('manage_categories', $permissions) || hasPermission('manage_product_brands', $permissions) || hasPermission('manage_product_suppliers', $permissions)): ?>
-        <div class="nav-section">
-            <div class="nav-section-title">
-                <i class="bi bi-box me-2"></i>
-                Products
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/products/products.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/products/products.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/products/products.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-list"></i>
-                    All Products
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/categories/categories.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/categories/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/categories/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-tags"></i>
-                    Categories
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/product_families/families.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/product_families/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/product_families/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-diagram-3"></i>
-                    Product Families
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/brands/brands.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/brands/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/brands/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-star"></i>
-                    Brands
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/suppliers/suppliers.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/suppliers/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/suppliers/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-truck"></i>
-                    Suppliers
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/inventory/inventory.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/inventory/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/inventory/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-boxes"></i>
-                    Inventory
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/products/bulk_operations.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/products/bulk_operations.php') !== false || strpos($_SERVER['REQUEST_URI'], '/products/bulk_') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/products/bulk_operations.php') !== false || strpos($_SERVER['REQUEST_URI'], '/products/bulk_') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-lightning-charge"></i>
-                    Bulk Operations
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/shelf_label/shelf_labels.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/shelf_label/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/shelf_label/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-tags"></i>
-                    Shelf Labels
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <?php if (hasPermission('view_expiry_alerts', $permissions) || hasPermission('manage_expiry_tracker', $permissions)): ?>
-        <div class="nav-section">
-            <div class="nav-section-title">
-                <i class="bi bi-clock-history me-2"></i>
-                Expiry Management
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/expiry_tracker/expiry_tracker.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/expiry_tracker.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/expiry_tracker.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-clock-history"></i>
-                    Expiry Tracker
-                </a>
-            </div>
-            <?php if (hasPermission('manage_expiry_tracker', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/expiry_tracker/add_expiry_date.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/add_expiry_date.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expiry_tracker/add_expiry_date.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-plus-circle"></i>
-                    Add Expiry Date
-                </a>
-            </div>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
-
-        <?php if (hasPermission('create_boms', $permissions) || hasPermission('edit_boms', $permissions) || hasPermission('delete_boms', $permissions) || hasPermission('view_boms', $permissions) || hasPermission('view_bom_components', $permissions) || hasPermission('view_bom_costing', $permissions)): ?>
-        <div class="nav-section">
-            <div class="nav-section-title">
-                <i class="bi bi-file-earmark-text me-2"></i>
-                Bill of Materials
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/bom/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/') !== false && !strpos($_SERVER['REQUEST_URI'], '/bom/production.php') && !strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') && !strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/') !== false && !strpos($_SERVER['REQUEST_URI'], '/bom/production.php') && !strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') && !strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-list-ul"></i>
-                    BOM Management
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/bom/auto_bom_index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_index.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_index.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-gear-fill"></i>
-                    Auto BOM
-                </a>
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/bom/auto_bom_products.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_products.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/auto_bom_products.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-list-ul"></i>
-                    Auto BOM Products
-                </a>
-            </div>
-            <?php if (hasPermission('create_boms', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/bom/add.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/add.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/add.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-plus-circle"></i>
-                    Create BOM
-                </a>
-            </div>
-            <?php endif; ?>
-            <?php if (hasPermission('create_production_orders', $permissions) || hasPermission('manage_production_orders', $permissions) || hasPermission('approve_production_orders', $permissions) || hasPermission('view_production_orders', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/bom/production.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/production.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/production.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-gear"></i>
-                    Production Orders
-                </a>
-            </div>
-            <?php endif; ?>
-            <?php if (hasPermission('view_production_reports', $permissions) || hasPermission('view_bom_reports', $permissions) || hasPermission('analyze_bom_performance', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/bom/reports.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/reports.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-graph-up"></i>
-                    BOM Reports
-                </a>
-            </div>
-            <?php endif; ?>
-            <div class="nav-item">
-                <a href="/pointofsale/bom/demo_multilevel.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/demo_multilevel.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/bom/demo_multilevel.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-diagram-3"></i>
-                    Multi-Level Demo
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <?php if (hasPermission('manage_sales', $permissions)): ?>
-        <div class="nav-section">
-            <div class="nav-section-title">
-                <i class="bi bi-receipt me-2"></i>
-                Sales
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/sales/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/sales/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/sales/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-receipt"></i>
-                    Sales History
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
+        <!-- Customers - Always visible if permission exists -->
         <?php if (hasPermission('view_customers', $permissions)): ?>
         <div class="nav-item">
             <a href="/pointofsale/customers/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
@@ -182,6 +172,9 @@
         </div>
         <?php endif; ?>
 
+        <?php include __DIR__ . '/dynamic_navigation.php'; ?>
+
+        <!-- Analytics - Always visible if permission exists -->
         <?php if (hasPermission('view_analytics', $permissions)): ?>
         <div class="nav-item">
             <a href="/pointofsale/analytics/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/analytics/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/analytics/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
@@ -191,107 +184,7 @@
         </div>
         <?php endif; ?>
 
-        <?php if (hasPermission('view_expense_reports', $permissions) || hasPermission('create_expenses', $permissions)): ?>
-        <div class="nav-section">
-            <div class="nav-section-title">
-                <i class="bi bi-cash-stack me-2"></i>
-                Expense Management
-            </div>
-            <div class="nav-item">
-                <a href="/pointofsale/expenses/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/') !== false && !strpos($_SERVER['REQUEST_URI'], '/expenses/categories.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/departments.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/vendors.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/reports.php') ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/') !== false && !strpos($_SERVER['REQUEST_URI'], '/expenses/categories.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/departments.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/vendors.php') && !strpos($_SERVER['REQUEST_URI'], '/expenses/reports.php') ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-list-ul"></i>
-                    All Expenses
-                </a>
-            </div>
-            <?php if (hasPermission('create_expenses', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/expenses/add.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/add.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/add.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-plus-circle"></i>
-                    Add Expense
-                </a>
-            </div>
-            <?php endif; ?>
-            <?php if (hasPermission('manage_expense_categories', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/expenses/categories.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/categories.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/categories.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-tags"></i>
-                    Categories
-                </a>
-            </div>
-            <?php endif; ?>
-            <?php if (hasPermission('manage_expense_departments', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/expenses/departments.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/departments.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/departments.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-building"></i>
-                    Departments
-                </a>
-            </div>
-            <?php endif; ?>
-            <?php if (hasPermission('manage_expense_vendors', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/expenses/vendors.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/vendors.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/vendors.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-shop"></i>
-                    Vendors
-                </a>
-            </div>
-            <?php endif; ?>
-            <?php if (hasPermission('view_expense_reports', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/expenses/reports.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/reports.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/expenses/reports.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-graph-up"></i>
-                    Reports
-                </a>
-            </div>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
-
-        <?php if (hasPermission('manage_users', $permissions) || hasPermission('manage_settings', $permissions) || hasPermission('manage_backup', $permissions)): ?>
-        <div class="nav-section">
-            <div class="nav-section-title">
-                <i class="bi bi-shield me-2"></i>
-                Administration
-            </div>
-
-            <?php if (hasPermission('manage_users', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/dashboard/users/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-person-gear"></i>
-                    User Management
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_roles', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/dashboard/roles/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/roles/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/roles/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-shield-check"></i>
-                    Role Management
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_backup', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/admin/backup/manage_backups.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/backup/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/backup/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-server"></i>
-                    Backup & Security
-                </a>
-            </div>
-            <?php endif; ?>
-
-            <?php if (hasPermission('manage_settings', $permissions)): ?>
-            <div class="nav-item">
-                <a href="/pointofsale/admin/settings/adminsetting.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/settings/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/admin/settings/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                    <i class="bi bi-gear"></i>
-                    Settings
-                </a>
-            </div>
-            <?php endif; ?>
-        </div>
-        <?php endif; ?>
-
-        <!-- My Profile - Available to all users -->
+        <!-- My Profile - Always visible -->
         <div class="nav-item">
             <a href="/pointofsale/dashboard/users/profile.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-person-gear"></i>
@@ -299,6 +192,7 @@
             </a>
         </div>
 
+        <!-- Logout - Always visible -->
         <div class="nav-item mt-auto">
             <a href="/pointofsale/auth/logout.php" class="nav-link text-danger">
                 <i class="bi bi-box-arrow-right"></i>
@@ -312,32 +206,6 @@
 :root {
     --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
     --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
-}
-
-.nav-section {
-    margin-bottom: 1rem;
-}
-
-.nav-section-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: rgba(255,255,255,0.8);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 0.75rem 1rem 0.25rem;
-    margin-bottom: 0.25rem;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-}
-
-.nav-link.active {
-    background-color: var(--primary-color) !important;
-    color: white !important;
-    border-radius: 8px;
-}
-
-.nav-link:hover {
-    background-color: rgba(255,255,255,0.1);
-    color: white;
 }
 
 /* Sidebar Layout */
@@ -417,23 +285,128 @@
     opacity: 1 !important;
 }
 
+/* Collapsible Sections */
 .nav-section {
-    margin-bottom: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.nav-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    border-radius: 8px;
+    margin: 0 0.5rem;
+}
+
+.nav-section-header:hover {
+    background-color: rgba(255,255,255,0.1);
 }
 
 .nav-section-title {
     font-size: 0.875rem;
     font-weight: 600;
-    color: rgba(255,255,255,0.8);
+    color: rgba(255,255,255,0.9);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    padding: 0.75rem 1rem 0.25rem;
-    margin-bottom: 0.25rem;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    align-items: center;
+}
+
+.nav-toggle {
+    font-size: 0.875rem;
+    transition: transform 0.3s ease;
+    color: rgba(255,255,255,0.7);
+}
+
+.nav-toggle.rotated {
+    transform: rotate(180deg);
+}
+
+.nav-section-content {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out;
+    background-color: rgba(0,0,0,0.1);
+    border-radius: 8px;
+    margin: 0 0.5rem;
+}
+
+.nav-section-content.expanded {
+    max-height: 1000px;
+    transition: max-height 0.3s ease-in;
+}
+
+.nav-section-content .nav-item {
+    margin: 0.125rem 0;
+}
+
+.nav-section-content .nav-link {
+    padding: 0.625rem 1rem 0.625rem 2rem;
+    font-size: 0.875rem;
+    margin: 0;
 }
 
 .nav-item.mt-auto {
     margin-top: auto;
+}
+
+/* Role-based styling */
+.role-badge {
+    background: rgba(255,255,255,0.1);
+    padding: 0.25rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.sidebar.simplified .nav-section {
+    margin-bottom: 0.25rem;
+}
+
+.sidebar.simplified .nav-section-header {
+    padding: 0.5rem 1rem;
+}
+
+.priority-section {
+    border-left: 3px solid var(--primary-color);
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.priority-badge {
+    background: var(--primary-color);
+    color: white;
+    font-size: 0.625rem;
+    padding: 0.125rem 0.375rem;
+    border-radius: 8px;
+    margin-left: 0.5rem;
+    font-weight: 500;
+}
+
+.secondary-section {
+    opacity: 0.9;
+}
+
+.secondary-section .nav-section-header {
+    color: rgba(255,255,255,0.7);
+}
+
+.secondary-section .nav-section-title {
+    color: rgba(255,255,255,0.7);
+}
+
+/* Auto-expand priority sections */
+.priority-section .nav-section-content {
+    max-height: 1000px;
+}
+
+.priority-section .nav-toggle {
+    transform: rotate(180deg);
 }
 
 /* Responsive Design */
@@ -448,3 +421,55 @@
     }
 }
 </style>
+
+<script>
+// Collapsible Navigation Functionality
+function toggleSection(sectionId) {
+    const content = document.getElementById(sectionId + '-content');
+    const toggle = document.getElementById(sectionId + '-toggle');
+    
+    if (content.classList.contains('expanded')) {
+        content.classList.remove('expanded');
+        toggle.classList.remove('rotated');
+    } else {
+        content.classList.add('expanded');
+        toggle.classList.add('rotated');
+    }
+}
+
+// Auto-expand sections that contain active links and priority sections
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-expand priority sections
+    const prioritySections = document.querySelectorAll('.priority-section');
+    prioritySections.forEach(section => {
+        const content = section.querySelector('.nav-section-content');
+        const toggle = section.querySelector('.nav-toggle');
+        
+        if (content && toggle) {
+            content.classList.add('expanded');
+            toggle.classList.add('rotated');
+        }
+    });
+    
+    // Auto-expand sections that contain active links
+    const activeLinks = document.querySelectorAll('.nav-link.active');
+    activeLinks.forEach(link => {
+        const section = link.closest('.nav-section-content');
+        if (section) {
+            const sectionId = section.id.replace('-content', '');
+            const toggle = document.getElementById(sectionId + '-toggle');
+            
+            section.classList.add('expanded');
+            if (toggle) {
+                toggle.classList.add('rotated');
+            }
+        }
+    });
+    
+    // Add role-based navigation hints
+    const roleBadge = document.querySelector('.role-badge');
+    if (roleBadge) {
+        roleBadge.title = 'Your current role determines which sections are visible and prioritized';
+    }
+});
+</script>

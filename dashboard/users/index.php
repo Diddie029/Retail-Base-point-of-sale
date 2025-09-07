@@ -52,7 +52,7 @@ $where_conditions = [];
 $params = [];
 
 if (!empty($search)) {
-    $where_conditions[] = "(u.first_name LIKE :search OR u.last_name LIKE :search OR u.username LIKE :search OR u.email LIKE :search OR u.employee_id LIKE :search)";
+    $where_conditions[] = "(u.first_name LIKE :search OR u.last_name LIKE :search OR u.username LIKE :search OR u.email LIKE :search OR u.employee_id LIKE :search OR u.user_id LIKE :search)";
     $params['search'] = "%$search%";
 }
 
@@ -228,6 +228,15 @@ $stats['suspended'] = $stmt->fetch(PDO::FETCH_ASSOC)['suspended'];
                     <p class="header-subtitle">Manage system users, roles, and permissions</p>
                 </div>
                 <div class="header-actions">
+                    <button type="button" class="btn btn-outline-secondary me-2" onclick="openEmployeeIdSettings()">
+                        <i class="bi bi-gear me-1"></i>Employee ID Settings
+                    </button>
+                    <button type="button" class="btn btn-outline-success me-2" onclick="generateEmployeeIDs()">
+                        <i class="bi bi-person-badge me-1"></i>Generate Employee IDs
+                    </button>
+                    <button type="button" class="btn btn-outline-primary me-2" onclick="generateUserIDs()">
+                        <i class="bi bi-shuffle me-1"></i>Generate User IDs
+                    </button>
                     <a href="add.php" class="btn btn-primary">
                         <i class="bi bi-plus-circle me-1"></i>Add New User
                     </a>
@@ -334,6 +343,7 @@ $stats['suspended'] = $stmt->fetch(PDO::FETCH_ASSOC)['suspended'];
                             <thead class="table-light">
                                 <tr>
                                     <th>User</th>
+                                    <th>User ID</th>
                                     <th>Contact Info</th>
                                     <th>Role</th>
                                     <th>Department</th>
@@ -345,7 +355,7 @@ $stats['suspended'] = $stmt->fetch(PDO::FETCH_ASSOC)['suspended'];
                             <tbody>
                                 <?php if (empty($users)): ?>
                                 <tr>
-                                    <td colspan="7" class="text-center py-4 text-muted">
+                                    <td colspan="8" class="text-center py-4 text-muted">
                                         <i class="bi bi-people display-1 d-block mb-2"></i>
                                         No users found
                                     </td>
@@ -364,9 +374,18 @@ $stats['suspended'] = $stmt->fetch(PDO::FETCH_ASSOC)['suspended'];
                                                 </div>
                                                 <small class="text-muted">@<?php echo htmlspecialchars($user['username']); ?></small>
                                                 <?php if ($user['employee_id']): ?>
-                                                    <small class="text-muted d-block">ID: <?php echo htmlspecialchars($user['employee_id']); ?></small>
+                                                    <small class="text-muted d-block">Emp ID: <?php echo htmlspecialchars($user['employee_id']); ?></small>
                                                 <?php endif; ?>
                                             </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="fw-bold text-primary">
+                                            <?php if ($user['user_id']): ?>
+                                                <?php echo htmlspecialchars($user['user_id']); ?>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
                                         </div>
                                     </td>
                                     <td>
@@ -449,6 +468,199 @@ $stats['suspended'] = $stmt->fetch(PDO::FETCH_ASSOC)['suspended'];
         </main>
     </div>
 
+    <!-- Password Verification Modal -->
+    <div class="modal fade" id="passwordVerificationModal" tabindex="-1" aria-labelledby="passwordVerificationModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="passwordVerificationModalLabel">
+                        <i class="bi bi-shield-lock me-2"></i>Password Verification
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        For security reasons, please enter your password to change User ID.
+                    </div>
+                    <form id="passwordVerificationForm">
+                        <div class="mb-3">
+                            <label for="verifyPassword" class="form-label">Current Password</label>
+                            <input type="password" class="form-control" id="verifyPassword" name="password" required>
+                            <div class="form-text">Enter your current password to proceed</div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="verifyPasswordAndGenerateUserId()">
+                        <i class="bi bi-check-circle me-1"></i>Verify & Generate
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Employee ID Password Verification Modal -->
+    <div class="modal fade" id="employeeIdPasswordModal" tabindex="-1" aria-labelledby="employeeIdPasswordModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="employeeIdPasswordModalLabel">
+                        <i class="bi bi-shield-lock me-2"></i>Password Verification
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        For security reasons, please enter your password to generate Employee IDs.
+                    </div>
+                    <form id="employeeIdPasswordForm">
+                        <div class="mb-3">
+                            <label for="employeeIdPassword" class="form-label">Current Password</label>
+                            <input type="password" class="form-control" id="employeeIdPassword" name="password" required>
+                            <div class="form-text">Enter your current password to proceed</div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="verifyPasswordAndGenerateEmployeeId()">
+                        <i class="bi bi-person-badge me-1"></i>Generate Employee IDs
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Employee ID Settings Modal -->
+    <div class="modal fade" id="employeeIdSettingsModal" tabindex="-1" aria-labelledby="employeeIdSettingsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="employeeIdSettingsModalLabel">
+                        <i class="bi bi-gear me-2"></i>Employee ID Settings
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="employeeIdSettingsForm">
+                        <div class="row">
+                            <div class="col-12 mb-4">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="autoGenerateEmployeeId" name="auto_generate">
+                                    <label class="form-check-label" for="autoGenerateEmployeeId">
+                                        <strong>Auto-generate Employee IDs</strong>
+                                    </label>
+                                    <div class="form-text">When enabled, Employee IDs will be automatically generated for new users</div>
+                                </div>
+                            </div>
+
+                            <div class="col-12 mb-3">
+                                <h6 class="border-bottom pb-2">Format Settings</h6>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <label for="employeeIdPrefix" class="form-label">Prefix</label>
+                                <input type="text" class="form-control" id="employeeIdPrefix" name="prefix" 
+                                       placeholder="e.g., EMP, STAFF, E" maxlength="10">
+                                <div class="form-text">Optional prefix for Employee IDs</div>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <label for="employeeIdSuffix" class="form-label">Suffix</label>
+                                <input type="text" class="form-control" id="employeeIdSuffix" name="suffix" 
+                                       placeholder="e.g., -2024, -POS" maxlength="10">
+                                <div class="form-text">Optional suffix for Employee IDs</div>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <label for="employeeIdLength" class="form-label">Number Length</label>
+                                <select class="form-select" id="employeeIdLength" name="number_length">
+                                    <option value="3">3 digits (001-999)</option>
+                                    <option value="4" selected>4 digits (0001-9999)</option>
+                                    <option value="5">5 digits (00001-99999)</option>
+                                    <option value="6">6 digits (000001-999999)</option>
+                                </select>
+                                <div class="form-text">Length of the numeric part</div>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <label for="employeeIdStartNumber" class="form-label">Starting Number</label>
+                                <input type="number" class="form-control" id="employeeIdStartNumber" name="start_number" 
+                                       value="1" min="1" max="999999">
+                                <div class="form-text">First number to use (e.g., 1, 100, 1000)</div>
+                            </div>
+
+                            <div class="col-12 mb-3">
+                                <label for="employeeIdSeparator" class="form-label">Separator</label>
+                                <select class="form-select" id="employeeIdSeparator" name="separator">
+                                    <option value="">No separator</option>
+                                    <option value="-">Dash (-)</option>
+                                    <option value="_">Underscore (_)</option>
+                                    <option value=".">Dot (.)</option>
+                                    <option value="/">Slash (/)</option>
+                                </select>
+                                <div class="form-text">Character to separate prefix/suffix from numbers</div>
+                            </div>
+
+                            <div class="col-12 mb-4">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h6 class="card-title">Preview</h6>
+                                        <div id="employeeIdPreview" class="fw-bold text-primary">EMP-0001</div>
+                                        <div class="form-text">This is how Employee IDs will look</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-12 mb-3">
+                                <h6 class="border-bottom pb-2">Advanced Settings</h6>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="includeYear" name="include_year">
+                                    <label class="form-check-label" for="includeYear">
+                                        Include Year
+                                    </label>
+                                    <div class="form-text">Add current year to Employee ID</div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="includeMonth" name="include_month">
+                                    <label class="form-check-label" for="includeMonth">
+                                        Include Month
+                                    </label>
+                                    <div class="form-text">Add current month to Employee ID</div>
+                                </div>
+                            </div>
+
+                            <div class="col-12 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="resetCounterYearly" name="reset_counter_yearly">
+                                    <label class="form-check-label" for="resetCounterYearly">
+                                        Reset Counter Yearly
+                                    </label>
+                                    <div class="form-text">Start numbering from 1 each year</div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveEmployeeIdSettings()">
+                        <i class="bi bi-check-circle me-1"></i>Save Settings
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         function toggleUserStatus(userId, currentStatus) {
@@ -479,6 +691,270 @@ $stats['suspended'] = $stmt->fetch(PDO::FETCH_ASSOC)['suspended'];
                 });
             }
         }
+
+        function generateUserIDs() {
+            if (confirm('This will generate 4-digit User IDs for all users who don\'t have one. Continue?')) {
+                // Show password verification modal
+                const modal = new bootstrap.Modal(document.getElementById('passwordVerificationModal'));
+                modal.show();
+            }
+        }
+
+        function generateEmployeeIDs() {
+            if (confirm('This will generate Employee IDs for all users who don\'t have one based on current settings. Continue?')) {
+                // Show password verification modal for Employee ID generation
+                const modal = new bootstrap.Modal(document.getElementById('employeeIdPasswordModal'));
+                modal.show();
+            }
+        }
+
+        function verifyPasswordAndGenerateUserId() {
+            const password = document.getElementById('verifyPassword').value;
+            
+            if (!password) {
+                alert('Please enter your password');
+                return;
+            }
+
+            const button = document.querySelector('button[onclick="verifyPasswordAndGenerateUserId()"]');
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Verifying...';
+            button.disabled = true;
+
+            fetch('../../api/users/verify_password_and_generate_user_ids.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ password: password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`Successfully generated ${data.generated} User IDs!`);
+                    // Close modal and reload page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('passwordVerificationModal'));
+                    modal.hide();
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.message || 'Failed to generate User IDs'));
+                    if (data.errors && data.errors.length > 0) {
+                        console.error('Generation errors:', data.errors);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while generating User IDs.');
+            })
+            .finally(() => {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
+        }
+
+        function verifyPasswordAndGenerateEmployeeId() {
+            const password = document.getElementById('employeeIdPassword').value;
+            
+            if (!password) {
+                alert('Please enter your password');
+                return;
+            }
+
+            const button = document.querySelector('button[onclick="verifyPasswordAndGenerateEmployeeId()"]');
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Generating...';
+            button.disabled = true;
+
+            fetch('../../api/users/generate_employee_ids.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    password: password
+                })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                // Check if response is JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    // Try to get the response text to see what we got
+                    return response.text().then(text => {
+                        console.error('Non-JSON response:', text);
+                        throw new Error('Response is not JSON. Content-Type: ' + contentType + '. Response: ' + text.substring(0, 200));
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    alert(`Successfully generated ${data.generated} Employee IDs!`);
+                    // Close modal and reload page
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('employeeIdPasswordModal'));
+                    modal.hide();
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.message || 'Failed to generate Employee IDs'));
+                    if (data.errors && data.errors.length > 0) {
+                        console.error('Generation errors:', data.errors);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error details:', error);
+                console.error('Error message:', error.message);
+                alert('An error occurred while generating Employee IDs. Please check the console for details.');
+            })
+            .finally(() => {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
+        }
+
+        function openEmployeeIdSettings() {
+            // Load current settings
+            loadEmployeeIdSettings();
+            
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('employeeIdSettingsModal'));
+            modal.show();
+        }
+
+        function loadEmployeeIdSettings() {
+            fetch('../../api/users/get_employee_id_settings.php')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const settings = data.settings;
+                        
+                        // Populate form fields
+                        document.getElementById('autoGenerateEmployeeId').checked = settings.auto_generate || false;
+                        document.getElementById('employeeIdPrefix').value = settings.prefix || '';
+                        document.getElementById('employeeIdSuffix').value = settings.suffix || '';
+                        document.getElementById('employeeIdLength').value = settings.number_length || '4';
+                        document.getElementById('employeeIdStartNumber').value = settings.start_number || '1';
+                        document.getElementById('employeeIdSeparator').value = settings.separator || '-';
+                        document.getElementById('includeYear').checked = settings.include_year || false;
+                        document.getElementById('includeMonth').checked = settings.include_month || false;
+                        document.getElementById('resetCounterYearly').checked = settings.reset_counter_yearly || false;
+                        
+                        // Update preview
+                        updateEmployeeIdPreview();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading settings:', error);
+                });
+        }
+
+        function updateEmployeeIdPreview() {
+            const prefix = document.getElementById('employeeIdPrefix').value;
+            const suffix = document.getElementById('employeeIdSuffix').value;
+            const length = parseInt(document.getElementById('employeeIdLength').value);
+            const startNumber = parseInt(document.getElementById('employeeIdStartNumber').value);
+            const separator = document.getElementById('employeeIdSeparator').value;
+            const includeYear = document.getElementById('includeYear').checked;
+            const includeMonth = document.getElementById('includeMonth').checked;
+            
+            let preview = '';
+            
+            // Add prefix
+            if (prefix) {
+                preview += prefix;
+                if (separator) preview += separator;
+            }
+            
+            // Add year/month if enabled
+            if (includeYear) {
+                preview += new Date().getFullYear();
+                if (separator) preview += separator;
+            }
+            
+            if (includeMonth) {
+                preview += String(new Date().getMonth() + 1).padStart(2, '0');
+                if (separator) preview += separator;
+            }
+            
+            // Add number
+            preview += String(startNumber).padStart(length, '0');
+            
+            // Add suffix
+            if (suffix) {
+                if (separator) preview += separator;
+                preview += suffix;
+            }
+            
+            document.getElementById('employeeIdPreview').textContent = preview || 'No format set';
+        }
+
+        function saveEmployeeIdSettings() {
+            const formData = new FormData(document.getElementById('employeeIdSettingsForm'));
+            const settings = Object.fromEntries(formData.entries());
+            
+            // Convert checkbox values to boolean
+            settings.auto_generate = document.getElementById('autoGenerateEmployeeId').checked;
+            settings.include_year = document.getElementById('includeYear').checked;
+            settings.include_month = document.getElementById('includeMonth').checked;
+            settings.reset_counter_yearly = document.getElementById('resetCounterYearly').checked;
+            
+            fetch('../../api/users/save_employee_id_settings.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(settings)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Employee ID settings saved successfully!');
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('employeeIdSettingsModal'));
+                    modal.hide();
+                } else {
+                    alert('Error: ' + (data.message || 'Failed to save settings'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while saving settings.');
+            });
+        }
+
+        // Add event listeners for preview updates
+        document.addEventListener('DOMContentLoaded', function() {
+            const previewFields = [
+                'employeeIdPrefix', 'employeeIdSuffix', 'employeeIdLength', 
+                'employeeIdStartNumber', 'employeeIdSeparator', 'includeYear', 'includeMonth'
+            ];
+            
+            previewFields.forEach(fieldId => {
+                const field = document.getElementById(fieldId);
+                if (field) {
+                    field.addEventListener('input', updateEmployeeIdPreview);
+                    field.addEventListener('change', updateEmployeeIdPreview);
+                }
+            });
+            
+            // Clear password field when password verification modal is hidden
+            const passwordModal = document.getElementById('passwordVerificationModal');
+            if (passwordModal) {
+                passwordModal.addEventListener('hidden.bs.modal', function() {
+                    document.getElementById('verifyPassword').value = '';
+                });
+            }
+            
+            // Clear password field when Employee ID password modal is hidden
+            const employeeIdPasswordModal = document.getElementById('employeeIdPasswordModal');
+            if (employeeIdPasswordModal) {
+                employeeIdPasswordModal.addEventListener('hidden.bs.modal', function() {
+                    document.getElementById('employeeIdPassword').value = '';
+                });
+            }
+        });
     </script>
 </body>
 </html>

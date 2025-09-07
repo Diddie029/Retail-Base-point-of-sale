@@ -15,6 +15,208 @@ function hasPermission($permission, $userPermissions) {
 }
 
 /**
+ * Generate a unique 4-digit user ID (auto-generation only)
+ * 
+ * @param PDO $conn Database connection
+ * @return string Unique 4-digit user ID
+ */
+function generateUniqueUserID($conn) {
+    // Forbidden patterns (sequential, reverse sequential, common patterns)
+    $forbidden = ['1234', '4321', '1001', '2002', '3003', '4004', '5005', '6006', '7007', '8008', '9009'];
+    
+    $maxAttempts = 1000; // Prevent infinite loops
+    $attempts = 0;
+    
+    do {
+        // Generate random 4-digit number (1000-9999)
+        $user_id = str_pad(rand(1000, 9999), 4, '0', STR_PAD_LEFT);
+        $attempts++;
+        
+        // Check if it's not in forbidden list
+        if (in_array($user_id, $forbidden)) {
+            continue;
+        }
+        
+        // Check if it's not already used
+        $stmt = $conn->prepare("SELECT id FROM users WHERE user_id = ?");
+        $stmt->execute([$user_id]);
+        
+        if ($stmt->rowCount() == 0) {
+            return $user_id;
+        }
+        
+    } while ($attempts < $maxAttempts);
+    
+    // If we can't find a unique ID after max attempts, throw an error
+    throw new Exception("Unable to generate unique user ID after $maxAttempts attempts. All possible IDs may be in use.");
+}
+
+/**
+ * Generate user IDs for existing users who don't have one
+ * 
+ * @param PDO $conn Database connection
+ * @return array Results of the generation process
+ */
+function generateUserIDsForExistingUsers($conn) {
+    $results = [
+        'success' => true,
+        'generated' => 0,
+        'errors' => []
+    ];
+    
+    try {
+        // Get users without user_id
+        $stmt = $conn->query("SELECT id, username, first_name, last_name FROM users WHERE user_id IS NULL OR user_id = ''");
+        $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        foreach ($users as $user) {
+            try {
+                $user_id = generateUniqueUserID($conn);
+                
+                $update_stmt = $conn->prepare("UPDATE users SET user_id = ? WHERE id = ?");
+                $update_stmt->execute([$user_id, $user['id']]);
+                
+                $results['generated']++;
+            } catch (Exception $e) {
+                $results['errors'][] = "Failed to generate ID for user {$user['username']}: " . $e->getMessage();
+            }
+        }
+        
+        if (!empty($results['errors'])) {
+            $results['success'] = false;
+        }
+        
+    } catch (Exception $e) {
+        $results['success'] = false;
+        $results['errors'][] = "Database error: " . $e->getMessage();
+    }
+    
+    return $results;
+}
+
+/**
+ * Get Employee ID settings
+ * 
+ * @param PDO $conn Database connection
+ * @return array Employee ID settings
+ */
+function getEmployeeIdSettings($conn) {
+    $settings = [];
+    $stmt = $conn->query("
+        SELECT setting_key, setting_value 
+        FROM settings 
+        WHERE setting_key LIKE 'employee_id_%'
+    ");
+    
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $key = str_replace('employee_id_', '', $row['setting_key']);
+        $settings[$key] = $row['setting_value'];
+    }
+    
+    // Convert string values to appropriate types
+    $settings['auto_generate'] = (bool)($settings['auto_generate'] ?? false);
+    $settings['include_year'] = (bool)($settings['include_year'] ?? false);
+    $settings['include_month'] = (bool)($settings['include_month'] ?? false);
+    $settings['reset_counter_yearly'] = (bool)($settings['reset_counter_yearly'] ?? false);
+    $settings['number_length'] = (int)($settings['number_length'] ?? 4);
+    $settings['start_number'] = (int)($settings['start_number'] ?? 1);
+    $settings['current_counter'] = (int)($settings['current_counter'] ?? 0);
+    
+    return $settings;
+}
+
+/**
+ * Generate Employee ID based on settings
+ * 
+ * @param PDO $conn Database connection
+ * @return string Generated Employee ID
+ */
+function generateEmployeeId($conn) {
+    $settings = getEmployeeIdSettings($conn);
+    
+    if (!$settings['auto_generate']) {
+        return ''; // Auto-generation is disabled
+    }
+    
+    // Check if we need to reset counter yearly
+    if ($settings['reset_counter_yearly']) {
+        $currentYear = date('Y');
+        $lastResetYear = $conn->query("SELECT setting_value FROM settings WHERE setting_key = 'employee_id_last_reset_year'")->fetchColumn();
+        
+        if ($lastResetYear != $currentYear) {
+            // Reset counter for new year
+            $stmt = $conn->prepare("
+                INSERT INTO settings (setting_key, setting_value) 
+                VALUES ('employee_id_current_counter', ?) 
+                ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+            ");
+            $stmt->execute([$settings['start_number'] - 1]);
+            
+            // Update last reset year
+            $stmt = $conn->prepare("
+                INSERT INTO settings (setting_key, setting_value) 
+                VALUES ('employee_id_last_reset_year', ?) 
+                ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+            ");
+            $stmt->execute([$currentYear]);
+            
+            $settings['current_counter'] = $settings['start_number'] - 1;
+        }
+    }
+    
+    // Increment counter
+    $newCounter = $settings['current_counter'] + 1;
+    
+    // Update counter in database
+    $stmt = $conn->prepare("
+        INSERT INTO settings (setting_key, setting_value) 
+        VALUES ('employee_id_current_counter', ?) 
+        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+    ");
+    $stmt->execute([$newCounter]);
+    
+    // Build Employee ID
+    $employeeId = '';
+    
+    // Add prefix
+    if (!empty($settings['prefix'])) {
+        $employeeId .= $settings['prefix'];
+        if (!empty($settings['separator'])) {
+            $employeeId .= $settings['separator'];
+        }
+    }
+    
+    // Add year if enabled
+    if ($settings['include_year']) {
+        $employeeId .= date('Y');
+        if (!empty($settings['separator'])) {
+            $employeeId .= $settings['separator'];
+        }
+    }
+    
+    // Add month if enabled
+    if ($settings['include_month']) {
+        $employeeId .= date('m');
+        if (!empty($settings['separator'])) {
+            $employeeId .= $settings['separator'];
+        }
+    }
+    
+    // Add number
+    $employeeId .= str_pad($newCounter, $settings['number_length'], '0', STR_PAD_LEFT);
+    
+    // Add suffix
+    if (!empty($settings['suffix'])) {
+        if (!empty($settings['separator'])) {
+            $employeeId .= $settings['separator'];
+        }
+        $employeeId .= $settings['suffix'];
+    }
+    
+    return $employeeId;
+}
+
+/**
  * Sanitize input data
  * 
  * @param string $data The data to sanitize
@@ -2062,6 +2264,378 @@ function generateReceiptNumber($sale_id, $date = null) {
  */
 function generateBarcodeReceiptNumber($sale_id, $date = null) {
     return generateReceiptNumber($sale_id, $date);
+}
+
+/**
+ * Map sales payment method to payment type name
+ *
+ * @param string $paymentMethod The payment method from sales table
+ * @return string The corresponding payment type name
+ */
+function mapPaymentMethodToType($paymentMethod) {
+    $mapping = [
+        'cash' => 'cash',
+        'mobile_money' => 'mobile_money',
+        'mpesa' => 'mobile_money',
+        'airtel_money' => 'mobile_money',
+        'credit_card' => 'credit_card',
+        'debit_card' => 'debit_card',
+        'bank_transfer' => 'bank_transfer',
+        'bank' => 'bank_transfer',
+        'check' => 'check',
+        'pos_card' => 'pos_card',
+        'card' => 'pos_card',
+        'online' => 'online_payment',
+        'online_payment' => 'online_payment',
+        'voucher' => 'voucher',
+        'store_credit' => 'store_credit',
+        'loyalty' => 'store_credit'
+    ];
+    
+    return $mapping[$paymentMethod] ?? 'cash';
+}
+
+/**
+ * Get payment type information for a sales transaction
+ *
+ * @param string $paymentMethod The payment method from sales table
+ * @param PDO $conn Database connection
+ * @return array|null Payment type information or null if not found
+ */
+function getPaymentTypeForSale($paymentMethod, $conn) {
+    $paymentTypeName = mapPaymentMethodToType($paymentMethod);
+    
+    $stmt = $conn->prepare("SELECT * FROM payment_types WHERE name = ? AND is_active = 1");
+    $stmt->execute([$paymentTypeName]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+/**
+ * Dynamically discover pages in the system
+ * 
+ * @param string $basePath Base path to scan for PHP files
+ * @return array Array of discovered pages with metadata
+ */
+function discoverSystemPages($basePath = null) {
+    if ($basePath === null) {
+        $basePath = __DIR__ . '/..';
+    }
+    
+    $pages = [];
+    $excludeDirs = ['vendor', 'node_modules', 'logs', 'backups', 'storage', 'sql', 'assets'];
+    $excludeFiles = ['index.php', 'starter.php', 'composer.json', 'composer.lock', 'composer.phar'];
+    
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($basePath, RecursiveDirectoryIterator::SKIP_DOTS)
+    );
+    
+    foreach ($iterator as $file) {
+        if ($file->isFile() && $file->getExtension() === 'php') {
+            $relativePath = str_replace($basePath . DIRECTORY_SEPARATOR, '', $file->getPathname());
+            $relativePath = str_replace('\\', '/', $relativePath);
+            
+            // Skip excluded directories
+            $skip = false;
+            foreach ($excludeDirs as $excludeDir) {
+                if (strpos($relativePath, $excludeDir . '/') === 0) {
+                    $skip = true;
+                    break;
+                }
+            }
+            if ($skip) continue;
+            
+            // Skip excluded files
+            $filename = basename($relativePath);
+            if (in_array($filename, $excludeFiles)) continue;
+            
+            // Skip API files and utility files
+            if (strpos($relativePath, 'api/') === 0 || 
+                strpos($relativePath, 'utils/') === 0 ||
+                strpos($relativePath, 'include/') === 0) continue;
+            
+            // Generate page name from path
+            $pageName = generatePageNameFromPath($relativePath);
+            $pageUrl = '/' . $relativePath;
+            
+            // Determine category
+            $category = determinePageCategory($relativePath);
+            
+            // Determine if admin only
+            $isAdminOnly = isAdminOnlyPage($relativePath);
+            
+            // Determine required permission
+            $requiredPermission = getRequiredPermissionForPage($relativePath);
+            
+            $pages[] = [
+                'page_name' => $pageName,
+                'page_url' => $pageUrl,
+                'page_category' => $category,
+                'page_description' => generatePageDescription($pageName, $category),
+                'is_admin_only' => $isAdminOnly,
+                'required_permission' => $requiredPermission,
+                'sort_order' => getSortOrderForPage($relativePath, $category)
+            ];
+        }
+    }
+    
+    return $pages;
+}
+
+/**
+ * Generate a user-friendly page name from file path
+ */
+function generatePageNameFromPath($path) {
+    $pathParts = explode('/', $path);
+    $filename = pathinfo($path, PATHINFO_FILENAME);
+    
+    // Handle special cases
+    $specialNames = [
+        'dashboard.php' => 'Dashboard',
+        'sale.php' => 'Point of Sale',
+        'products.php' => 'All Products',
+        'categories.php' => 'Categories',
+        'brands.php' => 'Brands',
+        'suppliers.php' => 'Suppliers',
+        'inventory.php' => 'Inventory Management',
+        'expiry_tracker.php' => 'Expiry Tracker',
+        'index.php' => ucfirst($pathParts[count($pathParts) - 2]) . ' Dashboard',
+        'add.php' => 'Add ' . ucfirst($pathParts[count($pathParts) - 2]),
+        'edit.php' => 'Edit ' . ucfirst($pathParts[count($pathParts) - 2]),
+        'view.php' => 'View ' . ucfirst($pathParts[count($pathParts) - 2]),
+        'delete.php' => 'Delete ' . ucfirst($pathParts[count($pathParts) - 2])
+    ];
+    
+    if (isset($specialNames[$filename])) {
+        return $specialNames[$filename];
+    }
+    
+    // Convert filename to readable name
+    $name = str_replace('_', ' ', $filename);
+    $name = ucwords($name);
+    
+    return $name;
+}
+
+/**
+ * Determine page category based on path
+ */
+function determinePageCategory($path) {
+    $pathParts = explode('/', $path);
+    $firstDir = $pathParts[0];
+    
+    $categories = [
+        'dashboard' => 'Dashboard',
+        'pos' => 'Point of Sale',
+        'products' => 'Products',
+        'categories' => 'Products',
+        'brands' => 'Products',
+        'suppliers' => 'Products',
+        'product_families' => 'Products',
+        'inventory' => 'Inventory',
+        'shelf_label' => 'Inventory',
+        'expiry_tracker' => 'Inventory',
+        'bom' => 'BOM Management',
+        'finance' => 'Finance',
+        'expenses' => 'Expenses',
+        'sales' => 'Sales',
+        'customers' => 'Customers',
+        'analytics' => 'Analytics',
+        'admin' => 'Administration',
+        'auth' => 'Authentication'
+    ];
+    
+    return $categories[$firstDir] ?? 'General';
+}
+
+/**
+ * Check if page is admin only
+ */
+function isAdminOnlyPage($path) {
+    $adminOnlyPatterns = [
+        'admin/',
+        'dashboard/roles/',
+        'dashboard/users/',
+        'api/',
+        'include/',
+        'utils/'
+    ];
+    
+    foreach ($adminOnlyPatterns as $pattern) {
+        if (strpos($path, $pattern) === 0) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+/**
+ * Get required permission for page
+ */
+function getRequiredPermissionForPage($path) {
+    $permissionMap = [
+        'pos/' => 'process_sales',
+        'customers/' => 'view_customers',
+        'products/' => 'manage_inventory',
+        'categories/' => 'manage_categories',
+        'brands/' => 'manage_product_brands',
+        'suppliers/' => 'manage_product_suppliers',
+        'inventory/' => 'manage_inventory',
+        'expiry_tracker/' => 'view_expiry_alerts',
+        'bom/' => 'view_boms',
+        'finance/' => 'view_finance',
+        'expenses/' => 'view_expense_reports',
+        'sales/' => 'view_analytics',
+        'analytics/' => 'view_analytics',
+        'dashboard/users/' => 'manage_users',
+        'dashboard/roles/' => 'manage_roles',
+        'admin/' => 'manage_settings'
+    ];
+    
+    foreach ($permissionMap as $pattern => $permission) {
+        if (strpos($path, $pattern) === 0) {
+            return $permission;
+        }
+    }
+    
+    return null;
+}
+
+/**
+ * Generate page description
+ */
+function generatePageDescription($pageName, $category) {
+    return "Access {$pageName} in the {$category} section";
+}
+
+/**
+ * Get sort order for page
+ */
+function getSortOrderForPage($path, $category) {
+    $categoryOrder = [
+        'Dashboard' => 0,
+        'Point of Sale' => 1,
+        'Products' => 2,
+        'Inventory' => 3,
+        'BOM Management' => 4,
+        'Finance' => 5,
+        'Expenses' => 6,
+        'Sales' => 7,
+        'Customers' => 8,
+        'Analytics' => 9,
+        'Administration' => 10,
+        'Authentication' => 11,
+        'General' => 12
+    ];
+    
+    $baseOrder = $categoryOrder[$category] ?? 12;
+    
+    // Add sub-order based on filename
+    $filename = basename($path);
+    $subOrder = 0;
+    
+    if (strpos($filename, 'index.php') !== false) $subOrder = 0;
+    elseif (strpos($filename, 'add.php') !== false) $subOrder = 1;
+    elseif (strpos($filename, 'edit.php') !== false) $subOrder = 2;
+    elseif (strpos($filename, 'view.php') !== false) $subOrder = 3;
+    elseif (strpos($filename, 'delete.php') !== false) $subOrder = 4;
+    else $subOrder = 5;
+    
+    return ($baseOrder * 100) + $subOrder;
+}
+
+/**
+ * Sync discovered pages with database
+ */
+function syncPagesWithDatabase($conn) {
+    $discoveredPages = discoverSystemPages();
+    
+    foreach ($discoveredPages as $page) {
+        // Check if page already exists
+        $stmt = $conn->prepare("SELECT id FROM available_pages WHERE page_url = ?");
+        $stmt->execute([$page['page_url']]);
+        
+        if ($stmt->rowCount() == 0) {
+            // Insert new page
+            $stmt = $conn->prepare("
+                INSERT INTO available_pages 
+                (page_name, page_url, page_category, page_description, is_admin_only, required_permission, sort_order) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $page['page_name'],
+                $page['page_url'],
+                $page['page_category'],
+                $page['page_description'],
+                $page['is_admin_only'] ? 1 : 0,
+                $page['required_permission'],
+                $page['sort_order']
+            ]);
+        } else {
+            // Update existing page metadata
+            $stmt = $conn->prepare("
+                UPDATE available_pages 
+                SET page_name = ?, page_category = ?, page_description = ?, 
+                    is_admin_only = ?, required_permission = ?, sort_order = ?
+                WHERE page_url = ?
+            ");
+            $stmt->execute([
+                $page['page_name'],
+                $page['page_category'],
+                $page['page_description'],
+                $page['is_admin_only'] ? 1 : 0,
+                $page['required_permission'],
+                $page['sort_order'],
+                $page['page_url']
+            ]);
+        }
+    }
+}
+
+/**
+ * Get available pages for dropdown based on user permissions
+ */
+function getAvailablePagesForUser($conn, $isAdmin, $permissions) {
+    if ($isAdmin) {
+        // Admin gets all active pages
+        $stmt = $conn->prepare("
+            SELECT page_name, page_url 
+            FROM available_pages 
+            WHERE is_active = 1 
+            ORDER BY sort_order, page_name
+        ");
+        $stmt->execute();
+    } else {
+        // Non-admin gets pages based on permissions
+        $permissionConditions = [];
+        $params = [];
+        
+        // Always include basic pages
+        $permissionConditions[] = "required_permission IS NULL";
+        
+        // Add pages based on user permissions
+        foreach ($permissions as $permission) {
+            $permissionConditions[] = "required_permission = ?";
+            $params[] = $permission;
+        }
+        
+        $whereClause = implode(' OR ', $permissionConditions);
+        
+        $stmt = $conn->prepare("
+            SELECT page_name, page_url 
+            FROM available_pages 
+            WHERE is_active = 1 AND ({$whereClause})
+            ORDER BY sort_order, page_name
+        ");
+        $stmt->execute($params);
+    }
+    
+    $pages = [];
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $pages[$row['page_name']] = $row['page_url'];
+    }
+    
+    return $pages;
 }
 
 ?>

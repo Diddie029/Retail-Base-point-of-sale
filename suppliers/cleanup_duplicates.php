@@ -39,8 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cleanup_action'])) {
             
             foreach ($duplicates as $group) {
                 $ids = explode(',', $group['ids']);
-                $keep_id = $ids[0]; // Keep the first (oldest) record
-                $remove_ids = array_slice($ids, 1); // Remove the rest
+                $keep_id = $ids[0]; 
+                $remove_ids = array_slice($ids, 1);
                 
                 if (!empty($remove_ids)) {
                     // Check if any of the duplicate suppliers are referenced in products

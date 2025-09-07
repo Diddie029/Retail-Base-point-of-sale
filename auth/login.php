@@ -53,7 +53,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
 
         // Enhanced input validation
         if(empty($identifier)) {
-            $message = "Please enter your username or email address";
+            $message = "Please enter your User ID, username, or email address";
             $messageType = "danger";
         } elseif(strlen($identifier) > 100) {
             $message = "Identifier is too long";
@@ -65,19 +65,30 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
             $message = "Password is too long";
             $messageType = "danger";
         } else {
-            // Determine if identifier is email or username
+            // Determine if identifier is email, username, or user_id
             $is_email = filter_var($identifier, FILTER_VALIDATE_EMAIL);
-            $attempt_type = $is_email ? 'email' : 'username';
-
+            $is_user_id = is_numeric($identifier) && strlen($identifier) >= 3 && strlen($identifier) <= 6; // 3-6 digit User ID
+            $attempt_type = 'username'; // default
+            
             // Prepare query based on identifier type
             if($is_email) {
+                $attempt_type = 'email';
                 $stmt = $conn->prepare("
                     SELECT u.*, r.name as role_name
                     FROM users u
                     LEFT JOIN roles r ON u.role_id = r.id
                     WHERE u.email = :identifier
                 ");
+            } elseif($is_user_id) {
+                $attempt_type = 'user_id';
+                $stmt = $conn->prepare("
+                    SELECT u.*, r.name as role_name
+                    FROM users u
+                    LEFT JOIN roles r ON u.role_id = r.id
+                    WHERE u.user_id = :identifier
+                ");
             } else {
+                $attempt_type = 'username';
                 $stmt = $conn->prepare("
                     SELECT u.*, r.name as role_name
                     FROM users u
@@ -282,13 +293,13 @@ function logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_
                     <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
                     <div class="mb-4">
                         <label for="identifier" class="form-label">
-                            <i class="bi bi-person me-2"></i>Username or Email
+                            <i class="bi bi-person me-2"></i>User ID, Username, or Email
                         </label>
                         <input type="text" class="form-control" id="identifier" name="identifier" required
                                maxlength="100" autocomplete="username"
                                value="<?php echo isset($_POST['identifier']) ? htmlspecialchars($_POST['identifier']) : ''; ?>"
-                               placeholder="Enter your username or email address">
-                        <div class="form-text">You can login with your username or email address</div>
+                               placeholder="Enter your User ID, username, or email address">
+                        <div class="form-text">You can login with your User ID, username, or email address</div>
                     </div>
                     <div class="mb-4">
                         <label for="password" class="form-label">
@@ -346,5 +357,50 @@ function logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="../assets/js/auth.js"></script>
+    <script>
+    // Login method detection and visual feedback
+    document.addEventListener('DOMContentLoaded', function() {
+        const identifierInput = document.getElementById('identifier');
+        const formText = document.querySelector('.form-text');
+        
+        function updateLoginMethodFeedback() {
+            const value = identifierInput.value.trim();
+            
+            if (value === '') {
+                formText.innerHTML = 'You can login with your User ID, username, or email address';
+                formText.className = 'form-text text-muted';
+                return;
+            }
+            
+            // Check if it's an email
+            if (value.includes('@') && value.includes('.')) {
+                formText.innerHTML = '<i class="bi bi-envelope me-1"></i>Logging in with email address';
+                formText.className = 'form-text text-info';
+            }
+            // Check if it's a User ID (3-6 digits)
+            else if (/^\d{3,6}$/.test(value)) {
+                formText.innerHTML = '<i class="bi bi-person-badge me-1"></i>Logging in with User ID';
+                formText.className = 'form-text text-primary';
+            }
+            // Check if it's a username (contains letters/numbers, no @)
+            else if (/^[a-zA-Z0-9_]+$/.test(value)) {
+                formText.innerHTML = '<i class="bi bi-person me-1"></i>Logging in with username';
+                formText.className = 'form-text text-success';
+            }
+            // Invalid format
+            else {
+                formText.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Please enter a valid User ID, username, or email';
+                formText.className = 'form-text text-warning';
+            }
+        }
+        
+        // Add event listener for real-time feedback
+        identifierInput.addEventListener('input', updateLoginMethodFeedback);
+        identifierInput.addEventListener('blur', updateLoginMethodFeedback);
+        
+        // Initial check if there's already a value
+        updateLoginMethodFeedback();
+    });
+    </script>
 </body>
 </html>

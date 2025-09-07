@@ -479,6 +479,33 @@ try {
     } catch (PDOException $e) {
         error_log("Could not alter sales table for split payments: " . $e->getMessage());
     }
+
+    // Add tax management columns to existing tables
+    try {
+        // Add tax_category_id to products table
+        $stmt = $conn->query("DESCRIBE products");
+        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        if (!in_array('tax_category_id', $columns)) {
+            $conn->exec("ALTER TABLE products ADD COLUMN tax_category_id INT DEFAULT NULL AFTER tax_rate");
+            $conn->exec("ALTER TABLE products ADD CONSTRAINT fk_products_tax_category_id FOREIGN KEY (tax_category_id) REFERENCES tax_categories(id) ON DELETE SET NULL");
+            $conn->exec("ALTER TABLE products ADD INDEX idx_tax_category_id (tax_category_id)");
+        }
+
+        // Add tax exemption columns to customers table
+        $stmt = $conn->query("DESCRIBE customers");
+        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        if (!in_array('tax_exempt', $columns)) {
+            $conn->exec("ALTER TABLE customers ADD COLUMN tax_exempt TINYINT(1) DEFAULT 0 AFTER membership_level");
+            $conn->exec("ALTER TABLE customers ADD COLUMN tax_exempt_reason VARCHAR(255) DEFAULT NULL AFTER tax_exempt");
+            $conn->exec("ALTER TABLE customers ADD COLUMN tax_exempt_certificate VARCHAR(100) DEFAULT NULL AFTER tax_exempt_reason");
+            $conn->exec("ALTER TABLE customers ADD INDEX idx_tax_exempt (tax_exempt)");
+        }
+    } catch (PDOException $e) {
+        error_log("Could not add tax management columns: " . $e->getMessage());
+    }
+
         // Create roles table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS roles (
@@ -533,6 +560,107 @@ try {
         FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
     )");
     
+    // Create menu_sections table for navigation control
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS menu_sections (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            section_key VARCHAR(50) NOT NULL UNIQUE,
+            section_name VARCHAR(100) NOT NULL,
+            section_icon VARCHAR(50) DEFAULT 'bi-circle',
+            section_description TEXT,
+            is_active TINYINT(1) DEFAULT 1,
+            sort_order INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+    ");
+    
+    // Create available_pages table for dynamic page management
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS available_pages (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            page_name VARCHAR(255) NOT NULL,
+            page_url VARCHAR(500) NOT NULL,
+            page_category VARCHAR(100) DEFAULT 'General',
+            page_description TEXT,
+            is_active TINYINT(1) DEFAULT 1,
+            is_admin_only TINYINT(1) DEFAULT 0,
+            required_permission VARCHAR(100) DEFAULT NULL,
+            sort_order INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_page_url (page_url)
+        )
+    ");
+    
+    // Create role_menu_access table for role-based menu visibility
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS role_menu_access (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            role_id INT NOT NULL,
+            menu_section_id INT NOT NULL,
+            is_visible TINYINT(1) DEFAULT 1,
+            is_priority TINYINT(1) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY role_menu_section (role_id, menu_section_id),
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+            FOREIGN KEY (menu_section_id) REFERENCES menu_sections(id) ON DELETE CASCADE
+        )
+    ");
+    
+    // Initialize menu sections if they don't exist
+    try {
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM menu_sections");
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($result['count'] == 0) {
+            // Insert default menu sections
+            $menu_sections = [
+                ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 1],
+                ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 2],
+                ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 3],
+                ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 4],
+                ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 5],
+                ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 6]
+            ];
+            
+            $stmt = $conn->prepare("
+                INSERT INTO menu_sections (section_key, section_name, section_icon, section_description, sort_order) 
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            
+            foreach ($menu_sections as $section) {
+                $stmt->execute($section);
+            }
+        }
+    } catch (PDOException $e) {
+        error_log("Warning: Could not initialize menu sections: " . $e->getMessage());
+    }
+    
+    // Add menu management permissions
+    try {
+        $menu_permissions = [
+            ['manage_menu_sections', 'Manage Menu Sections', 'Create, edit, and delete menu sections'],
+            ['create_menu_sections', 'Create Menu Sections', 'Create new menu sections'],
+            ['edit_menu_sections', 'Edit Menu Sections', 'Edit existing menu sections'],
+            ['delete_menu_sections', 'Delete Menu Sections', 'Delete menu sections'],
+            ['manage_menu_content', 'Manage Menu Content', 'Add and modify menu content items'],
+            ['assign_menu_roles', 'Assign Menu to Roles', 'Assign menu sections to roles and set visibility'],
+            ['view_all_menus', 'View All Menus', 'View all menu sections regardless of role assignment']
+        ];
+        
+        foreach ($menu_permissions as $permission) {
+            $stmt = $conn->prepare("
+                INSERT IGNORE INTO permissions (name, description, category) 
+                VALUES (?, ?, 'Menu Management')
+            ");
+            $stmt->execute($permission);
+        }
+    } catch (PDOException $e) {
+        error_log("Warning: Could not add menu management permissions: " . $e->getMessage());
+    }
+    
     // Create settings table
     $conn->exec("CREATE TABLE IF NOT EXISTS settings (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -542,6 +670,96 @@ try {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY setting_key (setting_key)
     )");
+
+    // Create tax_categories table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS tax_categories (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL UNIQUE,
+            description TEXT,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_name (name),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+
+    // Create tax_rates table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS tax_rates (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            tax_category_id INT NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            rate DECIMAL(5, 4) NOT NULL COMMENT 'Tax rate as decimal (0.10 = 10%)',
+            rate_percentage DECIMAL(5, 2) NOT NULL COMMENT 'Tax rate as percentage for display',
+            description TEXT,
+            effective_date DATE NOT NULL,
+            end_date DATE DEFAULT NULL,
+            is_compound TINYINT(1) DEFAULT 0 COMMENT 'Whether this tax is calculated on top of other taxes',
+            is_active TINYINT(1) DEFAULT 1,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (tax_category_id) REFERENCES tax_categories(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            INDEX idx_tax_category_id (tax_category_id),
+            INDEX idx_effective_date (effective_date),
+            INDEX idx_end_date (end_date),
+            INDEX idx_is_active (is_active),
+            INDEX idx_is_compound (is_compound)
+        )
+    ");
+
+    // Create tax_exemptions table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS tax_exemptions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            customer_id INT DEFAULT NULL,
+            product_id INT DEFAULT NULL,
+            tax_category_id INT DEFAULT NULL,
+            exemption_type ENUM('customer', 'product', 'category') NOT NULL,
+            exemption_reason VARCHAR(255),
+            certificate_number VARCHAR(100),
+            effective_date DATE NOT NULL,
+            end_date DATE DEFAULT NULL,
+            is_active TINYINT(1) DEFAULT 1,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+            FOREIGN KEY (tax_category_id) REFERENCES tax_categories(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            INDEX idx_customer_id (customer_id),
+            INDEX idx_product_id (product_id),
+            INDEX idx_tax_category_id (tax_category_id),
+            INDEX idx_exemption_type (exemption_type),
+            INDEX idx_effective_date (effective_date),
+            INDEX idx_end_date (end_date),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+
+    // Create sale_taxes table for detailed tax tracking
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS sale_taxes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            sale_id INT NOT NULL,
+            tax_rate_id INT NOT NULL,
+            tax_category_name VARCHAR(100) NOT NULL,
+            tax_name VARCHAR(100) NOT NULL,
+            tax_rate DECIMAL(5, 4) NOT NULL,
+            taxable_amount DECIMAL(10, 2) NOT NULL,
+            tax_amount DECIMAL(10, 2) NOT NULL,
+            is_compound TINYINT(1) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+            FOREIGN KEY (tax_rate_id) REFERENCES tax_rates(id),
+            INDEX idx_sale_id (sale_id),
+            INDEX idx_tax_rate_id (tax_rate_id)
+        )
+    ");
 
     // Create signup_attempts table for rate limiting
     $conn->exec("CREATE TABLE IF NOT EXISTS signup_attempts (
@@ -572,6 +790,33 @@ try {
         INDEX idx_user_id (user_id),
         INDEX idx_action (action),
         INDEX idx_created_at (created_at)
+    )");
+
+    // Create security_logs table for security event tracking
+    $conn->exec("CREATE TABLE IF NOT EXISTS security_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        event_type VARCHAR(100) NOT NULL,
+        details TEXT,
+        severity ENUM('low', 'medium', 'high', 'critical') DEFAULT 'medium',
+        ip_address VARCHAR(45),
+        user_agent TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_event_type (event_type),
+        INDEX idx_severity (severity),
+        INDEX idx_created_at (created_at)
+    )");
+
+    // Create email_verifications table for OTP verification
+    $conn->exec("CREATE TABLE IF NOT EXISTS email_verifications (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        otp_code VARCHAR(6) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_user_id (user_id),
+        INDEX idx_otp_code (otp_code),
+        INDEX idx_expires_at (expires_at)
     )");
 
     // Create login_attempts table for security monitoring
@@ -2233,6 +2478,24 @@ try {
                            SELECT 1, id FROM permissions WHERE name = 'manage_settings'");
     $stmt->execute();
 
+    // Add tax management permissions
+    $tax_permissions = [
+        ['manage_taxes', 'Manage tax categories and rates', 'Tax Management'],
+        ['view_tax_reports', 'View tax reports and analytics', 'Tax Management'],
+        ['manage_tax_exemptions', 'Manage tax exemptions for customers and products', 'Tax Management'],
+        ['configure_tax_settings', 'Configure tax calculation settings', 'Tax Management']
+    ];
+
+    $stmt = $conn->prepare("INSERT IGNORE INTO permissions (name, description, category) VALUES (?, ?, ?)");
+    foreach ($tax_permissions as $permission) {
+        $stmt->execute($permission);
+    }
+
+    // Assign tax permissions to Admin role
+    $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
+                           SELECT 1, id FROM permissions WHERE name IN ('manage_taxes', 'view_tax_reports', 'manage_tax_exemptions', 'configure_tax_settings')");
+    $stmt->execute();
+
     // Add supplier_block_note field to suppliers table if it doesn't exist
     $stmt = $conn->prepare("SHOW COLUMNS FROM suppliers LIKE 'supplier_block_note'");
     $stmt->execute();
@@ -3819,6 +4082,33 @@ try {
         ('max_reprint_attempts', '3'),
         ('require_password_for_reprint', '1')
     ");
+
+    // Add Employee ID settings
+    $conn->exec("
+        INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
+        ('employee_id_auto_generate', '0'),
+        ('employee_id_prefix', 'EMP'),
+        ('employee_id_suffix', ''),
+        ('employee_id_number_length', '4'),
+        ('employee_id_start_number', '1'),
+        ('employee_id_separator', '-'),
+        ('employee_id_include_year', '0'),
+        ('employee_id_include_month', '0'),
+        ('employee_id_reset_counter_yearly', '0'),
+        ('employee_id_current_counter', '0')
+    ");
+
+    // Add user_id field to users table for 4-digit unique user IDs
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM users LIKE 'user_id'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE users ADD COLUMN user_id VARCHAR(4) UNIQUE AFTER id");
+            $conn->exec("CREATE INDEX idx_users_user_id ON users(user_id)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+    }
     
     // Create receipt reprint permission (if permissions table exists)
     $conn->exec("
@@ -3832,6 +4122,783 @@ try {
         SELECT r.id, p.id FROM roles r, permissions p 
         WHERE r.name = 'admin' AND p.name = 'reprint_receipt'
     ");
+
+    // ========================================
+    // BUDGET MANAGEMENT SYSTEM TABLES
+    // ========================================
+    
+    // Create budget_categories table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS budget_categories (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            parent_id INT DEFAULT NULL,
+            color VARCHAR(7) DEFAULT '#6366f1',
+            icon VARCHAR(50) DEFAULT 'bi-folder',
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (parent_id) REFERENCES budget_categories(id) ON DELETE SET NULL
+        )
+    ");
+
+    // Create budgets table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS budgets (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            description TEXT,
+            budget_type ENUM('monthly', 'quarterly', 'yearly', 'custom') DEFAULT 'monthly',
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            total_budget_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+            total_actual_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+            currency VARCHAR(3) DEFAULT 'KES',
+            status ENUM('draft', 'active', 'completed', 'cancelled') DEFAULT 'draft',
+            approval_status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+            approved_by INT DEFAULT NULL,
+            approved_at TIMESTAMP NULL,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+    ");
+
+    // Create budget_items table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS budget_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            budget_id INT NOT NULL,
+            category_id INT NOT NULL,
+            name VARCHAR(150) NOT NULL,
+            description TEXT,
+            budgeted_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+            actual_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+            variance_amount DECIMAL(15,2) GENERATED ALWAYS AS (actual_amount - budgeted_amount) STORED,
+            variance_percentage DECIMAL(8,2) GENERATED ALWAYS AS (
+                CASE 
+                    WHEN budgeted_amount = 0 THEN NULL
+                    ELSE ((actual_amount - budgeted_amount) / budgeted_amount) * 100
+                END
+            ) STORED,
+            priority ENUM('low', 'medium', 'high', 'critical') DEFAULT 'medium',
+            notes TEXT,
+            is_recurring BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE,
+            FOREIGN KEY (category_id) REFERENCES budget_categories(id) ON DELETE RESTRICT
+        )
+    ");
+
+    // Create budget_transactions table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS budget_transactions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            budget_id INT NOT NULL,
+            budget_item_id INT NOT NULL,
+            transaction_type ENUM('expense', 'revenue', 'adjustment') DEFAULT 'expense',
+            amount DECIMAL(15,2) NOT NULL,
+            transaction_date DATE NOT NULL,
+            description TEXT,
+            reference_type ENUM('expense', 'sale', 'manual', 'other') DEFAULT 'manual',
+            reference_id INT DEFAULT NULL,
+            created_by INT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE,
+            FOREIGN KEY (budget_item_id) REFERENCES budget_items(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ");
+
+    // Create budget_alerts table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS budget_alerts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            budget_id INT NOT NULL,
+            budget_item_id INT DEFAULT NULL,
+            alert_type ENUM('threshold_warning', 'threshold_critical', 'overspent', 'underspent', 'deadline_approaching') NOT NULL,
+            threshold_percentage DECIMAL(5,2) DEFAULT NULL,
+            message TEXT NOT NULL,
+            is_read BOOLEAN DEFAULT FALSE,
+            is_active BOOLEAN DEFAULT TRUE,
+            triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_for_user INT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE,
+            FOREIGN KEY (budget_item_id) REFERENCES budget_items(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_for_user) REFERENCES users(id) ON DELETE SET NULL
+        )
+    ");
+
+    // Create budget_settings table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS budget_settings (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            setting_key VARCHAR(100) NOT NULL UNIQUE,
+            setting_value TEXT,
+            setting_type ENUM('boolean', 'integer', 'decimal', 'string', 'json') DEFAULT 'string',
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+    ");
+
+    // Create budget_templates table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS budget_templates (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            description TEXT,
+            budget_type ENUM('monthly', 'quarterly', 'yearly', 'custom') DEFAULT 'monthly',
+            created_by INT NOT NULL,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_name (name),
+            INDEX idx_budget_type (budget_type),
+            INDEX idx_is_active (is_active),
+            INDEX idx_created_by (created_by)
+        )
+    ");
+
+    // Create budget_template_items table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS budget_template_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            template_id INT NOT NULL,
+            category_id INT NOT NULL,
+            name VARCHAR(150) NOT NULL,
+            description TEXT,
+            budgeted_amount DECIMAL(15,2) DEFAULT 0,
+            percentage DECIMAL(5,2) DEFAULT 0 COMMENT 'Percentage of total budget if applicable',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (template_id) REFERENCES budget_templates(id) ON DELETE CASCADE,
+            FOREIGN KEY (category_id) REFERENCES budget_categories(id) ON DELETE CASCADE,
+            INDEX idx_template_id (template_id),
+            INDEX idx_category_id (category_id)
+        )
+    ");
+
+    // Insert default budget categories
+    $conn->exec("
+        INSERT IGNORE INTO budget_categories (id, name, description, color, icon) VALUES
+        (1, 'Operating Expenses', 'Day-to-day operational costs', '#dc3545', 'bi-gear'),
+        (2, 'Marketing & Advertising', 'Marketing campaigns and promotional activities', '#fd7e14', 'bi-megaphone'),
+        (3, 'Personnel & Payroll', 'Employee salaries and benefits', '#198754', 'bi-people'),
+        (4, 'Office Supplies', 'Stationery and office equipment', '#6f42c1', 'bi-box'),
+        (5, 'Technology & Software', 'IT infrastructure and software licenses', '#0dcaf0', 'bi-laptop'),
+        (6, 'Utilities', 'Electricity, water, internet, and other utilities', '#ffc107', 'bi-lightning'),
+        (7, 'Rent & Facilities', 'Office rent and facility maintenance', '#6c757d', 'bi-building'),
+        (8, 'Travel & Transportation', 'Business travel and transportation costs', '#20c997', 'bi-car-front'),
+        (9, 'Professional Services', 'Legal, accounting, and consulting services', '#e83e8c', 'bi-briefcase'),
+        (10, 'Training & Development', 'Employee training and skill development', '#fd7e14', 'bi-book'),
+        (11, 'Insurance', 'Business and employee insurance', '#0d6efd', 'bi-shield-check'),
+        (12, 'Maintenance & Repairs', 'Equipment and facility maintenance', '#dc3545', 'bi-tools')
+    ");
+
+    // Insert default budget settings
+    $conn->exec("
+        INSERT IGNORE INTO budget_settings (setting_key, setting_value, setting_type, description) VALUES
+        ('default_budget_period', 'monthly', 'string', 'Default budget period for new budgets'),
+        ('budget_alert_threshold_warning', '75', 'integer', 'Warning threshold percentage for budget alerts'),
+        ('budget_alert_threshold_critical', '90', 'integer', 'Critical threshold percentage for budget alerts'),
+        ('enable_budget_notifications', 'true', 'boolean', 'Enable budget alert notifications'),
+        ('auto_sync_expenses', 'true', 'boolean', 'Automatically sync actual expenses with budget tracking'),
+        ('budget_approval_required', 'false', 'boolean', 'Require approval for budget activation'),
+        ('default_currency', 'KES', 'string', 'Default currency for budgets'),
+        ('fiscal_year_start_month', '1', 'integer', 'Fiscal year start month (1-12)')
+    ");
+
+    // Create indexes for better performance
+    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budgets_status ON budgets(status)");
+    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budgets_dates ON budgets(start_date, end_date)");
+    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budget_items_budget ON budget_items(budget_id)");
+    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budget_transactions_budget ON budget_transactions(budget_id)");
+    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budget_transactions_date ON budget_transactions(transaction_date)");
+    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budget_alerts_active ON budget_alerts(is_active, is_read)");
+
+    // ========================================
+    // FINANCE DASHBOARD PERMISSIONS
+    // ========================================
+    
+    // Add finance dashboard permissions
+    $conn->exec("
+        INSERT IGNORE INTO permissions (name, description) VALUES
+        ('view_finance', 'Access to Finance Dashboard and financial reports'),
+        ('manage_budgets', 'Create, edit, and delete budgets'),
+        ('view_budgets', 'View budget information and reports'),
+        ('approve_budgets', 'Approve or reject budget requests'),
+        ('manage_budget_categories', 'Manage budget categories'),
+        ('view_financial_reports', 'Access to financial reports and analytics'),
+        ('manage_budget_settings', 'Configure budget management settings')
+    ");
+
+    // Assign finance permissions to Admin role
+    $conn->exec("
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT 1, id FROM permissions WHERE name IN (
+            'view_finance', 'manage_budgets', 'view_budgets', 'approve_budgets', 
+            'manage_budget_categories', 'view_financial_reports', 'manage_budget_settings'
+        )
+    ");
+
+    // Assign limited finance permissions to Manager role (if exists)
+    $conn->exec("
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT 3, id FROM permissions WHERE name IN (
+            'view_finance', 'view_budgets', 'view_financial_reports'
+        )
+    ");
+
+    // Add finance permissions to permission groups
+    $conn->exec("
+        INSERT IGNORE INTO permission_groups (permission_name, group_name) VALUES
+        ('view_finance', 'Finance Management'),
+        ('manage_budgets', 'Finance Management'),
+        ('view_budgets', 'Finance Management'),
+        ('approve_budgets', 'Finance Management'),
+        ('manage_budget_categories', 'Finance Management'),
+        ('view_financial_reports', 'Finance Management'),
+        ('manage_budget_settings', 'Finance Management')
+    ");
+
+    // ===== RECONCILIATION MODULE TABLES =====
+    
+    // Create bank_accounts table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS bank_accounts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            account_name VARCHAR(255) NOT NULL,
+            account_number VARCHAR(50),
+            bank_name VARCHAR(255),
+            account_type ENUM('checking', 'savings', 'cash_drawer', 'credit_card') DEFAULT 'checking',
+            opening_balance DECIMAL(12,2) DEFAULT 0,
+            current_balance DECIMAL(12,2) DEFAULT 0,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            created_by INT NOT NULL,
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            INDEX idx_account_name (account_name),
+            INDEX idx_account_type (account_type),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+
+    // Create bank_transactions table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS bank_transactions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            bank_account_id INT NOT NULL,
+            transaction_date DATE NOT NULL,
+            description TEXT,
+            amount DECIMAL(12,2) NOT NULL,
+            transaction_type ENUM('debit', 'credit') NOT NULL,
+            reference_number VARCHAR(100),
+            balance_after DECIMAL(12,2),
+            is_reconciled TINYINT(1) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE,
+            INDEX idx_bank_account_id (bank_account_id),
+            INDEX idx_transaction_date (transaction_date),
+            INDEX idx_amount (amount),
+            INDEX idx_is_reconciled (is_reconciled),
+            INDEX idx_reference_number (reference_number)
+        )
+    ");
+
+    // Create reconciliation_records table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS reconciliation_records (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            bank_account_id INT NOT NULL,
+            reconciliation_date DATE NOT NULL,
+            opening_balance DECIMAL(12,2) NOT NULL,
+            closing_balance DECIMAL(12,2) NOT NULL,
+            expected_balance DECIMAL(12,2) NOT NULL,
+            difference_amount DECIMAL(12,2) DEFAULT 0,
+            status ENUM('draft', 'in_progress', 'completed', 'cancelled') DEFAULT 'draft',
+            reconciled_by INT NOT NULL,
+            notes TEXT,
+            completed_at DATETIME NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE,
+            FOREIGN KEY (reconciled_by) REFERENCES users(id),
+            INDEX idx_bank_account_id (bank_account_id),
+            INDEX idx_reconciliation_date (reconciliation_date),
+            INDEX idx_status (status),
+            INDEX idx_reconciled_by (reconciled_by)
+        )
+    ");
+
+    // Create transaction_matches table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS transaction_matches (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            reconciliation_id INT NOT NULL,
+            bank_transaction_id INT,
+            pos_transaction_id INT,
+            match_type ENUM('automatic', 'manual', 'partial') NOT NULL,
+            match_amount DECIMAL(12,2) NOT NULL,
+            match_confidence DECIMAL(5,2) DEFAULT 0 COMMENT 'Confidence score for automatic matches (0-100)',
+            match_notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_by INT NOT NULL,
+            FOREIGN KEY (reconciliation_id) REFERENCES reconciliation_records(id) ON DELETE CASCADE,
+            FOREIGN KEY (bank_transaction_id) REFERENCES bank_transactions(id) ON DELETE CASCADE,
+            FOREIGN KEY (pos_transaction_id) REFERENCES sales(id) ON DELETE CASCADE,
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            INDEX idx_reconciliation_id (reconciliation_id),
+            INDEX idx_bank_transaction_id (bank_transaction_id),
+            INDEX idx_pos_transaction_id (pos_transaction_id),
+            INDEX idx_match_type (match_type)
+        )
+    ");
+
+    // Create reconciliation_discrepancies table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS reconciliation_discrepancies (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            reconciliation_id INT NOT NULL,
+            discrepancy_type ENUM('amount_mismatch', 'missing_bank_transaction', 'missing_pos_transaction', 'date_mismatch', 'reference_mismatch') NOT NULL,
+            description TEXT NOT NULL,
+            amount DECIMAL(12,2) DEFAULT 0,
+            status ENUM('open', 'investigating', 'resolved', 'ignored') DEFAULT 'open',
+            resolution_notes TEXT,
+            resolved_by INT NULL,
+            resolved_at DATETIME NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (reconciliation_id) REFERENCES reconciliation_records(id) ON DELETE CASCADE,
+            FOREIGN KEY (resolved_by) REFERENCES users(id),
+            INDEX idx_reconciliation_id (reconciliation_id),
+            INDEX idx_discrepancy_type (discrepancy_type),
+            INDEX idx_status (status)
+        )
+    ");
+
+    // Add reconciliation permissions
+    $conn->exec("
+        INSERT IGNORE INTO permissions (name, description) VALUES
+        ('manage_reconciliation', 'Create and manage account reconciliation'),
+        ('view_reconciliation', 'View reconciliation records and reports'),
+        ('approve_reconciliation', 'Approve completed reconciliations'),
+        ('import_bank_statements', 'Import bank statements for reconciliation')
+    ");
+
+    // Assign reconciliation permissions to Admin role
+    $conn->exec("
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT 1, id FROM permissions WHERE name IN (
+            'manage_reconciliation', 'view_reconciliation', 'approve_reconciliation', 'import_bank_statements'
+        )
+    ");
+
+    // Add reconciliation permissions to permission groups
+    $conn->exec("
+        INSERT IGNORE INTO permission_groups (permission_name, group_name) VALUES
+        ('manage_reconciliation', 'Finance Management'),
+        ('view_reconciliation', 'Finance Management'),
+        ('approve_reconciliation', 'Finance Management'),
+        ('import_bank_statements', 'Finance Management')
+    ");
+
+    // Add security logs permissions
+    $conn->exec("
+        INSERT IGNORE INTO permissions (name, description, category) VALUES
+        ('view_security_logs', 'View security logs and system events', 'Security'),
+        ('manage_security_logs', 'Manage security logs and system monitoring', 'Security'),
+        ('export_security_logs', 'Export security logs for analysis', 'Security')
+    ");
+
+    // Assign security logs permissions to Admin role
+    $conn->exec("
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT 1, id FROM permissions WHERE name IN (
+            'view_security_logs', 'manage_security_logs', 'export_security_logs'
+        )
+    ");
+
+    // Add security logs permissions to permission groups
+    $conn->exec("
+        INSERT IGNORE INTO permission_groups (permission_name, group_name) VALUES
+        ('view_security_logs', 'Security Management'),
+        ('manage_security_logs', 'Security Management'),
+        ('export_security_logs', 'Security Management')
+    ");
+
+    // Remove sales section from menu_sections if it exists (run every time)
+    try {
+        $conn->exec("DELETE FROM menu_sections WHERE section_key = 'sales'");
+        $conn->exec("DELETE rma FROM role_menu_access rma 
+                     JOIN menu_sections ms ON rma.menu_section_id = ms.id 
+                     WHERE ms.section_key = 'sales'");
+    } catch (Exception $e) {
+        // Ignore errors if tables don't exist yet
+    }
+
+    // Create payment types table for reconciliation
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS payment_types (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(50) NOT NULL,
+            display_name VARCHAR(100) NOT NULL,
+            description TEXT,
+            category ENUM('cash', 'digital', 'card', 'bank', 'other') DEFAULT 'other',
+            icon VARCHAR(50) DEFAULT 'bi-cash',
+            color VARCHAR(20) DEFAULT '#6c757d',
+            is_active TINYINT(1) DEFAULT 1,
+            requires_reconciliation TINYINT(1) DEFAULT 1,
+            sort_order INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_payment_type_name (name),
+            INDEX idx_category (category),
+            INDEX idx_is_active (is_active),
+            INDEX idx_requires_reconciliation (requires_reconciliation),
+            INDEX idx_sort_order (sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Insert default payment types
+    $default_payment_types = [
+        ['cash', 'Cash', 'Physical cash payments', 'cash', 'bi-cash', '#28a745', 1, 1, 1],
+        ['mobile_money', 'Mobile Money', 'Mobile money payments (M-Pesa, Airtel Money, etc.)', 'digital', 'bi-phone', '#007bff', 1, 1, 2],
+        ['bank_transfer', 'Bank Transfer', 'Direct bank transfers and wire transfers', 'bank', 'bi-bank', '#6f42c1', 1, 1, 3],
+        ['credit_card', 'Credit Card', 'Credit card payments', 'card', 'bi-credit-card', '#dc3545', 1, 1, 4],
+        ['debit_card', 'Debit Card', 'Debit card payments', 'card', 'bi-credit-card-2-front', '#fd7e14', 1, 1, 5],
+        ['check', 'Check', 'Check payments', 'bank', 'bi-receipt', '#20c997', 1, 1, 6],
+        ['pos_card', 'POS Card', 'Point of sale card payments', 'card', 'bi-credit-card-fill', '#e83e8c', 1, 1, 7],
+        ['online_payment', 'Online Payment', 'Online payment gateways', 'digital', 'bi-globe', '#17a2b8', 1, 1, 8],
+        ['voucher', 'Voucher', 'Gift vouchers and coupons', 'other', 'bi-ticket', '#6c757d', 1, 0, 9],
+        ['store_credit', 'Store Credit', 'Store credit and loyalty points', 'other', 'bi-gift', '#ffc107', 1, 0, 10]
+    ];
+
+    $stmt = $conn->prepare("
+        INSERT IGNORE INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+    foreach ($default_payment_types as $type) {
+        $stmt->execute($type);
+    }
+
+    // Update bank_transactions table to include payment type
+    try {
+        $conn->exec("
+            ALTER TABLE bank_transactions 
+            ADD COLUMN payment_type_id INT DEFAULT NULL AFTER amount,
+            ADD COLUMN payment_reference VARCHAR(255) DEFAULT NULL AFTER payment_type_id,
+            ADD INDEX idx_payment_type_id (payment_type_id),
+            ADD FOREIGN KEY (payment_type_id) REFERENCES payment_types(id) ON DELETE SET NULL
+        ");
+    } catch (PDOException $e) {
+        // Columns might already exist, ignore error
+    }
+
+    // Update transaction_matches table to include payment type
+    try {
+        $conn->exec("
+            ALTER TABLE transaction_matches 
+            ADD COLUMN payment_type_id INT DEFAULT NULL AFTER match_amount,
+            ADD COLUMN payment_reference VARCHAR(255) DEFAULT NULL AFTER payment_type_id,
+            ADD INDEX idx_payment_type_id (payment_type_id),
+            ADD FOREIGN KEY (payment_type_id) REFERENCES payment_types(id) ON DELETE SET NULL
+        ");
+    } catch (PDOException $e) {
+        // Columns might already exist, ignore error
+    }
+
+    // Create payment type reconciliation mapping table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS payment_type_account_mapping (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            payment_type_id INT NOT NULL,
+            bank_account_id INT NOT NULL,
+            is_default TINYINT(1) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (payment_type_id) REFERENCES payment_types(id) ON DELETE CASCADE,
+            FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_payment_account (payment_type_id, bank_account_id),
+            INDEX idx_payment_type_id (payment_type_id),
+            INDEX idx_bank_account_id (bank_account_id),
+            INDEX idx_is_default (is_default)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create payment types table for reconciliation
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS payment_types (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(50) NOT NULL,
+            display_name VARCHAR(100) NOT NULL,
+            description TEXT,
+            category ENUM('cash', 'digital', 'card', 'bank', 'other') DEFAULT 'other',
+            icon VARCHAR(50) DEFAULT 'bi-cash',
+            color VARCHAR(20) DEFAULT '#6c757d',
+            is_active TINYINT(1) DEFAULT 1,
+            requires_reconciliation TINYINT(1) DEFAULT 1,
+            sort_order INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_payment_type_name (name),
+            INDEX idx_category (category),
+            INDEX idx_is_active (is_active),
+            INDEX idx_requires_reconciliation (requires_reconciliation),
+            INDEX idx_sort_order (sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Insert default payment types
+    $default_payment_types = [
+        ['cash', 'Cash', 'Physical cash payments', 'cash', 'bi-cash', '#28a745', 1, 1, 1],
+        ['mobile_money', 'Mobile Money', 'Mobile money payments (M-Pesa, Airtel Money, etc.)', 'digital', 'bi-phone', '#007bff', 1, 1, 2],
+        ['bank_transfer', 'Bank Transfer', 'Direct bank transfers and wire transfers', 'bank', 'bi-bank', '#6f42c1', 1, 1, 3],
+        ['credit_card', 'Credit Card', 'Credit card payments', 'card', 'bi-credit-card', '#dc3545', 1, 1, 4],
+        ['debit_card', 'Debit Card', 'Debit card payments', 'card', 'bi-credit-card-2-front', '#fd7e14', 1, 1, 5],
+        ['check', 'Check', 'Check payments', 'bank', 'bi-receipt', '#20c997', 1, 1, 6],
+        ['pos_card', 'POS Card', 'Point of sale card payments', 'card', 'bi-credit-card-fill', '#e83e8c', 1, 1, 7],
+        ['online_payment', 'Online Payment', 'Online payment gateways', 'digital', 'bi-globe', '#17a2b8', 1, 1, 8],
+        ['voucher', 'Voucher', 'Gift vouchers and coupons', 'other', 'bi-ticket', '#6c757d', 1, 0, 9],
+        ['store_credit', 'Store Credit', 'Store credit and loyalty points', 'other', 'bi-gift', '#ffc107', 1, 0, 10]
+    ];
+
+    $stmt = $conn->prepare("
+        INSERT IGNORE INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+    foreach ($default_payment_types as $type) {
+        $stmt->execute($type);
+    }
+
+    // Update bank_transactions table to include payment type
+    try {
+        $conn->exec("
+            ALTER TABLE bank_transactions 
+            ADD COLUMN payment_type_id INT DEFAULT NULL AFTER amount,
+            ADD COLUMN payment_reference VARCHAR(255) DEFAULT NULL AFTER payment_type_id,
+            ADD INDEX idx_payment_type_id (payment_type_id),
+            ADD FOREIGN KEY (payment_type_id) REFERENCES payment_types(id) ON DELETE SET NULL
+        ");
+    } catch (PDOException $e) {
+        // Columns might already exist, ignore error
+    }
+
+    // Update transaction_matches table to include payment type
+    try {
+        $conn->exec("
+            ALTER TABLE transaction_matches 
+            ADD COLUMN payment_type_id INT DEFAULT NULL AFTER match_amount,
+            ADD COLUMN payment_reference VARCHAR(255) DEFAULT NULL AFTER payment_type_id,
+            ADD INDEX idx_payment_type_id (payment_type_id),
+            ADD FOREIGN KEY (payment_type_id) REFERENCES payment_types(id) ON DELETE SET NULL
+        ");
+    } catch (PDOException $e) {
+        // Columns might already exist, ignore error
+    }
+
+    // Create payment type reconciliation mapping table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS payment_type_account_mapping (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            payment_type_id INT NOT NULL,
+            bank_account_id INT NOT NULL,
+            is_default TINYINT(1) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (payment_type_id) REFERENCES payment_types(id) ON DELETE CASCADE,
+            FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE,
+            UNIQUE KEY unique_payment_account (payment_type_id, bank_account_id),
+            INDEX idx_payment_type_id (payment_type_id),
+            INDEX idx_bank_account_id (bank_account_id),
+            INDEX idx_is_default (is_default)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create register_tills table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS register_tills (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            till_name VARCHAR(100) NOT NULL,
+            till_code VARCHAR(20) NOT NULL,
+            location VARCHAR(100),
+            opening_balance DECIMAL(15,2) DEFAULT 0.00,
+            current_balance DECIMAL(15,2) DEFAULT 0.00,
+            assigned_user_id INT,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (assigned_user_id) REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE KEY unique_till_code (till_code),
+            INDEX idx_till_name (till_name),
+            INDEX idx_is_active (is_active),
+            INDEX idx_assigned_user (assigned_user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create cash_drops table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS cash_drops (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            till_id INT NOT NULL,
+            user_id INT NOT NULL,
+            drop_amount DECIMAL(15,2) NOT NULL,
+            drop_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT,
+            status ENUM('pending', 'confirmed', 'cancelled') DEFAULT 'pending',
+            confirmed_by INT,
+            confirmed_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (confirmed_by) REFERENCES users(id) ON DELETE SET NULL,
+            INDEX idx_till_id (till_id),
+            INDEX idx_user_id (user_id),
+            INDEX idx_drop_date (drop_date),
+            INDEX idx_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create pos_settings table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS pos_settings (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            setting_key VARCHAR(100) NOT NULL,
+            setting_value TEXT,
+            setting_type ENUM('string', 'number', 'boolean', 'json') DEFAULT 'string',
+            category VARCHAR(50) DEFAULT 'general',
+            description TEXT,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_setting_key (setting_key),
+            INDEX idx_category (category),
+            INDEX idx_is_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create shift_management table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS shift_management (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            till_id INT,
+            shift_start TIMESTAMP NOT NULL,
+            shift_end TIMESTAMP NULL,
+            opening_balance DECIMAL(15,2) DEFAULT 0.00,
+            closing_balance DECIMAL(15,2) DEFAULT 0.00,
+            total_sales DECIMAL(15,2) DEFAULT 0.00,
+            total_cash_drops DECIMAL(15,2) DEFAULT 0.00,
+            status ENUM('active', 'ended', 'cancelled') DEFAULT 'active',
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE SET NULL,
+            INDEX idx_user_id (user_id),
+            INDEX idx_till_id (till_id),
+            INDEX idx_shift_start (shift_start),
+            INDEX idx_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Insert default register tills
+    $default_tills = [
+        ['Main Till', 'TILL001', 'Main Counter', 0.00, 0.00, null, 1],
+        ['Secondary Till', 'TILL002', 'Secondary Counter', 0.00, 0.00, null, 1],
+        ['Mobile Till', 'TILL003', 'Mobile Device', 0.00, 0.00, null, 1]
+    ];
+
+    $stmt = $conn->prepare("
+        INSERT IGNORE INTO register_tills (till_name, till_code, location, opening_balance, current_balance, assigned_user_id, is_active) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ");
+    foreach ($default_tills as $till) {
+        $stmt->execute($till);
+    }
+
+    // Insert default POS settings
+    $default_pos_settings = [
+        ['receipt_printer_enabled', '1', 'boolean', 'receipt', 'Enable receipt printing', 1],
+        ['receipt_template', 'default', 'string', 'receipt', 'Receipt template to use', 1],
+        ['auto_print_receipt', '0', 'boolean', 'receipt', 'Automatically print receipts', 1],
+        ['require_customer_info', '0', 'boolean', 'sales', 'Require customer information for sales', 1],
+        ['default_payment_method', 'cash', 'string', 'payment', 'Default payment method', 1],
+        ['tax_inclusive', '1', 'boolean', 'tax', 'Prices include tax by default', 1],
+        ['round_to_nearest', '0.01', 'number', 'calculation', 'Round amounts to nearest value', 1],
+        ['low_stock_threshold', '10', 'number', 'inventory', 'Low stock alert threshold', 1],
+        ['max_discount_percentage', '50', 'number', 'sales', 'Maximum discount percentage allowed', 1],
+        ['enable_loyalty_program', '0', 'boolean', 'customer', 'Enable customer loyalty program', 1]
+    ];
+
+    $stmt = $conn->prepare("
+        INSERT IGNORE INTO pos_settings (setting_key, setting_value, setting_type, category, description, is_active) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    ");
+    foreach ($default_pos_settings as $setting) {
+        $stmt->execute($setting);
+    }
+
+    // Create loyalty_points table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS loyalty_points (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            customer_id INT NOT NULL,
+            points_earned INT DEFAULT 0,
+            points_redeemed INT DEFAULT 0,
+            points_balance INT DEFAULT 0,
+            transaction_type ENUM('earned', 'redeemed', 'expired', 'adjusted') NOT NULL,
+            transaction_reference VARCHAR(100),
+            description TEXT,
+            expiry_date DATE NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+            INDEX idx_customer_id (customer_id),
+            INDEX idx_transaction_type (transaction_type),
+            INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create loyalty_rewards table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS loyalty_rewards (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            reward_name VARCHAR(255) NOT NULL,
+            reward_description TEXT,
+            points_required INT NOT NULL,
+            discount_type ENUM('percentage', 'fixed_amount', 'free_item') NOT NULL,
+            discount_value DECIMAL(10, 2) NOT NULL,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_points_required (points_required),
+            INDEX idx_is_active (is_active)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Insert default loyalty rewards
+    $default_rewards = [
+        ['Welcome Bonus', 'Get 100 points for your first purchase', 0, 'fixed_amount', 100.00, 1],
+        ['5% Discount', 'Get 5% off your next purchase', 500, 'percentage', 5.00, 1],
+        ['10% Discount', 'Get 10% off your next purchase', 1000, 'percentage', 10.00, 1],
+        ['20% Discount', 'Get 20% off your next purchase', 2000, 'percentage', 20.00, 1],
+        ['Free Shipping', 'Free delivery on your next order', 300, 'fixed_amount', 0.00, 1]
+    ];
+    $stmt = $conn->prepare("
+        INSERT IGNORE INTO loyalty_rewards (reward_name, reward_description, points_required, discount_type, discount_value, is_active)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ");
+    foreach ($default_rewards as $reward) {
+        $stmt->execute($reward);
+    }
     
 } catch(PDOException $e) {
     // Store connection error for login page
