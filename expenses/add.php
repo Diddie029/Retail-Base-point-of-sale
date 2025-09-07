@@ -286,16 +286,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             header('Location: index.php');
             exit();
             
-        } else {
-            // Increment rate limit counter
-            $_SESSION[$rate_limit_key]['count']++;
-            $_SESSION[$rate_limit_key]['last_attempt'] = time();
-        }
-            
-        } catch (PDOException $e) {
+    } catch (PDOException $e) {
             $errors[] = "Database error: " . $e->getMessage();
         }
     }
+    
+    // Increment rate limit counter if there were errors
+    if (!empty($errors)) {
+        $_SESSION[$rate_limit_key]['count']++;
+        $_SESSION[$rate_limit_key]['last_attempt'] = time();
+    }
+    } // Close the else block
 }
 
 // Get form data

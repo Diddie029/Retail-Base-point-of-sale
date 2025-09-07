@@ -3013,6 +3013,50 @@ try {
         )
     ");
 
+    // Fix foreign key constraint if it references wrong table
+    try {
+        // Check if expense_approvals table exists and has wrong foreign key
+        $check_stmt = $conn->query("
+            SELECT 
+                CONSTRAINT_NAME,
+                REFERENCED_TABLE_NAME
+            FROM information_schema.KEY_COLUMN_USAGE 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'expense_approvals' 
+            AND REFERENCED_TABLE_NAME IS NOT NULL
+            AND REFERENCED_TABLE_NAME != 'expenses'
+        ");
+        $wrong_constraints = $check_stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Drop wrong foreign key constraints
+        foreach ($wrong_constraints as $constraint) {
+            if ($constraint['REFERENCED_TABLE_NAME'] === 'expense_entries') {
+                $conn->exec("ALTER TABLE expense_approvals DROP FOREIGN KEY {$constraint['CONSTRAINT_NAME']}");
+            }
+        }
+        
+        // Ensure correct foreign key constraint exists
+        $fk_check = $conn->query("
+            SELECT CONSTRAINT_NAME 
+            FROM information_schema.KEY_COLUMN_USAGE 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'expense_approvals' 
+            AND REFERENCED_TABLE_NAME = 'expenses'
+            AND COLUMN_NAME = 'expense_id'
+        ");
+        
+        if ($fk_check->rowCount() == 0) {
+            $conn->exec("
+                ALTER TABLE expense_approvals 
+                ADD CONSTRAINT fk_expense_approvals_expense_id 
+                FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+            ");
+        }
+    } catch (Exception $e) {
+        // Silently continue if constraint fix fails
+        error_log("Constraint fix warning: " . $e->getMessage());
+    }
+
     $conn->exec("
         CREATE TABLE IF NOT EXISTS expense_budgets (
             id INT AUTO_INCREMENT PRIMARY KEY,
