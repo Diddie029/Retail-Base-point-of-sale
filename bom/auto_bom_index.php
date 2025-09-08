@@ -33,6 +33,7 @@ if ($role_id) {
 // Check Auto BOM permissions - use granular permissions
 $can_create_auto_boms = hasPermission('create_auto_boms', $permissions);
 $can_edit_auto_boms = hasPermission('edit_auto_boms', $permissions);
+$can_manage_auto_boms = hasPermission('manage_auto_boms', $permissions);
 $can_view_auto_boms = hasPermission('view_auto_boms', $permissions);
 $can_manage_configs = hasPermission('manage_auto_bom_configs', $permissions);
 $can_view_units = hasPermission('view_auto_bom_units', $permissions);

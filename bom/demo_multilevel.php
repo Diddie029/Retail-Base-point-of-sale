@@ -1,4 +1,30 @@
 <?php
+/**
+ * Multi-Level BOM (Bill of Materials) Demo and User Guide
+ * 
+ * This page shows you how to create and manage complex product recipes
+ * where finished products can be used as ingredients in other products.
+ * 
+ * WHAT YOU'LL LEARN:
+ * =================
+ * 1. How to create recipes with sub-recipes
+ * 2. How costs automatically calculate from all levels
+ * 3. How to track what ingredients are needed
+ * 4. How to see where your products are used
+ * 5. How to manage complex manufacturing processes
+ * 
+ * PERFECT FOR:
+ * ============
+ * - Restaurants with complex dishes
+ * - Manufacturers with multi-step processes
+ * - Businesses that make products from other products
+ * - Anyone who needs accurate cost tracking
+ * 
+ * @author POS System Development Team
+ * @version 2.0
+ * @since 2024-01-01
+ */
+
 session_start();
 require_once __DIR__ . '/../include/db.php';
 require_once __DIR__ . '/../include/functions.php';
@@ -229,6 +255,228 @@ if (isset($_GET['bom_id'])) {
 
         <!-- Content -->
         <main class="content">
+            <!-- How It Works -->
+            <div class="demo-section">
+                <h2 class="demo-title">
+                    <i class="bi bi-book me-2"></i>How Multi-Level Recipes Work
+                </h2>
+                
+                <div class="row">
+                    <div class="col-lg-6">
+                        <h4><i class="bi bi-lightbulb me-2"></i>Simple Concept</h4>
+                        <div class="alert alert-info">
+                            <h6>Think of it like cooking:</h6>
+                            <ul class="mb-0">
+                                <li><strong>Level 1:</strong> Basic ingredients (flour, eggs, sugar)</li>
+                                <li><strong>Level 2:</strong> Simple recipes (cake batter, frosting)</li>
+                                <li><strong>Level 3:</strong> Complex dishes (wedding cake)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <h4><i class="bi bi-calculator me-2"></i>Automatic Costing</h4>
+                        <div class="alert alert-success">
+                            <h6>Smart Cost Tracking:</h6>
+                            <ul class="mb-0">
+                                <li><strong>Automatic:</strong> Costs roll up from all levels</li>
+                                <li><strong>Accurate:</strong> No double-counting or missed costs</li>
+                                <li><strong>Real-time:</strong> Updates when ingredient prices change</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <h4><i class="bi bi-star me-2"></i>Key Benefits</h4>
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h6 class="mb-0">💰 Accurate Pricing</h6>
+                            </div>
+                            <div class="card-body">
+                                <p class="mb-2">Know exactly what your products cost to make, including all hidden costs from sub-recipes.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h6 class="mb-0">📋 Complete Inventory</h6>
+                            </div>
+                            <div class="card-body">
+                                <p class="mb-2">See exactly what ingredients you need, even from complex multi-step recipes.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- How to Get Started -->
+            <div class="demo-section">
+                <h2 class="demo-title">
+                    <i class="bi bi-list-ol me-2"></i>How to Get Started
+                </h2>
+                
+                <div class="row">
+                    <div class="col-lg-4">
+                        <div class="scenario-card">
+                            <div class="scenario-title">
+                                <span class="step-number">1</span>
+                                Set Up Your Products
+                            </div>
+                            <p>Add all your basic ingredients and finished products to your product catalog:</p>
+                            <ul>
+                                <li>Add raw materials (flour, sugar, etc.)</li>
+                                <li>Add finished products (cakes, bread, etc.)</li>
+                                <li>Set accurate cost prices</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="scenario-card">
+                            <div class="scenario-title">
+                                <span class="step-number">2</span>
+                                Create Simple Recipes
+                            </div>
+                            <p>Start with basic recipes that use only raw materials:</p>
+                            <ul>
+                                <li>Create cake batter recipe</li>
+                                <li>Create frosting recipe</li>
+                                <li>Test that costs calculate correctly</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="scenario-card">
+                            <div class="scenario-title">
+                                <span class="step-number">3</span>
+                                Build Complex Recipes
+                            </div>
+                            <p>Use your simple recipes as ingredients in complex dishes:</p>
+                            <ul>
+                                <li>Create wedding cake using cake and frosting</li>
+                                <li>Watch costs automatically roll up</li>
+                                <li>See complete ingredient lists</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-lg-4">
+                        <div class="scenario-card">
+                            <div class="scenario-title">
+                                <span class="step-number">4</span>
+                                Track Your Inventory
+                            </div>
+                            <p>Use your recipes to manage inventory:</p>
+                            <ul>
+                                <li>See what ingredients you need</li>
+                                <li>Plan purchases based on production</li>
+                                <li>Avoid running out of key items</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="scenario-card">
+                            <div class="scenario-title">
+                                <span class="step-number">5</span>
+                                Price Your Products
+                            </div>
+                            <p>Set profitable prices using accurate costs:</p>
+                            <ul>
+                                <li>Add your desired profit margin</li>
+                                <li>Compare with competitor prices</li>
+                                <li>Adjust recipes to improve profitability</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="scenario-card">
+                            <div class="scenario-title">
+                                <span class="step-number">6</span>
+                                Monitor and Improve
+                            </div>
+                            <p>Keep your recipes and costs up to date:</p>
+                            <ul>
+                                <li>Update ingredient prices regularly</li>
+                                <li>Refine recipes for better efficiency</li>
+                                <li>Track which products are most profitable</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Real-World Examples -->
+            <div class="demo-section">
+                <h2 class="demo-title">
+                    <i class="bi bi-cup me-2"></i>Real-World Examples
+                </h2>
+                
+                <div class="row">
+                    <div class="col-lg-6">
+                        <h5>🍰 Bakery Example</h5>
+                        <div class="card">
+                            <div class="card-body">
+                                <h6>Wedding Cake Recipe:</h6>
+                                <ul class="mb-3">
+                                    <li><strong>Level 1:</strong> Cake Batter (uses flour, eggs, sugar)</li>
+                                    <li><strong>Level 1:</strong> Frosting (uses butter, sugar, vanilla)</li>
+                                    <li><strong>Level 2:</strong> Wedding Cake (uses cake batter + frosting)</li>
+                                </ul>
+                                <p class="text-muted">When you make a wedding cake, the system automatically calculates the cost of all ingredients from both levels!</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <h5>🍕 Restaurant Example</h5>
+                        <div class="card">
+                            <div class="card-body">
+                                <h6>Pizza Recipe:</h6>
+                                <ul class="mb-3">
+                                    <li><strong>Level 1:</strong> Pizza Dough (uses flour, water, yeast)</li>
+                                    <li><strong>Level 1:</strong> Pizza Sauce (uses tomatoes, herbs, spices)</li>
+                                    <li><strong>Level 2:</strong> Margherita Pizza (uses dough + sauce + cheese)</li>
+                                </ul>
+                                <p class="text-muted">Perfect for restaurants that make their own dough and sauce, then use them in multiple dishes!</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-lg-6">
+                        <h5>🏭 Manufacturing Example</h5>
+                        <div class="card">
+                            <div class="card-body">
+                                <h6>Electronic Device:</h6>
+                                <ul class="mb-3">
+                                    <li><strong>Level 1:</strong> Circuit Board (uses chips, resistors, capacitors)</li>
+                                    <li><strong>Level 1:</strong> Plastic Housing (uses plastic pellets, molds)</li>
+                                    <li><strong>Level 2:</strong> Complete Device (uses circuit board + housing)</li>
+                                </ul>
+                                <p class="text-muted">Ideal for manufacturers who build sub-assemblies and then combine them into final products!</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <h5>☕ Coffee Shop Example</h5>
+                        <div class="card">
+                            <div class="card-body">
+                                <h6>Specialty Drink:</h6>
+                                <ul class="mb-3">
+                                    <li><strong>Level 1:</strong> Espresso Shot (uses coffee beans, water)</li>
+                                    <li><strong>Level 1:</strong> Syrup Mix (uses sugar, flavoring, water)</li>
+                                    <li><strong>Level 2:</strong> Caramel Latte (uses espresso + syrup + milk)</li>
+                                </ul>
+                                <p class="text-muted">Great for coffee shops that make their own syrups and use them in multiple drinks!</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Introduction -->
             <div class="demo-section">
                 <h2 class="demo-title">
@@ -456,26 +704,83 @@ if (isset($_GET['bom_id'])) {
                 </div>
             </div>
 
-            <!-- Action Buttons -->
+            <!-- Tips for Success -->
+            <div class="demo-section">
+                <h2 class="demo-title">
+                    <i class="bi bi-lightbulb me-2"></i>Tips for Success
+                </h2>
+                
+                <div class="row">
+                    <div class="col-lg-6">
+                        <h5><i class="bi bi-check-circle me-2"></i>Getting Started Right</h5>
+                        <ul>
+                            <li>Start with simple recipes before building complex ones</li>
+                            <li>Keep ingredient costs up to date for accurate pricing</li>
+                            <li>Test your recipes with small batches first</li>
+                            <li>Use clear, descriptive names for your recipes</li>
+                            <li>Document any special instructions or notes</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="col-lg-6">
+                        <h5><i class="bi bi-graph-up me-2"></i>Maximizing Benefits</h5>
+                        <ul>
+                            <li>Regularly review and update your recipes</li>
+                            <li>Track which products are most profitable</li>
+                            <li>Look for ways to reduce costs without sacrificing quality</li>
+                            <li>Use the system to plan your inventory purchases</li>
+                            <li>Share recipe information with your team</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-lg-6">
+                        <h5><i class="bi bi-exclamation-triangle me-2"></i>Common Mistakes to Avoid</h5>
+                        <ul>
+                            <li>Don't forget to update costs when ingredient prices change</li>
+                            <li>Avoid creating circular dependencies (A uses B, B uses A)</li>
+                            <li>Don't skip testing your recipes before using them</li>
+                            <li>Make sure all quantities are accurate</li>
+                            <li>Don't forget to account for waste and shrinkage</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="col-lg-6">
+                        <h5><i class="bi bi-people me-2"></i>Team Collaboration</h5>
+                        <ul>
+                            <li>Train your team on how to use the system</li>
+                            <li>Set up clear roles and permissions</li>
+                            <li>Create standard procedures for recipe updates</li>
+                            <li>Regularly review and improve your processes</li>
+                            <li>Keep everyone informed of changes</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ready to Start? -->
             <div class="demo-section">
                 <div class="text-center">
-                    <h3 class="demo-title mb-4">Ready to Create Multi-Level BOMs?</h3>
+                    <h3 class="demo-title mb-4">Ready to Create Your First Multi-Level Recipe?</h3>
+                    <p class="lead mb-4">Start building complex recipes where your finished products become ingredients in other products!</p>
+                    
                     <div class="d-flex justify-content-center gap-3 flex-wrap">
                         <a href="add.php" class="btn btn-primary btn-lg">
-                            <i class="bi bi-plus-circle me-2"></i>Create New BOM
+                            <i class="bi bi-plus-circle me-2"></i>Create New Recipe
                         </a>
                         <a href="index.php" class="btn btn-outline-primary btn-lg">
-                            <i class="bi bi-list me-2"></i>View All BOMs
+                            <i class="bi bi-list me-2"></i>View All Recipes
                         </a>
                         <a href="reports.php" class="btn btn-outline-info btn-lg">
-                            <i class="bi bi-graph-up me-2"></i>View Reports
+                            <i class="bi bi-graph-up me-2"></i>View Cost Reports
                         </a>
                     </div>
 
                     <div class="mt-4 alert alert-success">
                         <i class="bi bi-check-circle me-2"></i>
-                        <strong>Your system supports multi-level BOMs!</strong> Create nested manufacturing recipes
-                        where finished products become components in other products, with automatic cost roll-up.
+                        <strong>You're all set!</strong> Your system is ready to handle complex recipes with automatic cost calculation.
+                        Start with simple recipes and build up to more complex ones as you get comfortable with the system.
                     </div>
                 </div>
             </div>

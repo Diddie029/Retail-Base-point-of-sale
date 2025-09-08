@@ -31,6 +31,7 @@ if ($role_id) {
 
 // Check BOM permissions - use more granular permissions
 $can_view_boms = hasPermission('view_boms', $permissions);
+$can_manage_boms = hasPermission('manage_boms', $permissions);
 $can_view_components = hasPermission('view_bom_components', $permissions);
 $can_view_costing = hasPermission('view_bom_costing', $permissions);
 

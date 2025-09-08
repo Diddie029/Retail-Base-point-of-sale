@@ -32,6 +32,7 @@ if ($role_id) {
 
 // Check Auto BOM permissions - use granular permissions
 $can_view_auto_boms = hasPermission('view_auto_boms', $permissions);
+$can_manage_auto_boms = hasPermission('manage_auto_boms', $permissions);
 $can_manage_product_families = hasPermission('manage_product_families', $permissions);
 $can_view_product_families = hasPermission('view_product_families', $permissions);
 $can_assign_families = hasPermission('assign_product_families', $permissions);
