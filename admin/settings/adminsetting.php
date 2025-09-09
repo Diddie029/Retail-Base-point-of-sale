@@ -38,13 +38,13 @@ if (!hasPermission('manage_settings', $permissions)) {
 // Define granular permissions for different sections
 $can_manage_company = hasPermission('manage_settings', $permissions) || hasPermission('configure_company_settings', $permissions);
 $can_manage_currency = hasPermission('manage_settings', $permissions) || hasPermission('configure_currency_settings', $permissions) || hasPermission('manage_financial_settings', $permissions);
-$can_manage_receipts = hasPermission('manage_settings', $permissions) || hasPermission('configure_receipt_settings', $permissions);
 $can_manage_system = hasPermission('manage_settings', $permissions) || hasPermission('configure_system_settings', $permissions);
 $can_manage_inventory = hasPermission('manage_settings', $permissions) || hasPermission('configure_inventory_settings', $permissions);
 $can_manage_appearance = hasPermission('manage_settings', $permissions) || hasPermission('manage_theme_settings', $permissions);
 $can_manage_email = hasPermission('manage_settings', $permissions) || hasPermission('configure_email_settings', $permissions);
 $can_manage_security = hasPermission('manage_settings', $permissions) || hasPermission('configure_security_settings', $permissions);
 $can_manage_backup = hasPermission('manage_settings', $permissions) || hasPermission('configure_backup_settings', $permissions);
+$can_manage_receipts = hasPermission('manage_settings', $permissions) || hasPermission('configure_receipt_settings', $permissions);
 
 // Get system settings
 $settings = [];
@@ -67,15 +67,6 @@ $defaults = [
     'tax_rate' => '0',
     'tax_name' => 'VAT',
     'tax_registration_number' => '',
-    'receipt_header' => 'POS SYSTEM',
-    'receipt_contact' => 'Contact: [Configure in Settings]',
-    'receipt_show_tax' => '1',
-    'receipt_show_discount' => '1',
-    'receipt_footer' => 'Thank you for your purchase!',
-    'receipt_thanks_message' => 'Please come again.',
-    'receipt_width' => '80',
-    'receipt_font_size' => '12',
-    'auto_print_receipt' => '0',
     'theme_color' => '#6366f1',
     'sidebar_color' => '#1e293b',
     'timezone' => 'Africa/Nairobi',
@@ -145,17 +136,6 @@ $defaults = [
     'bom_cost_calculation_method' => 'standard',
     'bom_default_waste_percentage' => '5.0',
 
-    // Receipt Number Settings
-    'auto_generate_receipt_number' => '1',
-    'receipt_number_prefix' => 'RCP',
-    'receipt_number_length' => '6',
-    'receipt_number_separator' => '-',
-    'receipt_number_format' => 'prefix-date-number',
-    
-    // Receipt Reprint Settings
-    'allow_receipt_reprint' => '1',
-    'max_reprint_attempts' => '3',
-    'require_password_for_reprint' => '1',
     
     // Email Templates
     'email_verification_subject' => 'Email Verification - {company_name}',
@@ -181,7 +161,26 @@ Best regards,
     'smtp_password' => '',
     'smtp_encryption' => 'tls',
     'smtp_from_email' => '',
-    'smtp_from_name' => 'POS System'
+    'smtp_from_name' => 'POS System',
+
+    // Receipt Settings
+    'receipt_header' => '',
+    'receipt_contact' => '',
+    'receipt_show_tax' => '1',
+    'receipt_show_discount' => '1',
+    'receipt_footer' => '',
+    'receipt_thanks_message' => 'Thank you for your business!',
+    'receipt_width' => '80',
+    'receipt_font_size' => '12',
+    'auto_print_receipt' => '0',
+    'auto_generate_receipt_number' => '1',
+    'receipt_number_prefix' => 'RCP',
+    'receipt_number_length' => '6',
+    'receipt_number_separator' => '-',
+    'receipt_number_format' => 'prefix-date-number',
+    'allow_receipt_reprint' => '1',
+    'max_reprint_attempts' => '3',
+    'require_password_for_reprint' => '0'
 ];
 
 // Merge with defaults
@@ -353,6 +352,7 @@ function generateReceiptNumberPreview($settings) {
     }
 }
 
+
 // Active tab
 $active_tab = isset($_GET['tab']) ? $_GET['tab'] : 'company';
 
@@ -360,12 +360,12 @@ $active_tab = isset($_GET['tab']) ? $_GET['tab'] : 'company';
 $valid_tabs = [
     'company' => $can_manage_company,
     'currency' => $can_manage_currency,
-    'receipt' => $can_manage_receipts,
     'system' => $can_manage_system,
     'inventory' => $can_manage_inventory,
     'appearance' => $can_manage_appearance,
     'email' => $can_manage_email,
-    'security' => $can_manage_security
+    'security' => $can_manage_security,
+    'receipt' => $can_manage_receipts
 ];
 
 if (!isset($valid_tabs[$active_tab]) || !$valid_tabs[$active_tab]) {
@@ -412,19 +412,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    if (isset($_POST['receipt_width'])) {
-        $width = intval($_POST['receipt_width']);
-        if ($width < 50 || $width > 120) {
-            $errors[] = "Receipt width must be between 50 and 120 characters.";
-        }
-    }
-    
-    if (isset($_POST['receipt_font_size'])) {
-        $font_size = intval($_POST['receipt_font_size']);
-        if ($font_size < 8 || $font_size > 24) {
-            $errors[] = "Receipt font size must be between 8 and 24.";
-        }
-    }
     
     // SKU Settings Validation
     if (isset($_POST['sku_prefix'])) {
@@ -504,30 +491,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Receipt Number Settings Validation
-    if (isset($_POST['receipt_number_prefix'])) {
-        $receipt_prefix = trim($_POST['receipt_number_prefix']);
-        if (strlen($receipt_prefix) > 10) {
-            $errors[] = "Receipt number prefix cannot exceed 10 characters.";
-        }
-        if (!preg_match('/^[A-Za-z0-9_-]*$/', $receipt_prefix)) {
-            $errors[] = "Receipt number prefix can only contain letters, numbers, hyphens, and underscores.";
-        }
-    }
-
-    if (isset($_POST['receipt_number_length'])) {
-        $receipt_length = intval($_POST['receipt_number_length']);
-        if ($receipt_length < 3 || $receipt_length > 10) {
-            $errors[] = "Receipt number length must be between 3 and 10 digits.";
-        }
-    }
-
-    if (isset($_POST['receipt_number_separator'])) {
-        $receipt_separator = trim($_POST['receipt_number_separator']);
-        if (strlen($receipt_separator) > 5) {
-            $errors[] = "Receipt number separator cannot exceed 5 characters.";
-        }
-    }
 
     // Customer Number Settings Validation
     if (isset($_POST['customer_number_prefix'])) {
@@ -553,13 +516,59 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Customer number separator cannot exceed 5 characters.";
         }
     }
+
+    // Receipt Settings Validation
+    if (isset($_POST['receipt_width'])) {
+        $receipt_width = intval($_POST['receipt_width']);
+        if ($receipt_width < 58 || $receipt_width > 210) {
+            $errors[] = "Receipt width must be between 58 and 210 millimeters.";
+        }
+    }
+
+    if (isset($_POST['receipt_font_size'])) {
+        $receipt_font_size = intval($_POST['receipt_font_size']);
+        if ($receipt_font_size < 8 || $receipt_font_size > 20) {
+            $errors[] = "Receipt font size must be between 8 and 20 pixels.";
+        }
+    }
+
+    if (isset($_POST['receipt_number_prefix'])) {
+        $receipt_prefix = trim($_POST['receipt_number_prefix']);
+        if (strlen($receipt_prefix) > 10) {
+            $errors[] = "Receipt number prefix cannot exceed 10 characters.";
+        }
+        if (!preg_match('/^[A-Za-z0-9_-]*$/', $receipt_prefix)) {
+            $errors[] = "Receipt number prefix can only contain letters, numbers, hyphens, and underscores.";
+        }
+    }
+
+    if (isset($_POST['receipt_number_length'])) {
+        $receipt_length = intval($_POST['receipt_number_length']);
+        if ($receipt_length < 3 || $receipt_length > 10) {
+            $errors[] = "Receipt number length must be between 3 and 10 digits.";
+        }
+    }
+
+    if (isset($_POST['receipt_number_separator'])) {
+        $receipt_separator = trim($_POST['receipt_number_separator']);
+        if (strlen($receipt_separator) > 3) {
+            $errors[] = "Receipt number separator cannot exceed 3 characters.";
+        }
+    }
+
+    if (isset($_POST['max_reprint_attempts'])) {
+        $max_reprint = intval($_POST['max_reprint_attempts']);
+        if ($max_reprint < 1 || $max_reprint > 10) {
+            $errors[] = "Maximum reprint attempts must be between 1 and 10.";
+        }
+    }
     
     if (empty($errors)) {
         try {
             $conn->beginTransaction();
             
             // Handle checkbox values
-            $checkbox_fields = ['receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_receipt_number', 'auto_generate_customer_number', 'allow_receipt_reprint', 'require_password_for_reprint'];
+            $checkbox_fields = ['enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_customer_number', 'receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'auto_generate_receipt_number', 'allow_receipt_reprint', 'require_password_for_reprint'];
             foreach($checkbox_fields as $field) {
                 if (!isset($_POST[$field])) {
                     $_POST[$field] = '0';
@@ -1063,12 +1072,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                         Currency & Tax
                     </a>
                     <?php endif; ?>
-                    <?php if ($can_manage_receipts): ?>
-                    <a href="?tab=receipt" class="nav-link <?php echo $active_tab == 'receipt' ? 'active' : ''; ?>">
-                        <i class="bi bi-receipt me-2"></i>
-                        Receipt Settings
-                    </a>
-                    <?php endif; ?>
                     <?php if ($can_manage_system): ?>
                     <a href="?tab=system" class="nav-link <?php echo $active_tab == 'system' ? 'active' : ''; ?>">
                         <i class="bi bi-gear me-2"></i>
@@ -1097,6 +1100,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <a href="?tab=security" class="nav-link <?php echo $active_tab == 'security' ? 'active' : ''; ?>">
                         <i class="bi bi-shield-check me-2"></i>
                         Security Settings
+                    </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_receipts): ?>
+                    <a href="?tab=receipt" class="nav-link <?php echo $active_tab == 'receipt' ? 'active' : ''; ?>">
+                        <i class="bi bi-receipt me-2"></i>
+                        Receipt Settings
                     </a>
                     <?php endif; ?>
                 </div>
@@ -1285,234 +1294,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
                 <?php endif; ?>
 
-                <!-- Receipt Settings Tab -->
-                <?php if ($active_tab == 'receipt' && $can_manage_receipts): ?>
-                <div class="data-section">
-                    <div class="section-header">
-                        <h3 class="section-title">
-                            <i class="bi bi-receipt me-2"></i>
-                            Receipt Settings
-                        </h3>
-                    </div>
-                    
-                    <form method="POST" action="" class="settings-form" id="receiptForm">
-                        <div class="form-group">
-                            <label for="receipt_header" class="form-label">Receipt Header</label>
-                            <input type="text" class="form-control" id="receipt_header" name="receipt_header" 
-                                   value="<?php echo htmlspecialchars($settings['receipt_header']); ?>" 
-                                   maxlength="100" placeholder="Your Business Name">
-                            <div class="form-text">This text will appear at the top of all receipts.</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="receipt_contact" class="form-label">Contact Information</label>
-                            <input type="text" class="form-control" id="receipt_contact" name="receipt_contact" 
-                                   value="<?php echo htmlspecialchars($settings['receipt_contact']); ?>" 
-                                   maxlength="150" placeholder="Contact: phone@email.com">
-                            <div class="form-text">Contact information displayed below the header on receipts.</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="receipt_footer" class="form-label">Footer Message</label>
-                            <textarea class="form-control" id="receipt_footer" name="receipt_footer" 
-                                      rows="3" maxlength="300" placeholder="Thank you for your purchase!"><?php echo htmlspecialchars($settings['receipt_footer']); ?></textarea>
-                            <div class="form-text">Message that appears at the bottom of receipts.</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="receipt_thanks_message" class="form-label">Thank You Message</label>
-                            <input type="text" class="form-control" id="receipt_thanks_message" name="receipt_thanks_message" 
-                                   value="<?php echo htmlspecialchars($settings['receipt_thanks_message']); ?>" 
-                                   maxlength="100" placeholder="Please come again!">
-                            <div class="form-text">Message displayed at the very end of the receipt.</div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="receipt_width" class="form-label">Receipt Width (Characters)</label>
-                                    <input type="number" min="50" max="120" class="form-control" id="receipt_width" name="receipt_width" 
-                                           value="<?php echo htmlspecialchars($settings['receipt_width']); ?>" 
-                                           placeholder="80">
-                                    <div class="form-text">Width of the receipt in characters (50-120).</div>
-                                </div>
-                            </div>
-                            
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="receipt_font_size" class="form-label">Receipt Font Size</label>
-                                    <input type="number" min="8" max="24" class="form-control" id="receipt_font_size" name="receipt_font_size" 
-                                           value="<?php echo htmlspecialchars($settings['receipt_font_size']); ?>" 
-                                           placeholder="12">
-                                    <div class="form-text">Font size for receipt text (8-24).</div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label class="form-label">Display Options</label>
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="receipt_show_tax" name="receipt_show_tax" value="1" 
-                                       <?php echo (isset($settings['receipt_show_tax']) && $settings['receipt_show_tax'] == '1') ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="receipt_show_tax">
-                                    Show Tax Information on Receipts
-                                </label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="receipt_show_discount" name="receipt_show_discount" value="1" 
-                                       <?php echo (isset($settings['receipt_show_discount']) && $settings['receipt_show_discount'] == '1') ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="receipt_show_discount">
-                                    Show Discount Information on Receipts
-                                </label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="auto_print_receipt" name="auto_print_receipt" value="1" 
-                                       <?php echo (isset($settings['auto_print_receipt']) && $settings['auto_print_receipt'] == '1') ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="auto_print_receipt">
-                                    Automatically Print Receipt After Sale
-                                </label>
-                            </div>
-                        </div>
-                        
-                        <!-- Receipt Number Settings Section -->
-                        <div class="form-group mt-5">
-                            <h5 class="mb-3 text-primary">
-                                <i class="bi bi-hash me-2"></i>
-                                Receipt Number Settings
-                            </h5>
-                        </div>
-
-                        <div class="form-group">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="auto_generate_receipt_number" name="auto_generate_receipt_number" value="1"
-                                       <?php echo (isset($settings['auto_generate_receipt_number']) && $settings['auto_generate_receipt_number'] == '1') ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="auto_generate_receipt_number">
-                                    Auto-generate Receipt Numbers
-                                </label>
-                            </div>
-                            <div class="form-text">Automatically generate receipt numbers when processing sales.</div>
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="receipt_number_prefix" class="form-label">Receipt Number Prefix</label>
-                                    <input type="text" class="form-control" id="receipt_number_prefix" name="receipt_number_prefix"
-                                           value="<?php echo htmlspecialchars($settings['receipt_number_prefix'] ?? 'RCP'); ?>"
-                                           placeholder="RCP" maxlength="10">
-                                    <div class="form-text">Prefix for all receipt numbers (e.g., RCP, REC, RECEIPT).</div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="receipt_number_length" class="form-label">Receipt Number Length</label>
-                                    <input type="number" min="3" max="10" class="form-control" id="receipt_number_length" name="receipt_number_length"
-                                           value="<?php echo htmlspecialchars($settings['receipt_number_length'] ?? '6'); ?>"
-                                           placeholder="6">
-                                    <div class="form-text">Number of digits in the receipt number (3-10).</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="receipt_number_separator" class="form-label">Receipt Number Separator</label>
-                                    <input type="text" class="form-control" id="receipt_number_separator" name="receipt_number_separator"
-                                           value="<?php echo htmlspecialchars($settings['receipt_number_separator'] ?? '-'); ?>"
-                                           placeholder="-" maxlength="5">
-                                    <div class="form-text">Separator between prefix and numbers (e.g., -, _, space).</div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="receipt_number_format" class="form-label">Receipt Number Format</label>
-                                    <select class="form-control" id="receipt_number_format" name="receipt_number_format">
-                                        <option value="prefix-date-number" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'prefix-date-number' ? 'selected' : ''; ?>>Prefix-Date-Number (RCP-20241201-000001)</option>
-                                        <option value="prefix-number" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'prefix-number' ? 'selected' : ''; ?>>Prefix-Number (RCP-000001)</option>
-                                        <option value="date-prefix-number" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'date-prefix-number' ? 'selected' : ''; ?>>Date-Prefix-Number (20241201-RCP-000001)</option>
-                                        <option value="number-only" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'number-only' ? 'selected' : ''; ?>>Number Only (000001)</option>
-                                    </select>
-                                    <div class="form-text">Format for generating receipt numbers.</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="receipt_number_preview" class="form-label">Receipt Number Preview</label>
-                            <div class="alert alert-info">
-                                <i class="bi bi-eye me-2"></i>
-                                <strong>Preview:</strong>
-                                <span id="receiptNumberPreview"><?php echo generateReceiptNumberPreview($settings); ?></span>
-                            </div>
-                        </div>
-                        
-                        <!-- Receipt Reprint Settings Section -->
-                        <div class="form-group mt-5">
-                            <h5 class="mb-3 text-primary">
-                                <i class="bi bi-arrow-repeat me-2"></i>
-                                Receipt Reprint Settings
-                            </h5>
-                        </div>
-                        
-                        <div class="form-group">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="allow_receipt_reprint" name="allow_receipt_reprint" value="1"
-                                       <?php echo (isset($settings['allow_receipt_reprint']) && $settings['allow_receipt_reprint'] == '1') ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="allow_receipt_reprint">
-                                    Allow Receipt Reprinting
-                                </label>
-                            </div>
-                            <div class="form-text">Enable the ability to reprint receipts after completing a sale.</div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="max_reprint_attempts" class="form-label">Maximum Reprint Attempts</label>
-                                    <input type="number" min="1" max="10" class="form-control" id="max_reprint_attempts" name="max_reprint_attempts"
-                                           value="<?php echo htmlspecialchars($settings['max_reprint_attempts'] ?? '3'); ?>"
-                                           placeholder="3">
-                                    <div class="form-text">Maximum number of times a receipt can be reprinted (1-10).</div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="require_password_for_reprint" name="require_password_for_reprint" value="1"
-                                               <?php echo (isset($settings['require_password_for_reprint']) && $settings['require_password_for_reprint'] == '1') ? 'checked' : ''; ?>>
-                                        <label class="form-check-label" for="require_password_for_reprint">
-                                            Require Password for Reprint
-                                        </label>
-                                    </div>
-                                    <div class="form-text">Require password verification before allowing receipt reprints.</div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <div class="alert alert-info">
-                                <i class="bi bi-info-circle me-2"></i>
-                                <strong>Security Note:</strong> Receipt reprints are logged with user details, timestamp, and IP address for audit purposes. 
-                                All reprint attempts (successful and failed) are tracked in the system.
-                            </div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <div class="d-flex gap-3">
-                                <button type="submit" class="btn btn-primary">
-                                    <i class="bi bi-save"></i>
-                                    Save Receipt Settings
-                                </button>
-                                <button type="reset" class="btn btn-outline-secondary">
-                                    <i class="bi bi-arrow-clockwise"></i>
-                                    Reset
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-                <?php endif; ?>
 
                 <!-- System Settings Tab -->
                 <?php if ($active_tab == 'system' && $can_manage_system): ?>
@@ -3092,6 +2873,315 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </table>
                         </div>
                     </div>
+                </div>
+                <?php endif; ?>
+
+                <!-- Receipt Settings Tab -->
+                <?php if ($active_tab == 'receipt' && $can_manage_receipts): ?>
+                <div class="data-section">
+                    <div class="section-header">
+                        <h3 class="section-title">
+                            <i class="bi bi-receipt me-2"></i>
+                            Receipt Settings
+                        </h3>
+                        <p class="section-subtitle text-muted">Configure receipt generation and formatting options</p>
+                    </div>
+                    
+                    <form method="POST" action="" class="settings-form" id="receiptForm">
+                        <!-- Receipt Display Settings -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-display me-2"></i>
+                                    Receipt Display Settings
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_header" class="form-label fw-semibold">
+                                                <i class="bi bi-file-earmark-text me-1"></i>Receipt Header
+                                            </label>
+                                            <textarea class="form-control" id="receipt_header" name="receipt_header" rows="3" 
+                                                      placeholder="Enter receipt header text"><?php echo htmlspecialchars($settings['receipt_header'] ?? ''); ?></textarea>
+                                            <div class="form-text">
+                                                <i class="bi bi-info-circle me-1"></i>Text displayed at the top of receipts
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_footer" class="form-label fw-semibold">
+                                                <i class="bi bi-file-earmark-text me-1"></i>Receipt Footer
+                                            </label>
+                                            <textarea class="form-control" id="receipt_footer" name="receipt_footer" rows="3" 
+                                                      placeholder="Enter receipt footer text"><?php echo htmlspecialchars($settings['receipt_footer'] ?? ''); ?></textarea>
+                                            <div class="form-text">
+                                                <i class="bi bi-info-circle me-1"></i>Text displayed at the bottom of receipts
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_contact" class="form-label fw-semibold">
+                                                <i class="bi bi-telephone me-1"></i>Contact Information
+                                            </label>
+                                            <input type="text" class="form-control" id="receipt_contact" name="receipt_contact" 
+                                                   value="<?php echo htmlspecialchars($settings['receipt_contact'] ?? ''); ?>" 
+                                                   placeholder="Phone, email, or website">
+                                            <div class="form-text">
+                                                <i class="bi bi-info-circle me-1"></i>Contact information shown on receipts
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_thanks_message" class="form-label fw-semibold">
+                                                <i class="bi bi-heart me-1"></i>Thank You Message
+                                            </label>
+                                            <input type="text" class="form-control" id="receipt_thanks_message" name="receipt_thanks_message" 
+                                                   value="<?php echo htmlspecialchars($settings['receipt_thanks_message'] ?? 'Thank you for your business!'); ?>" 
+                                                   placeholder="Thank you message">
+                                            <div class="form-text">
+                                                <i class="bi bi-info-circle me-1"></i>Appreciation message for customers
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Receipt Formatting Settings -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-success text-white">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-layout-text-sidebar me-2"></i>
+                                    Receipt Formatting
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_width" class="form-label fw-semibold">
+                                                <i class="bi bi-arrows-expand me-1"></i>Receipt Width (mm)
+                                            </label>
+                                            <input type="number" class="form-control" id="receipt_width" name="receipt_width" 
+                                                   value="<?php echo htmlspecialchars($settings['receipt_width'] ?? '80'); ?>" 
+                                                   min="58" max="210" placeholder="80">
+                                            <div class="form-text">
+                                                <i class="bi bi-info-circle me-1"></i>Width in millimeters (58-210mm)
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_font_size" class="form-label fw-semibold">
+                                                <i class="bi bi-fonts me-1"></i>Font Size (px)
+                                            </label>
+                                            <input type="number" class="form-control" id="receipt_font_size" name="receipt_font_size" 
+                                                   value="<?php echo htmlspecialchars($settings['receipt_font_size'] ?? '12'); ?>" 
+                                                   min="8" max="20" placeholder="12">
+                                            <div class="form-text">
+                                                <i class="bi bi-info-circle me-1"></i>Font size in pixels (8-20px)
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="receipt_show_tax" name="receipt_show_tax" value="1"
+                                                       <?php echo (isset($settings['receipt_show_tax']) && $settings['receipt_show_tax'] == '1') ? 'checked' : ''; ?>>
+                                                <label class="form-check-label fw-semibold" for="receipt_show_tax">
+                                                    <i class="bi bi-percent me-1"></i>Show Tax Details
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Display tax breakdown on receipts</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="receipt_show_discount" name="receipt_show_discount" value="1"
+                                                       <?php echo (isset($settings['receipt_show_discount']) && $settings['receipt_show_discount'] == '1') ? 'checked' : ''; ?>>
+                                                <label class="form-check-label fw-semibold" for="receipt_show_discount">
+                                                    <i class="bi bi-tag me-1"></i>Show Discount Details
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Display discount information on receipts</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Receipt Numbering Settings -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-warning text-dark">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-hash me-2"></i>
+                                    Receipt Numbering
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-group mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="auto_generate_receipt_number" name="auto_generate_receipt_number" value="1"
+                                               <?php echo (isset($settings['auto_generate_receipt_number']) && $settings['auto_generate_receipt_number'] == '1') ? 'checked' : ''; ?>>
+                                        <label class="form-check-label fw-semibold" for="auto_generate_receipt_number">
+                                            <i class="bi bi-gear-fill me-1"></i>Auto-generate Receipt Numbers
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Automatically generate sequential receipt numbers</div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_number_prefix" class="form-label fw-semibold">Receipt Prefix</label>
+                                            <input type="text" class="form-control" id="receipt_number_prefix" name="receipt_number_prefix"
+                                                   value="<?php echo htmlspecialchars($settings['receipt_number_prefix'] ?? 'RCP'); ?>"
+                                                   placeholder="RCP" maxlength="10">
+                                            <div class="form-text">Prefix for receipt numbers</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_number_length" class="form-label fw-semibold">Number Length</label>
+                                            <input type="number" class="form-control" id="receipt_number_length" name="receipt_number_length"
+                                                   value="<?php echo htmlspecialchars($settings['receipt_number_length'] ?? '6'); ?>"
+                                                   min="3" max="10" placeholder="6">
+                                            <div class="form-text">Number of digits (3-10)</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-group mb-3">
+                                            <label for="receipt_number_separator" class="form-label fw-semibold">Separator</label>
+                                            <input type="text" class="form-control" id="receipt_number_separator" name="receipt_number_separator"
+                                                   value="<?php echo htmlspecialchars($settings['receipt_number_separator'] ?? '-'); ?>"
+                                                   placeholder="-" maxlength="3">
+                                            <div class="form-text">Character between parts</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-group mb-3">
+                                    <label for="receipt_number_format" class="form-label fw-semibold">Receipt Number Format</label>
+                                    <select class="form-select" id="receipt_number_format" name="receipt_number_format">
+                                        <option value="prefix-date-number" <?php echo ($settings['receipt_number_format'] ?? 'prefix-date-number') == 'prefix-date-number' ? 'selected' : ''; ?>>
+                                            Prefix-Date-Number (RCP-20241201-000001)
+                                        </option>
+                                        <option value="prefix-number" <?php echo ($settings['receipt_number_format'] ?? '') == 'prefix-number' ? 'selected' : ''; ?>>
+                                            Prefix-Number (RCP-000001)
+                                        </option>
+                                        <option value="date-prefix-number" <?php echo ($settings['receipt_number_format'] ?? '') == 'date-prefix-number' ? 'selected' : ''; ?>>
+                                            Date-Prefix-Number (20241201-RCP-000001)
+                                        </option>
+                                        <option value="number-only" <?php echo ($settings['receipt_number_format'] ?? '') == 'number-only' ? 'selected' : ''; ?>>
+                                            Number Only (000001)
+                                        </option>
+                                    </select>
+                                    <div class="form-text">Choose how receipt numbers are formatted</div>
+                                </div>
+
+                                <div class="form-group mb-3">
+                                    <label class="form-label fw-semibold">Receipt Number Preview</label>
+                                    <div class="alert alert-info">
+                                        <i class="bi bi-eye me-2"></i>
+                                        <strong>Preview:</strong>
+                                        <span id="receiptNumberPreview">RCP-20241201-000001</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Printing & Reprint Settings -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-info text-white">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-printer me-2"></i>
+                                    Printing & Reprint Settings
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="auto_print_receipt" name="auto_print_receipt" value="1"
+                                                       <?php echo (isset($settings['auto_print_receipt']) && $settings['auto_print_receipt'] == '1') ? 'checked' : ''; ?>>
+                                                <label class="form-check-label fw-semibold" for="auto_print_receipt">
+                                                    <i class="bi bi-printer-fill me-1"></i>Auto-print Receipts
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Automatically print receipts after payment</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="allow_receipt_reprint" name="allow_receipt_reprint" value="1"
+                                                       <?php echo (isset($settings['allow_receipt_reprint']) && $settings['allow_receipt_reprint'] == '1') ? 'checked' : ''; ?>>
+                                                <label class="form-check-label fw-semibold" for="allow_receipt_reprint">
+                                                    <i class="bi bi-arrow-repeat me-1"></i>Allow Receipt Reprint
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Allow reprinting of existing receipts</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="max_reprint_attempts" class="form-label fw-semibold">
+                                                <i class="bi bi-arrow-repeat me-1"></i>Max Reprint Attempts
+                                            </label>
+                                            <input type="number" class="form-control" id="max_reprint_attempts" name="max_reprint_attempts" 
+                                                   value="<?php echo htmlspecialchars($settings['max_reprint_attempts'] ?? '3'); ?>" 
+                                                   min="1" max="10" placeholder="3">
+                                            <div class="form-text">
+                                                <i class="bi bi-info-circle me-1"></i>Maximum times a receipt can be reprinted
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="require_password_for_reprint" name="require_password_for_reprint" value="1"
+                                                       <?php echo (isset($settings['require_password_for_reprint']) && $settings['require_password_for_reprint'] == '1') ? 'checked' : ''; ?>>
+                                                <label class="form-check-label fw-semibold" for="require_password_for_reprint">
+                                                    <i class="bi bi-key me-1"></i>Require Password for Reprint
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Require password verification for reprints</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Action Buttons -->
+                        <div class="form-group">
+                            <div class="d-flex gap-3">
+                                <button type="submit" class="btn btn-primary btn-lg">
+                                    <i class="bi bi-save me-2"></i>
+                                    Save Receipt Settings
+                                </button>
+                                <button type="reset" class="btn btn-outline-secondary btn-lg">
+                                    <i class="bi bi-arrow-clockwise me-2"></i>
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                    </form>
                 </div>
                 <?php endif; ?>
             </div>

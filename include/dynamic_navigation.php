@@ -4,6 +4,9 @@
 
 // Define section content mappings for each section key
 $sectionContentMappings = [
+    'customer_crm' => [
+        ['/customers/crm_dashboard.php', 'bi-speedometer2', 'CRM Dashboard']
+    ],
     'inventory' => [
         ['/products/products.php', 'bi-list', 'All Products'],
         ['/categories/categories.php', 'bi-tags', 'Categories'],
@@ -12,7 +15,6 @@ $sectionContentMappings = [
         ['/suppliers/suppliers.php', 'bi-truck', 'Suppliers'],
         ['/inventory/inventory.php', 'bi-boxes', 'Inventory'],
         ['/products/bulk_operations.php', 'bi-lightning-charge', 'Bulk Operations'],
-        ['/shelf_label/shelf_labels.php', 'bi-tags', 'Shelf Labels']
     ],
     'expiry' => [
         ['/expiry_tracker/expiry_tracker.php', 'bi-clock-history', 'Expiry Tracker'],
@@ -28,18 +30,7 @@ $sectionContentMappings = [
         ['/bom/demo_multilevel.php', 'bi-diagram-3', 'Multi-Level Demo']
     ],
     'finance' => [
-        ['/finance/index.php', 'bi-speedometer2', 'Finance Dashboard'],
-        ['/finance/budget.php', 'bi-wallet2', 'Budget Management'],
-        ['/finance/budget-reports.php', 'bi-graph-up', 'Budget Reports'],
-        ['/finance/profit-loss.php', 'bi-graph-down', 'Profit & Loss'],
-        ['/finance/balance-sheet.php', 'bi-file-earmark-text', 'Balance Sheet'],
-        ['/finance/cash-flow.php', 'bi-arrow-left-right', 'Cash Flow'],
-        ['/finance/sales-analytics.php', 'bi-bar-chart', 'Sales Analytics'],
-        ['/finance/expense-analysis.php', 'bi-pie-chart', 'Expense Analysis'],
-        ['/finance/forecasting.php', 'bi-graph-up-arrow', 'Forecasting'],
-        ['/finance/tax-management.php', 'bi-percent', 'Tax Management'],
-        ['/finance/tax-reports.php', 'bi-graph-up', 'Tax Reports'],
-        ['/finance/reports.php', 'bi-file-earmark-bar-graph', 'All Reports']
+        ['/finance/index.php', 'bi-speedometer2', 'Finance Dashboard']
     ],
     'expenses' => [
         ['/expenses/index.php', 'bi-list-ul', 'All Expenses'],
@@ -55,6 +46,28 @@ $sectionContentMappings = [
         ['/admin/security_logs.php', 'bi-shield-exclamation', 'Security Logs'],
         ['/admin/backup/manage_backups.php', 'bi-server', 'Backup & Security'],
         ['/admin/settings/adminsetting.php', 'bi-gear', 'Settings']
+    ],
+    'analytics' => [
+        ['/analytics/index.php', 'bi-graph-up', 'Analytics Dashboard']
+    ],
+    'sales' => [
+        ['/sales/index.php', 'bi-graph-up', 'Sales Dashboard'],
+        ['/sales/salesdashboard.php', 'bi-speedometer2', 'Sales Overview'],
+        ['/sales/analytics.php', 'bi-bar-chart', 'Sales Analytics'],
+        ['/sales/export_sales.php', 'bi-download', 'Export Sales'],
+        ['/sales/cash-drop.php', 'bi-cash-stack', 'Cash Drop'],
+        ['/sales/tills.php', 'bi-cash-register', 'Till Management'],
+        ['/sales/payment-methods.php', 'bi-credit-card', 'Payment Methods']
+    ],
+    'shelf_labels' => [
+        ['/shelf_label/index.php', 'bi-tags', 'Shelf Labels'],
+        ['/shelf_label/shelf_labels.php', 'bi-tags', 'Manage Labels'],
+        ['/shelf_label/generate_labels.php', 'bi-plus-circle', 'Generate Labels'],
+        ['/shelf_label/print_labels.php', 'bi-printer', 'Print Labels'],
+        ['/shelf_label/export_labels.php', 'bi-download', 'Export Labels']
+    ],
+    'reports' => [
+        ['/reports/index.php', 'bi-file-earmark-bar-graph', 'Reports Dashboard']
     ]
 ];
 
@@ -88,7 +101,7 @@ function generateNavSection($sectionKey, $sectionName, $sectionIcon, $isVisible,
         $bgColor = $isActive ? ($settings['theme_color'] ?? '#6366f1') : 'transparent';
         
         $html .= '<div class="nav-item">';
-        $html .= '<a href="/pointofsale' . $url . '" class="nav-link ' . $isActive . '" style="background-color: ' . $bgColor . '">';
+        $html .= '<a href="' . $url . '" class="nav-link ' . $isActive . '" style="background-color: ' . $bgColor . '">';
         $html .= '<i class="bi ' . $icon . '"></i>';
         $html .= $label;
         $html .= '</a>';
@@ -117,11 +130,16 @@ if (isset($menuAccess) && !empty($menuAccess)) {
 } else {
     // Fallback for users without roles - use hardcoded sections
     $sectionConfig = [
+        'customer_crm' => ['Customer CRM', 'bi-people', $sectionContentMappings['customer_crm'] ?? []],
         'inventory' => ['Inventory', 'bi-boxes', $sectionContentMappings['inventory'] ?? []],
         'expiry' => ['Expiry Management', 'bi-clock-history', $sectionContentMappings['expiry'] ?? []],
         'bom' => ['Bill of Materials', 'bi-file-earmark-text', $sectionContentMappings['bom'] ?? []],
         'finance' => ['Finance', 'bi-calculator', $sectionContentMappings['finance'] ?? []],
         'expenses' => ['Expense Management', 'bi-cash-stack', $sectionContentMappings['expenses'] ?? []],
+        'analytics' => ['Analytics', 'bi-graph-up', $sectionContentMappings['analytics'] ?? []],
+        'sales' => ['Sales Management', 'bi-graph-up', $sectionContentMappings['sales'] ?? []],
+        'shelf_labels' => ['Shelf Labels', 'bi-tags', $sectionContentMappings['shelf_labels'] ?? []],
+        'reports' => ['Reports', 'bi-file-earmark-bar-graph', $sectionContentMappings['reports'] ?? []],
         'admin' => ['Administration', 'bi-shield', $sectionContentMappings['admin'] ?? []]
     ];
     

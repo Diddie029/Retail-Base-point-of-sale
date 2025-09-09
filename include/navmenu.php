@@ -15,7 +15,8 @@ $isAdmin = (
     $role_name === 'administrator' ||
     hasPermission('view_all_menus', $permissions) ||
     hasPermission('manage_roles', $permissions) ||
-    hasPermission('manage_users', $permissions)
+    hasPermission('manage_users', $permissions) ||
+    hasPermission('view_reports', $permissions)
 );
 
 
@@ -34,6 +35,12 @@ if ($isAdmin) {
         $sectionKey = $access['section_key'];
         $showSections[$sectionKey] = true; // Admin sees everything
         $prioritySections[] = $sectionKey; // All sections are priority for admin
+    }
+    
+    // Ensure reports section is always visible for admin (hardcoded fallback)
+    $showSections['reports'] = true;
+    if (!in_array('reports', $prioritySections)) {
+        $prioritySections[] = 'reports';
     }
 } elseif ($role_id) {
     $stmt = $conn->prepare("
@@ -86,11 +93,16 @@ if ($isAdmin) {
     } else {
         // Regular user - show sections based on permissions
         $showSections = [
+            'customer_crm' => hasPermission('view_customers', $permissions) || hasPermission('manage_customers', $permissions) || hasPermission('manage_loyalty', $permissions),
             'inventory' => hasPermission('manage_inventory', $permissions) || hasPermission('manage_categories', $permissions) || hasPermission('manage_product_brands', $permissions) || hasPermission('manage_product_suppliers', $permissions),
             'expiry' => hasPermission('view_expiry_alerts', $permissions) || hasPermission('manage_expiry_tracker', $permissions),
             'bom' => hasPermission('create_boms', $permissions) || hasPermission('edit_boms', $permissions) || hasPermission('delete_boms', $permissions) || hasPermission('view_boms', $permissions) || hasPermission('view_bom_components', $permissions) || hasPermission('view_bom_costing', $permissions),
             'finance' => hasPermission('view_finance', $permissions),
             'expenses' => hasPermission('view_expense_reports', $permissions) || hasPermission('create_expenses', $permissions),
+            'analytics' => hasPermission('view_analytics', $permissions),
+            'sales' => hasPermission('view_sales', $permissions) || hasPermission('manage_sales', $permissions),
+            'reports' => hasPermission('view_reports', $permissions) || hasPermission('view_analytics', $permissions) || hasPermission('view_sales', $permissions) || hasPermission('manage_sales', $permissions) || hasPermission('view_finance', $permissions),
+            'shelf_labels' => hasPermission('manage_shelf_labels', $permissions) || hasPermission('print_labels', $permissions),
             'admin' => hasPermission('manage_users', $permissions) || hasPermission('manage_settings', $permissions) || hasPermission('manage_backup', $permissions) || hasPermission('view_security_logs', $permissions)
         ];
         $prioritySections = array_keys(array_filter($showSections));
@@ -108,7 +120,8 @@ if ($totalVisibleSections == 0 && (
     $role_name === 'Administrator' || 
     $role_name === 'administrator' ||
     hasPermission('manage_roles', $permissions) ||
-    hasPermission('manage_users', $permissions)
+    hasPermission('manage_users', $permissions) ||
+    hasPermission('view_reports', $permissions)
 )) {
     error_log("Emergency Admin Fallback: Admin user has no visible sections, enabling all sections");
     
@@ -125,6 +138,12 @@ if ($totalVisibleSections == 0 && (
         $sectionKey = $access['section_key'];
         $showSections[$sectionKey] = true; // Admin sees everything
         $prioritySections[] = $sectionKey; // All sections are priority for admin
+    }
+    
+    // Ensure reports section is always visible for admin (emergency fallback)
+    $showSections['reports'] = true;
+    if (!in_array('reports', $prioritySections)) {
+        $prioritySections[] = 'reports';
     }
     
     // Recalculate visible sections
@@ -146,47 +165,29 @@ if ($totalVisibleSections == 0 && (
     <div class="sidebar-nav">
         <!-- Dashboard - Always visible -->
         <div class="nav-item">
-            <a href="/pointofsale/dashboard/dashboard.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? 'active' : ''; ?>" style="background-color: <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="dashboard/dashboard.php" class="nav-link <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? 'active' : ''; ?>" style="background-color: <?php echo basename($_SERVER['PHP_SELF'], '.php') === 'dashboard' ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-speedometer2"></i>
                 Dashboard
             </a>
         </div>
 
-        <!-- Point of Sale - Always visible if permission exists -->
+        <!-- POS - Always visible if permission exists -->
         <?php if (hasPermission('process_sales', $permissions)): ?>
         <div class="nav-item">
-            <a href="/pointofsale/pos/sale.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="pos/sale.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-cart-plus"></i>
-                Point of Sale
+                POS
             </a>
         </div>
         <?php endif; ?>
 
-        <!-- Customers - Always visible if permission exists -->
-        <?php if (hasPermission('view_customers', $permissions)): ?>
-        <div class="nav-item">
-            <a href="/pointofsale/customers/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/customers/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                <i class="bi bi-people"></i>
-                Customers
-            </a>
-        </div>
-        <?php endif; ?>
+        <!-- Dynamic Navigation Sections -->
+        <?php include 'dynamic_navigation.php'; ?>
 
-        <?php include __DIR__ . '/dynamic_navigation.php'; ?>
-
-        <!-- Analytics - Always visible if permission exists -->
-        <?php if (hasPermission('view_analytics', $permissions)): ?>
-        <div class="nav-item">
-            <a href="/pointofsale/analytics/index.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/analytics/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/analytics/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                <i class="bi bi-graph-up"></i>
-                Analytics
-            </a>
-        </div>
-        <?php endif; ?>
 
         <!-- My Profile - Always visible -->
         <div class="nav-item">
-            <a href="/pointofsale/dashboard/users/profile.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="dashboard/users/profile.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-person-gear"></i>
                 My Profile
             </a>
@@ -194,7 +195,7 @@ if ($totalVisibleSections == 0 && (
 
         <!-- Logout - Always visible -->
         <div class="nav-item mt-auto">
-            <a href="/pointofsale/auth/logout.php" class="nav-link text-danger">
+            <a href="auth/logout.php" class="nav-link text-danger">
                 <i class="bi bi-box-arrow-right"></i>
                 Logout
             </a>
@@ -220,6 +221,14 @@ if ($totalVisibleSections == 0 && (
     overflow-y: auto;
     z-index: 1000;
     box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+}
+
+/* Main Content Area */
+.main-content {
+    margin-left: 250px;
+    min-height: 100vh;
+    background-color: #f8f9fa;
+    transition: margin-left 0.3s ease;
 }
 
 .sidebar-header {
@@ -418,6 +427,10 @@ if ($totalVisibleSections == 0 && (
     
     .sidebar.show {
         transform: translateX(0);
+    }
+    
+    .main-content {
+        margin-left: 0;
     }
 }
 </style>

@@ -67,6 +67,31 @@
         }
       });
     }
+    
+    // Bind quick amount buttons
+    const quickAmountBtns = document.querySelectorAll('.quick-amount');
+    quickAmountBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const amount = parseFloat(btn.dataset.amount) || 0;
+        if (cashInput) {
+          cashInput.value = amount;
+          cashInput.focus();
+          calculateChange();
+        }
+      });
+    });
+    
+    // Bind exact amount button
+    const exactAmountBtn = document.getElementById('exactAmountBtn');
+    if (exactAmountBtn) {
+      exactAmountBtn.addEventListener('click', () => {
+        if (cashInput) {
+          cashInput.value = paymentAmount;
+          cashInput.focus();
+          calculateChange();
+        }
+      });
+    }
   }
   
   function bindPaymentActions() {
@@ -337,6 +362,7 @@
     const cashInput = document.getElementById('cashReceived');
     const changeDisplay = document.getElementById('changeDisplay');
     const changeAmount = document.getElementById('changeAmount');
+    const changeStatus = document.getElementById('changeStatus');
     
     if (!cashInput || !changeDisplay || !changeAmount) return;
     
@@ -345,17 +371,30 @@
     const currencySymbol = window.POSConfig?.currencySymbol || '$';
     
     // Update change display
-    changeAmount.textContent = `${currencySymbol}${formatAmount(Math.abs(change))}`;
-    
-    // Update styling based on change amount
-    changeDisplay.classList.remove('positive', 'negative');
     if (change >= 0) {
-      changeDisplay.classList.add('positive');
+      changeAmount.textContent = `${currencySymbol} ${formatAmount(change)}`;
       changeAmount.style.color = '#10b981'; // Success color
+      
+      // Update status indicator
+      if (changeStatus) {
+        changeStatus.innerHTML = '<i class="bi bi-check-circle text-success" style="font-size: 1.2rem;"></i>';
+      }
+      
+      // Update display styling
+      changeDisplay.style.background = 'linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%)';
+      changeDisplay.style.borderColor = '#10b981 !important';
     } else {
-      changeDisplay.classList.add('negative');
-      changeAmount.style.color = '#ef4444'; // Danger color
-      changeAmount.textContent = `${currencySymbol}${formatAmount(Math.abs(change))} insufficient`;
+      changeAmount.textContent = `${currencySymbol} ${formatAmount(Math.abs(change))} insufficient`;
+      changeAmount.style.color = '#dc3545'; // Danger color
+      
+      // Update status indicator
+      if (changeStatus) {
+        changeStatus.innerHTML = '<i class="bi bi-exclamation-triangle text-warning" style="font-size: 1.2rem;"></i>';
+      }
+      
+      // Update display styling
+      changeDisplay.style.background = 'linear-gradient(135deg, #fef2f2 0%, #fecaca 100%)';
+      changeDisplay.style.borderColor = '#dc3545 !important';
     }
     
     // Update confirm button

@@ -2219,6 +2219,534 @@ function getWalkInCustomer($conn) {
 }
 
 /**
+ * Get all customers for selection
+ *
+ * @param PDO $conn Database connection
+ * @param string $search Search term for customer name or phone
+ * @return array List of customers
+ */
+function getAllCustomers($conn, $search = '') {
+    try {
+        // First, let's check if tax_exempt column exists
+        $columnsStmt = $conn->query("SHOW COLUMNS FROM customers LIKE 'tax_exempt'");
+        $hasTaxExempt = $columnsStmt->rowCount() > 0;
+        
+        $sql = "SELECT id, customer_number, first_name, last_name, email, phone, customer_type, 
+                       company_name, membership_level";
+        
+        if ($hasTaxExempt) {
+            $sql .= ", tax_exempt";
+        } else {
+            $sql .= ", 0 as tax_exempt";
+        }
+        
+        $sql .= " FROM customers WHERE membership_status = 'active'";
+        
+        $params = [];
+        if (!empty($search)) {
+            $sql .= " AND (CONCAT(first_name, ' ', last_name) LIKE :search 
+                     OR phone LIKE :search 
+                     OR email LIKE :search 
+                     OR customer_number LIKE :search)";
+            $params[':search'] = '%' . $search . '%';
+        }
+        
+        $sql .= " ORDER BY customer_type ASC, first_name ASC, last_name ASC";
+        
+        $stmt = $conn->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("getAllCustomers error: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Get customer by ID
+ *
+ * @param PDO $conn Database connection
+ * @param int $customerId Customer ID
+ * @return array|null Customer data or null if not found
+ */
+function getCustomerById($conn, $customerId) {
+    try {
+        $stmt = $conn->prepare("SELECT * FROM customers WHERE id = :customer_id");
+        $stmt->bindParam(':customer_id', $customerId);
+        $stmt->execute();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        return null;
+    }
+}
+
+/**
+ * LOYALTY POINTS FUNCTIONS
+ */
+
+/**
+ * Get customer loyalty points balance
+ *
+ * @param PDO $conn Database connection
+ * @param int $customerId Customer ID
+ * @return int Current loyalty points balance
+ */
+function getCustomerLoyaltyBalance($conn, $customerId) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT COALESCE(SUM(
+                CASE 
+                    WHEN transaction_type = 'earned' THEN points_earned
+                    WHEN transaction_type = 'redeemed' THEN -points_redeemed
+                    WHEN transaction_type = 'expired' THEN -points_earned
+                    ELSE 0
+                END
+            ), 0) as balance
+            FROM loyalty_points 
+            WHERE customer_id = :customer_id
+        ");
+        $stmt->bindParam(':customer_id', $customerId);
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return (int)$result['balance'];
+    } catch (PDOException $e) {
+        error_log("Error getting loyalty balance: " . $e->getMessage());
+        return 0;
+    }
+}
+
+/**
+ * Add loyalty points to customer
+ *
+ * @param PDO $conn Database connection
+ * @param int $customerId Customer ID
+ * @param int $points Points to add
+ * @param string $description Description of the transaction
+ * @param string $transactionReference Reference for the transaction
+ * @param string $expiryDate Expiry date (optional, will be calculated from settings if not provided)
+ * @return bool Success status
+ */
+function addLoyaltyPoints($conn, $customerId, $points, $description, $transactionReference = null, $expiryDate = null) {
+    try {
+        if ($points <= 0) {
+            return false;
+        }
+
+        // Calculate expiry date if not provided
+        if ($expiryDate === null) {
+            $settings = getLoyaltySettings($conn);
+            $expiryDays = $settings['points_expiry_days'];
+            if ($expiryDays > 0) {
+                $expiryDate = date('Y-m-d', strtotime("+{$expiryDays} days"));
+            }
+        }
+
+        $stmt = $conn->prepare("
+            INSERT INTO loyalty_points (
+                customer_id, points_earned, points_balance, transaction_type, 
+                transaction_reference, description, expiry_date
+            ) VALUES (?, ?, ?, 'earned', ?, ?, ?)
+        ");
+
+        // Get current balance
+        $currentBalance = getCustomerLoyaltyBalance($conn, $customerId);
+        $newBalance = $currentBalance + $points;
+
+        $stmt->execute([
+            $customerId,
+            $points,
+            $newBalance,
+            $transactionReference,
+            $description,
+            $expiryDate
+        ]);
+
+        // Update customer's loyalty_points field
+        $updateStmt = $conn->prepare("UPDATE customers SET loyalty_points = ? WHERE id = ?");
+        $updateStmt->execute([$newBalance, $customerId]);
+
+        return true;
+    } catch (PDOException $e) {
+        error_log("Error adding loyalty points: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Redeem loyalty points from customer
+ *
+ * @param PDO $conn Database connection
+ * @param int $customerId Customer ID
+ * @param int $points Points to redeem
+ * @param string $description Description of the transaction
+ * @param string $transactionReference Reference for the transaction
+ * @return bool Success status
+ */
+function redeemLoyaltyPoints($conn, $customerId, $points, $description, $transactionReference = null) {
+    try {
+        if ($points <= 0) {
+            return false;
+        }
+
+        // Check if customer has enough points
+        $currentBalance = getCustomerLoyaltyBalance($conn, $customerId);
+        if ($currentBalance < $points) {
+            return false;
+        }
+
+        $stmt = $conn->prepare("
+            INSERT INTO loyalty_points (
+                customer_id, points_redeemed, points_balance, transaction_type, 
+                transaction_reference, description
+            ) VALUES (?, ?, ?, 'redeemed', ?, ?)
+        ");
+
+        $newBalance = $currentBalance - $points;
+
+        $stmt->execute([
+            $customerId,
+            $points,
+            $newBalance,
+            $transactionReference,
+            $description
+        ]);
+
+        // Update customer's loyalty_points field
+        $updateStmt = $conn->prepare("UPDATE customers SET loyalty_points = ? WHERE id = ?");
+        $updateStmt->execute([$newBalance, $customerId]);
+
+        return true;
+    } catch (PDOException $e) {
+        error_log("Error redeeming loyalty points: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Calculate loyalty points to earn based on purchase amount and settings
+ *
+ * @param PDO $conn Database connection
+ * @param float $amount Purchase amount
+ * @param string $membershipLevel Customer membership level
+ * @return int Points to earn
+ */
+function calculateLoyaltyPoints($conn, $amount, $membershipLevel = 'Basic') {
+    // Get loyalty settings
+    $settings = getLoyaltySettings($conn);
+    
+    // Check if loyalty program is enabled
+    if (!$settings['enable_loyalty_program']) {
+        return 0;
+    }
+    
+    // Check minimum purchase requirement
+    if ($amount < $settings['loyalty_minimum_purchase']) {
+        return 0;
+    }
+    
+    // Get base points per currency unit
+    $basePointsPerCurrency = $settings['loyalty_points_per_currency'];
+    
+    // Get membership level multiplier from database
+    $multiplier = getMembershipLevelMultiplier($conn, $membershipLevel);
+    
+    $pointsPerCurrency = $basePointsPerCurrency * $multiplier;
+    return (int)floor($amount * $pointsPerCurrency);
+}
+
+/**
+ * Get loyalty program settings
+ *
+ * @param PDO $conn Database connection
+ * @return array Loyalty settings
+ */
+function getLoyaltySettings($conn) {
+    try {
+        $stmt = $conn->query("
+            SELECT setting_key, setting_value 
+            FROM pos_settings 
+            WHERE setting_key LIKE 'loyalty_%' AND is_active = 1
+        ");
+        $settings = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $key = str_replace('loyalty_', '', $row['setting_key']);
+            $value = $row['setting_value'];
+            
+            // Convert to appropriate type
+            if (in_array($key, ['enable_loyalty_program', 'auto_level_upgrade'])) {
+                $settings[$key] = (bool)$value;
+            } elseif (in_array($key, ['points_expiry_days'])) {
+                $settings[$key] = (int)$value;
+            } else {
+                $settings[$key] = (float)$value;
+            }
+        }
+        
+        // Set defaults if settings don't exist
+        $defaults = [
+            'enable_loyalty_program' => true,
+            'points_per_currency' => 1.0,
+            'minimum_purchase' => 0.0,
+            'points_expiry_days' => 365,
+            'auto_level_upgrade' => true
+        ];
+        
+        return array_merge($defaults, $settings);
+    } catch (PDOException $e) {
+        error_log("Error getting loyalty settings: " . $e->getMessage());
+        return [
+            'enable_loyalty_program' => true,
+            'points_per_currency' => 1.0,
+            'minimum_purchase' => 0.0,
+            'points_expiry_days' => 365,
+            'auto_level_upgrade' => true
+        ];
+    }
+}
+
+/**
+ * MEMBERSHIP LEVEL MANAGEMENT FUNCTIONS
+ */
+
+/**
+ * Get all active membership levels
+ *
+ * @param PDO $conn Database connection
+ * @return array Membership levels
+ */
+function getAllMembershipLevels($conn) {
+    try {
+        $stmt = $conn->query("
+            SELECT * FROM membership_levels 
+            WHERE is_active = 1 
+            ORDER BY sort_order ASC, level_name ASC
+        ");
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting membership levels: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Get membership level by name
+ *
+ * @param PDO $conn Database connection
+ * @param string $levelName Level name
+ * @return array|null Membership level data
+ */
+function getMembershipLevelByName($conn, $levelName) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT * FROM membership_levels 
+            WHERE level_name = ? AND is_active = 1
+        ");
+        $stmt->execute([$levelName]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting membership level: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Get membership level multiplier
+ *
+ * @param PDO $conn Database connection
+ * @param string $levelName Level name
+ * @return float Multiplier value
+ */
+function getMembershipLevelMultiplier($conn, $levelName) {
+    $level = getMembershipLevelByName($conn, $levelName);
+    return $level ? (float)$level['points_multiplier'] : 1.0;
+}
+
+/**
+ * Create a new membership level
+ *
+ * @param PDO $conn Database connection
+ * @param array $levelData Level data
+ * @return bool Success status
+ */
+function createMembershipLevel($conn, $levelData) {
+    try {
+        $stmt = $conn->prepare("
+            INSERT INTO membership_levels (
+                level_name, level_description, points_multiplier, 
+                minimum_points_required, color_code, is_active, sort_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
+        
+        return $stmt->execute([
+            $levelData['level_name'],
+            $levelData['level_description'],
+            $levelData['points_multiplier'],
+            $levelData['minimum_points_required'],
+            $levelData['color_code'],
+            $levelData['is_active'],
+            $levelData['sort_order']
+        ]);
+    } catch (PDOException $e) {
+        error_log("Error creating membership level: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Update a membership level
+ *
+ * @param PDO $conn Database connection
+ * @param int $levelId Level ID
+ * @param array $levelData Level data
+ * @return bool Success status
+ */
+function updateMembershipLevel($conn, $levelId, $levelData) {
+    try {
+        $stmt = $conn->prepare("
+            UPDATE membership_levels SET
+                level_name = ?, level_description = ?, points_multiplier = ?,
+                minimum_points_required = ?, color_code = ?, is_active = ?, sort_order = ?
+            WHERE id = ?
+        ");
+        
+        return $stmt->execute([
+            $levelData['level_name'],
+            $levelData['level_description'],
+            $levelData['points_multiplier'],
+            $levelData['minimum_points_required'],
+            $levelData['color_code'],
+            $levelData['is_active'],
+            $levelData['sort_order'],
+            $levelId
+        ]);
+    } catch (PDOException $e) {
+        error_log("Error updating membership level: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Delete a membership level
+ *
+ * @param PDO $conn Database connection
+ * @param int $levelId Level ID
+ * @return bool Success status
+ */
+function deleteMembershipLevel($conn, $levelId) {
+    try {
+        // Check if this is the only active level
+        $countStmt = $conn->query("SELECT COUNT(*) FROM membership_levels WHERE is_active = 1");
+        $activeCount = $countStmt->fetchColumn();
+        
+        if ($activeCount <= 1) {
+            throw new Exception("Cannot delete the last active membership level");
+        }
+        
+        $stmt = $conn->prepare("DELETE FROM membership_levels WHERE id = ?");
+        return $stmt->execute([$levelId]);
+    } catch (PDOException $e) {
+        error_log("Error deleting membership level: " . $e->getMessage());
+        return false;
+    } catch (Exception $e) {
+        error_log("Error deleting membership level: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Get customer's appropriate membership level based on points
+ *
+ * @param PDO $conn Database connection
+ * @param int $customerPoints Customer's current points
+ * @return array Membership level data
+ */
+function getCustomerMembershipLevel($conn, $customerPoints) {
+    try {
+        $stmt = $conn->query("
+            SELECT * FROM membership_levels 
+            WHERE is_active = 1 AND minimum_points_required <= ?
+            ORDER BY minimum_points_required DESC, sort_order ASC
+            LIMIT 1
+        ");
+        $stmt->execute([$customerPoints]);
+        $level = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // Return default level if none found
+        if (!$level) {
+            $stmt = $conn->query("
+                SELECT * FROM membership_levels 
+                WHERE is_active = 1 
+                ORDER BY sort_order ASC 
+                LIMIT 1
+            ");
+            $level = $stmt->fetch(PDO::FETCH_ASSOC);
+        }
+        
+        return $level ?: ['level_name' => 'Basic', 'points_multiplier' => 1.0];
+    } catch (PDOException $e) {
+        error_log("Error getting customer membership level: " . $e->getMessage());
+        return ['level_name' => 'Basic', 'points_multiplier' => 1.0];
+    }
+}
+
+/**
+ * Calculate loyalty points value in currency
+ *
+ * @param int $points Loyalty points
+ * @param float $pointsToCurrencyRate Points to currency conversion rate (default: 100 points = 1 currency unit)
+ * @return float Currency value of points
+ */
+function calculateLoyaltyPointsValue($points, $pointsToCurrencyRate = 100) {
+    return $points / $pointsToCurrencyRate;
+}
+
+/**
+ * Get available loyalty rewards
+ *
+ * @param PDO $conn Database connection
+ * @param int $customerPoints Customer's current points
+ * @return array Available rewards
+ */
+function getAvailableLoyaltyRewards($conn, $customerPoints = 0) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT * FROM loyalty_rewards 
+            WHERE is_active = 1 AND points_required <= ?
+            ORDER BY points_required ASC
+        ");
+        $stmt->execute([$customerPoints]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting loyalty rewards: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Get customer loyalty transaction history
+ *
+ * @param PDO $conn Database connection
+ * @param int $customerId Customer ID
+ * @param int $limit Number of records to return
+ * @return array Transaction history
+ */
+function getCustomerLoyaltyHistory($conn, $customerId, $limit = 20) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT * FROM loyalty_points 
+            WHERE customer_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+        ");
+        $stmt->execute([$customerId, $limit]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting loyalty history: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
  * Check if a customer is the walk-in customer
  *
  * @param int $customerId Customer ID to check
@@ -2704,6 +3232,163 @@ function getSectionToCategoryMapping() {
         'customers' => ['Customers'],
         'auth' => ['Authentication']
     ];
+}
+
+/**
+ * CART MANAGEMENT FUNCTIONS
+ */
+
+/**
+ * Calculate cart totals from cart data
+ *
+ * @param array $cart Cart data array
+ * @param float $tax_rate Tax rate percentage (default: 16.0)
+ * @return array Cart totals (subtotal, tax, total, item_count)
+ */
+function calculateCartTotals($cart, $tax_rate = 16.0) {
+    $subtotal = 0;
+    $item_count = 0;
+    
+    if (empty($cart) || !is_array($cart)) {
+        return [
+            'subtotal' => 0,
+            'tax' => 0,
+            'total' => 0,
+            'item_count' => 0
+        ];
+    }
+    
+    foreach ($cart as $item) {
+        if (isset($item['price']) && isset($item['quantity'])) {
+            $subtotal += floatval($item['price']) * intval($item['quantity']);
+            $item_count += intval($item['quantity']);
+        }
+    }
+    
+    $tax = $subtotal * ($tax_rate / 100);
+    $total = $subtotal + $tax;
+    
+    return [
+        'subtotal' => round($subtotal, 2),
+        'tax' => round($tax, 2),
+        'total' => round($total, 2),
+        'item_count' => $item_count
+    ];
+}
+
+/**
+ * Get cart totals from active session
+ *
+ * @param float $tax_rate Tax rate percentage (default: 16.0)
+ * @return array Cart totals (subtotal, tax, total, item_count)
+ */
+function getActiveCartTotals($tax_rate = 16.0) {
+    $cart = $_SESSION['cart'] ?? [];
+    return calculateCartTotals($cart, $tax_rate);
+}
+
+/**
+ * Validate cart item data
+ *
+ * @param array $item Cart item data
+ * @return array Validation result (valid, errors)
+ */
+function validateCartItem($item) {
+    $errors = [];
+    
+    if (!isset($item['product_id']) || !$item['product_id']) {
+        $errors[] = 'Product ID is required';
+    }
+    
+    if (!isset($item['name']) || empty($item['name'])) {
+        $errors[] = 'Product name is required';
+    }
+    
+    if (!isset($item['price']) || !is_numeric($item['price']) || $item['price'] < 0) {
+        $errors[] = 'Valid price is required';
+    }
+    
+    if (!isset($item['quantity']) || !is_numeric($item['quantity']) || $item['quantity'] < 1) {
+        $errors[] = 'Valid quantity is required';
+    }
+    
+    return [
+        'valid' => empty($errors),
+        'errors' => $errors
+    ];
+}
+
+/**
+ * Format cart totals for display
+ *
+ * @param array $totals Cart totals array
+ * @param string $currency_symbol Currency symbol (default: 'KES')
+ * @return array Formatted totals for display
+ */
+function formatCartTotalsForDisplay($totals, $currency_symbol = 'KES') {
+    return [
+        'subtotal' => $currency_symbol . ' ' . number_format($totals['subtotal'], 2),
+        'tax' => $currency_symbol . ' ' . number_format($totals['tax'], 2),
+        'total' => $currency_symbol . ' ' . number_format($totals['total'], 2),
+        'item_count' => $totals['item_count']
+    ];
+}
+
+/**
+ * Get sale items from database by sale ID
+ *
+ * @param PDO $conn Database connection
+ * @param int $sale_id Sale ID
+ * @return array Sale items with product details
+ */
+function getSaleItems($conn, $sale_id) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT 
+                si.*,
+                p.name as product_name,
+                p.sku as product_sku,
+                p.image_url as product_image
+            FROM sale_items si
+            LEFT JOIN products p ON si.product_id = p.id
+            WHERE si.sale_id = ?
+            ORDER BY si.id ASC
+        ");
+        $stmt->execute([$sale_id]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        return [];
+    }
+}
+
+/**
+ * Get sale details with totals from database
+ *
+ * @param PDO $conn Database connection
+ * @param int $sale_id Sale ID
+ * @return array|null Sale details or null if not found
+ */
+function getSaleDetails($conn, $sale_id) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT 
+                s.*,
+                u.username as cashier_name
+            FROM sales s
+            LEFT JOIN users u ON s.user_id = u.id
+            WHERE s.id = ?
+        ");
+        $stmt->execute([$sale_id]);
+        $sale = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($sale) {
+            $sale['items'] = getSaleItems($conn, $sale_id);
+        }
+        
+        return $sale;
+    } catch (PDOException $e) {
+        return null;
+    }
 }
 
 ?>

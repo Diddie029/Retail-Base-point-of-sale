@@ -1,15 +1,14 @@
 <?php
 session_start();
-require_once __DIR__ . '/../include/db.php';
-require_once __DIR__ . '/../include/functions.php';
+require_once '../include/db.php';
+require_once '../include/functions.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
-    header("Location: ../auth/login.php");
+    header('Location: ../auth/login.php');
     exit();
 }
 
-// Get user information
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'];
 $role_name = $_SESSION['role_name'] ?? 'User';
@@ -29,116 +28,238 @@ if ($role_id) {
     $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-// Check if user has permission to view sales
-if (!hasPermission('view_sales', $permissions) && !hasPermission('manage_sales', $permissions)) {
-    header('Location: ../dashboard/dashboard.php?error=access_denied');
-    exit();
-}
-
-// Get date range (default to last 30 days)
-$start_date = $_GET['start_date'] ?? date('Y-m-d', strtotime('-30 days'));
-$end_date = $_GET['end_date'] ?? date('Y-m-d');
-
 // Get system settings
-$stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
 $settings = [];
+$stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
-// Get sales analytics data
-$analytics_data = [];
+// Check if user has permission to view sales analytics
+$hasAccess = hasPermission('view_analytics', $permissions) || 
+             hasPermission('manage_sales', $permissions) || 
+             hasPermission('view_sales', $permissions) ||
+             hasPermission('manage_users', $permissions);
 
-// Total sales for period
+if (!$hasAccess) {
+    header('Location: ../dashboard/dashboard.php');
+    exit();
+}
+
+// Get sales analytics data
+$analytics = [];
+
+// Total Sales - All Time
 $stmt = $conn->prepare("
     SELECT 
         COUNT(*) as total_transactions,
-        SUM(final_amount) as total_revenue,
-        AVG(final_amount) as average_transaction,
-        COUNT(DISTINCT customer_id) as unique_customers
-    FROM sales 
-    WHERE sale_date >= ? AND sale_date <= ?
+        COALESCE(SUM(final_amount), 0) as total_revenue,
+        COALESCE(AVG(final_amount), 0) as average_transaction,
+        COALESCE(MIN(final_amount), 0) as min_transaction,
+        COALESCE(MAX(final_amount), 0) as max_transaction
+    FROM sales
 ");
-$stmt->execute([$start_date, $end_date]);
-$analytics_data['overview'] = $stmt->fetch(PDO::FETCH_ASSOC);
+$stmt->execute();
+$analytics['all_time'] = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Daily sales trend
+// Today's Sales
 $stmt = $conn->prepare("
     SELECT 
-        DATE(sale_date) as sale_day,
-        COUNT(*) as transactions,
-        SUM(final_amount) as revenue
+        COUNT(*) as total_transactions,
+        COALESCE(SUM(final_amount), 0) as total_revenue,
+        COALESCE(AVG(final_amount), 0) as average_transaction
     FROM sales 
-    WHERE sale_date >= ? AND sale_date <= ?
+    WHERE DATE(sale_date) = CURDATE()
+");
+$stmt->execute();
+$analytics['today'] = $stmt->fetch(PDO::FETCH_ASSOC);
+
+// This Week's Sales
+$stmt = $conn->prepare("
+    SELECT 
+        COUNT(*) as total_transactions,
+        COALESCE(SUM(final_amount), 0) as total_revenue,
+        COALESCE(AVG(final_amount), 0) as average_transaction
+    FROM sales 
+    WHERE YEARWEEK(sale_date) = YEARWEEK(CURDATE())
+");
+$stmt->execute();
+$analytics['this_week'] = $stmt->fetch(PDO::FETCH_ASSOC);
+
+// This Month's Sales
+$stmt = $conn->prepare("
+    SELECT 
+        COUNT(*) as total_transactions,
+        COALESCE(SUM(final_amount), 0) as total_revenue,
+        COALESCE(AVG(final_amount), 0) as average_transaction
+    FROM sales 
+    WHERE MONTH(sale_date) = MONTH(CURDATE()) AND YEAR(sale_date) = YEAR(CURDATE())
+");
+$stmt->execute();
+$analytics['this_month'] = $stmt->fetch(PDO::FETCH_ASSOC);
+
+// This Year's Sales
+$stmt = $conn->prepare("
+    SELECT 
+        COUNT(*) as total_transactions,
+        COALESCE(SUM(final_amount), 0) as total_revenue,
+        COALESCE(AVG(final_amount), 0) as average_transaction
+    FROM sales 
+    WHERE YEAR(sale_date) = YEAR(CURDATE())
+");
+$stmt->execute();
+$analytics['this_year'] = $stmt->fetch(PDO::FETCH_ASSOC);
+
+// Last 30 Days Sales (for trend analysis)
+$stmt = $conn->prepare("
+    SELECT 
+        DATE(sale_date) as sale_date,
+        COUNT(*) as daily_transactions,
+        COALESCE(SUM(final_amount), 0) as daily_revenue
+    FROM sales 
+    WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
     GROUP BY DATE(sale_date)
-    ORDER BY sale_day
+    ORDER BY sale_date DESC
 ");
-$stmt->execute([$start_date, $end_date]);
-$analytics_data['daily_trend'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt->execute();
+$analytics['last_30_days'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Top selling products (simplified - since we don't have sales_items table)
+// Top Selling Products (Last 30 Days)
 $stmt = $conn->prepare("
     SELECT 
-        p.name,
+        p.name as product_name,
         p.sku,
-        COUNT(s.id) as total_sales,
-        SUM(s.final_amount) as total_revenue
-    FROM products p
-    LEFT JOIN sales s ON s.sale_date >= ? AND s.sale_date <= ?
-    WHERE p.status = 'active'
-    GROUP BY p.id
-    HAVING total_sales > 0
-    ORDER BY total_sales DESC
-    LIMIT 10
+        SUM(si.quantity) as total_quantity_sold,
+        SUM(si.total_price) as total_revenue,
+        COUNT(DISTINCT s.id) as times_sold
+    FROM sales s
+    JOIN sale_items si ON s.id = si.sale_id
+    JOIN products p ON si.product_id = p.id
+    WHERE s.sale_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+    GROUP BY p.id, p.name, p.sku
+    ORDER BY total_quantity_sold DESC
+    LIMIT 5
 ");
-$stmt->execute([$start_date, $end_date]);
-$analytics_data['top_products'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt->execute();
+$analytics['top_products'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Payment method breakdown
+
+// Category Performance (Last 30 Days)
+$stmt = $conn->prepare("
+    SELECT 
+        c.name as category_name,
+        SUM(si.quantity) as total_quantity,
+        SUM(si.total_price) as total_revenue,
+        ROUND((SUM(si.total_price) * 100.0 / (
+            SELECT SUM(si2.total_price) 
+            FROM sales s2 
+            JOIN sale_items si2 ON s2.id = si2.sale_id 
+            JOIN products p2 ON si2.product_id = p2.id 
+            WHERE s2.sale_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        )), 2) as percentage
+    FROM sales s
+    JOIN sale_items si ON s.id = si.sale_id
+    JOIN products p ON si.product_id = p.id
+    JOIN categories c ON p.category_id = c.id
+    WHERE s.sale_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+    GROUP BY c.id, c.name
+    ORDER BY total_revenue DESC
+    LIMIT 5
+");
+$stmt->execute();
+$analytics['top_categories'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Sales by Payment Method (Last 30 Days)
 $stmt = $conn->prepare("
     SELECT 
         payment_method,
         COUNT(*) as transaction_count,
-        SUM(final_amount) as total_amount
+        COALESCE(SUM(final_amount), 0) as total_amount
     FROM sales 
-    WHERE sale_date >= ? AND sale_date <= ?
+    WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
     GROUP BY payment_method
     ORDER BY total_amount DESC
 ");
-$stmt->execute([$start_date, $end_date]);
-$analytics_data['payment_methods'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt->execute();
+$analytics['payment_methods'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Hourly sales pattern
+// Sales by Cashier (Last 30 Days)
 $stmt = $conn->prepare("
     SELECT 
-        HOUR(sale_date) as hour,
-        COUNT(*) as transactions,
-        SUM(final_amount) as revenue
+        u.username as cashier_name,
+        COUNT(*) as transaction_count,
+        COALESCE(SUM(s.final_amount), 0) as total_amount
+    FROM sales s
+    LEFT JOIN users u ON s.user_id = u.id
+    WHERE s.sale_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+    GROUP BY s.user_id, u.username
+    ORDER BY total_amount DESC
+");
+$stmt->execute();
+$analytics['cashiers'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Recent Sales
+$stmt = $conn->prepare("
+    SELECT 
+        s.*,
+        u.username as cashier_name,
+        COUNT(si.id) as item_count
+    FROM sales s
+    LEFT JOIN users u ON s.user_id = u.id
+    LEFT JOIN sale_items si ON s.id = si.sale_id
+    GROUP BY s.id
+    ORDER BY s.sale_date DESC
+    LIMIT 5
+");
+$stmt->execute();
+$analytics['recent_sales'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Calculate growth rates
+$analytics['growth_rates'] = [];
+
+// Week over week growth
+$stmt = $conn->prepare("
+    SELECT 
+        COALESCE(SUM(final_amount), 0) as current_week
     FROM sales 
-    WHERE sale_date >= ? AND sale_date <= ?
-    GROUP BY HOUR(sale_date)
-    ORDER BY hour
+    WHERE YEARWEEK(sale_date) = YEARWEEK(CURDATE())
 ");
-$stmt->execute([$start_date, $end_date]);
-$analytics_data['hourly_pattern'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt->execute();
+$current_week = $stmt->fetch(PDO::FETCH_ASSOC)['current_week'];
 
-// Customer analytics
 $stmt = $conn->prepare("
     SELECT 
-        CONCAT(c.first_name, ' ', c.last_name) as customer_name,
-        c.phone,
-        COUNT(s.id) as total_orders,
-        SUM(s.final_amount) as total_spent,
-        AVG(s.final_amount) as average_order_value
-    FROM customers c
-    JOIN sales s ON c.id = s.customer_id
-    WHERE s.sale_date >= ? AND s.sale_date <= ?
-    GROUP BY c.id
-    ORDER BY total_spent DESC
-    LIMIT 10
+        COALESCE(SUM(final_amount), 0) as previous_week
+    FROM sales 
+    WHERE YEARWEEK(sale_date) = YEARWEEK(CURDATE()) - 1
 ");
-$stmt->execute([$start_date, $end_date]);
-$analytics_data['top_customers'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt->execute();
+$previous_week = $stmt->fetch(PDO::FETCH_ASSOC)['previous_week'];
+
+$analytics['growth_rates']['week_over_week'] = $previous_week > 0 ? 
+    (($current_week - $previous_week) / $previous_week) * 100 : 0;
+
+// Month over month growth
+$stmt = $conn->prepare("
+    SELECT 
+        COALESCE(SUM(final_amount), 0) as current_month
+    FROM sales 
+    WHERE MONTH(sale_date) = MONTH(CURDATE()) AND YEAR(sale_date) = YEAR(CURDATE())
+");
+$stmt->execute();
+$current_month = $stmt->fetch(PDO::FETCH_ASSOC)['current_month'];
+
+$stmt = $conn->prepare("
+    SELECT 
+        COALESCE(SUM(final_amount), 0) as previous_month
+    FROM sales 
+    WHERE MONTH(sale_date) = MONTH(CURDATE()) - 1 AND YEAR(sale_date) = YEAR(CURDATE())
+");
+$stmt->execute();
+$previous_month = $stmt->fetch(PDO::FETCH_ASSOC)['previous_month'];
+
+$analytics['growth_rates']['month_over_month'] = $previous_month > 0 ? 
+    (($current_month - $previous_month) / $previous_month) * 100 : 0;
 ?>
 
 <!DOCTYPE html>
@@ -146,182 +267,342 @@ $analytics_data['top_customers'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sales Analytics - POS System</title>
+    <title>Sales Analytics - <?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../assets/css/dashboard.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* Main Content Layout */
-        .main-content {
-            margin-left: 250px;
-            min-height: 100vh;
-            background-color: #f8fafc;
-            padding: 20px;
+        :root {
+            --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
+            --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
         }
         
         .analytics-card {
-            transition: transform 0.2s;
-        }
-        .analytics-card:hover {
-            transform: translateY(-2px);
-        }
-        .metric-value {
-            font-size: 2rem;
-            font-weight: bold;
-        }
-        .metric-label {
-            color: #6c757d;
-            font-size: 0.9rem;
-        }
-        .chart-container {
-            position: relative;
-            height: 300px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
         }
         
-        /* Responsive Design */
-        @media (max-width: 768px) {
-            .main-content {
-                margin-left: 0;
-                padding: 10px;
-            }
+        .analytics-card.revenue {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
+        
+        .analytics-card.transactions {
+            background: linear-gradient(135deg, #fc466b 0%, #3f5efb 100%);
+        }
+        
+        .analytics-card.average {
+            background: linear-gradient(135deg, #fdbb2d 0%, #22c1c3 100%);
+        }
+        
+        .analytics-card.growth {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin: 20px 0;
+        }
+        
+        .table-responsive {
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .growth-positive {
+            color: #28a745;
+        }
+        
+        .growth-negative {
+            color: #dc3545;
+        }
+        
+        .cashier-avatar {
+            width: 60px;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            color: white;
+        }
+        
+        .category-item {
+            padding: 0.75rem;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+        
+        .category-item:hover {
+            background-color: #f8f9fa;
+            border-color: #dee2e6;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .category-rank .badge {
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+        }
+        
+        .stat-card {
+            border: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            border-radius: 12px;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
         }
     </style>
 </head>
 <body>
-    <?php include __DIR__ . '/../include/navmenu.php'; ?>
+    <?php include '../include/navmenu.php'; ?>
     
-    <!-- Main Content -->
     <div class="main-content">
-        <div class="container-fluid">
-        <div class="row">
-            <div class="col-md-12">
-                <div class="d-flex justify-content-between align-items-center mb-4">
-                    <div>
-                        <h2><i class="bi bi-graph-up-arrow text-primary"></i> Sales Analytics</h2>
-                        <p class="text-muted">Detailed sales reports and insights</p>
+        <header class="header">
+            <div class="header-content">
+                <div class="header-title">
+                    <h1><i class="bi bi-bar-chart"></i> Sales Analytics</h1>
+                    <p class="header-subtitle">Comprehensive sales performance and insights</p>
                     </div>
-                    <a href="salesdashboard.php" class="btn btn-outline-secondary">
-                        <i class="bi bi-arrow-left"></i> Back to Dashboard
+                <div class="header-actions">
+                    <a href="../analytics/index.php" class="btn btn-outline-secondary me-3">
+                        <i class="bi bi-arrow-left"></i> Back to Analytics
                     </a>
+                    <div class="user-info">
+                        <div class="user-avatar">
+                            <?php echo strtoupper(substr($username, 0, 2)); ?>
                 </div>
-
-                <!-- Date Range Filter -->
-                <div class="card mb-4">
-                    <div class="card-body">
-                        <form method="GET" class="row g-3">
-                            <div class="col-md-4">
-                                <label for="start_date" class="form-label">Start Date</label>
-                                <input type="date" class="form-control" id="start_date" name="start_date" value="<?php echo $start_date; ?>">
-                            </div>
-                            <div class="col-md-4">
-                                <label for="end_date" class="form-label">End Date</label>
-                                <input type="date" class="form-control" id="end_date" name="end_date" value="<?php echo $end_date; ?>">
-                            </div>
-                            <div class="col-md-4 d-flex align-items-end">
-                                <button type="submit" class="btn btn-primary me-2">
-                                    <i class="bi bi-search"></i> Apply Filter
-                                </button>
-                                <a href="?start_date=<?php echo date('Y-m-d', strtotime('-30 days')); ?>&end_date=<?php echo date('Y-m-d'); ?>" class="btn btn-outline-secondary">
-                                    Last 30 Days
-                                </a>
-                            </div>
-                        </form>
+                    <div>
+                            <div class="fw-semibold"><?php echo htmlspecialchars($username); ?></div>
+                            <small class="text-muted"><?php echo htmlspecialchars($role_name); ?></small>
                     </div>
                 </div>
+                            </div>
+                            </div>
+        </header>
 
-                <!-- Overview Metrics -->
+        <main class="content">
+            <div class="container-fluid">
+                <!-- Key Performance Indicators -->
                 <div class="row mb-4">
-                    <div class="col-md-3">
-                        <div class="card analytics-card text-center">
-                            <div class="card-body">
-                                <div class="metric-value text-primary"><?php echo number_format($analytics_data['overview']['total_transactions'] ?? 0); ?></div>
-                                <div class="metric-label">Total Transactions</div>
+                    <div class="col-xl-3 col-md-6 mb-3">
+                        <div class="analytics-card">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Total Revenue</h6>
+                                <i class="bi bi-cash-coin fs-4"></i>
                             </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card analytics-card text-center">
-                            <div class="card-body">
-                                <div class="metric-value text-success"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics_data['overview']['total_revenue'] ?? 0, 2); ?></div>
-                                <div class="metric-label">Total Revenue</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card analytics-card text-center">
-                            <div class="card-body">
-                                <div class="metric-value text-info"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics_data['overview']['average_transaction'] ?? 0, 2); ?></div>
-                                <div class="metric-label">Average Transaction</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="card analytics-card text-center">
-                            <div class="card-body">
-                                <div class="metric-value text-warning"><?php echo number_format($analytics_data['overview']['unique_customers'] ?? 0); ?></div>
-                                <div class="metric-label">Unique Customers</div>
-                            </div>
-                        </div>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['all_time']['total_revenue'], 2); ?></h3>
+                            <small class="opacity-75"><?php echo number_format($analytics['all_time']['total_transactions']); ?> transactions</small>
                     </div>
                 </div>
 
-                <!-- Charts Row -->
+                    <div class="col-xl-3 col-md-6 mb-3">
+                        <div class="analytics-card revenue">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">This Month</h6>
+                                <i class="bi bi-graph-up-arrow fs-4"></i>
+                            </div>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['this_month']['total_revenue'], 2); ?></h3>
+                            <small class="opacity-75"><?php echo number_format($analytics['this_month']['total_transactions']); ?> transactions</small>
+                            </div>
+                        </div>
+                    
+                    <div class="col-xl-3 col-md-6 mb-3">
+                        <div class="analytics-card average">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Average Transaction</h6>
+                                <i class="bi bi-calculator fs-4"></i>
+                    </div>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['all_time']['average_transaction'], 2); ?></h3>
+                            <small class="opacity-75">Per transaction</small>
+                            </div>
+                        </div>
+
+                    <div class="col-xl-3 col-md-6 mb-3">
+                        <div class="analytics-card growth">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Month Growth</h6>
+                                <i class="bi bi-trending-up fs-4"></i>
+                    </div>
+                            <h3 class="mb-0 <?php echo $analytics['growth_rates']['month_over_month'] >= 0 ? 'growth-positive' : 'growth-negative'; ?>">
+                                <?php echo $analytics['growth_rates']['month_over_month'] >= 0 ? '+' : ''; ?><?php echo number_format($analytics['growth_rates']['month_over_month'], 1); ?>%
+                            </h3>
+                            <small class="opacity-75">vs last month</small>
+                            </div>
+                        </div>
+                    </div>
+
+                <!-- Sales Overview Row -->
                 <div class="row mb-4">
-                    <!-- Daily Sales Trend -->
-                    <div class="col-md-8">
-                        <div class="card">
+                    <!-- Sales Trend Chart -->
+                    <div class="col-xl-6 col-lg-12 mb-4">
+                        <div class="card stat-card">
                             <div class="card-header">
-                                <h5 class="mb-0"><i class="bi bi-graph-up"></i> Daily Sales Trend</h5>
+                                <h5 class="card-title mb-0"><i class="bi bi-graph-up"></i> Sales Trend - Last 30 Days</h5>
                             </div>
                             <div class="card-body">
-                                <div class="chart-container">
-                                    <canvas id="dailyTrendChart"></canvas>
+                                <div class="chart-container" style="height: 300px;">
+                                    <canvas id="salesTrendChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                    <!-- Weekly Sales Summary -->
+                    <div class="col-xl-3 col-lg-6 mb-4">
+                        <div class="card stat-card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0"><i class="bi bi-calendar-week"></i> This Week's Sales</h5>
+                            </div>
+                            <div class="card-body text-center">
+                                <div class="analytics-card revenue mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 class="mb-0">Weekly Revenue</h6>
+                                        <i class="bi bi-graph-up-arrow fs-4"></i>
+                                    </div>
+                                    <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['this_week']['total_revenue'], 2); ?></h3>
+                                    <small class="opacity-75"><?php echo number_format($analytics['this_week']['total_transactions']); ?> transactions</small>
+                                </div>
+                                
+                                <div class="row text-center">
+                                    <div class="col-6">
+                                        <div class="border-end">
+                                            <h6 class="text-muted mb-1">Avg per Day</h6>
+                                            <h5 class="text-primary"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['this_week']['total_revenue'] / 7, 2); ?></h5>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <h6 class="text-muted mb-1">Avg Transaction</h6>
+                                        <h5 class="text-success"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['this_week']['average_transaction'], 2); ?></h5>
+                            </div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Payment Methods -->
-                    <div class="col-md-4">
-                        <div class="card">
+                    <!-- Today's Sales Summary -->
+                    <div class="col-xl-3 col-lg-6 mb-4">
+                        <div class="card stat-card">
                             <div class="card-header">
-                                <h5 class="mb-0"><i class="bi bi-credit-card"></i> Payment Methods</h5>
+                                <h5 class="card-title mb-0"><i class="bi bi-calendar-day"></i> Today's Sales</h5>
                             </div>
-                            <div class="card-body">
-                                <div class="chart-container">
-                                    <canvas id="paymentMethodsChart"></canvas>
+                            <div class="card-body text-center">
+                                <div class="analytics-card mb-3">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h6 class="mb-0">Today's Revenue</h6>
+                                        <i class="bi bi-cash-coin fs-4"></i>
+                                    </div>
+                                    <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['today']['total_revenue'], 2); ?></h3>
+                                    <small class="opacity-75"><?php echo number_format($analytics['today']['total_transactions']); ?> transactions</small>
+                                </div>
+                                
+                                <div class="row text-center">
+                                    <div class="col-6">
+                                        <div class="border-end">
+                                            <h6 class="text-muted mb-1">Hourly Avg</h6>
+                                            <h5 class="text-info"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['today']['total_revenue'] / max(1, date('H')), 2); ?></h5>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <h6 class="text-muted mb-1">Avg Transaction</h6>
+                                        <h5 class="text-warning"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($analytics['today']['average_transaction'], 2); ?></h5>
+                            </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Data Tables Row -->
-                <div class="row">
-                    <!-- Top Products -->
-                    <div class="col-md-6">
-                        <div class="card">
+                <!-- Performance Metrics Row -->
+                <div class="row mb-4">
+                    <!-- Category Performance -->
+                    <div class="col-xl-12 col-lg-12 mb-4">
+                        <div class="card stat-card">
                             <div class="card-header">
-                                <h5 class="mb-0"><i class="bi bi-trophy"></i> Top Selling Products</h5>
+                                <h5 class="card-title mb-0"><i class="bi bi-tags"></i> Category Performance</h5>
+                            </div>
+                            <div class="card-body">
+                                <?php if (!empty($analytics['top_categories'])): ?>
+                                <div class="category-list">
+                                    <?php foreach ($analytics['top_categories'] as $index => $category): ?>
+                                    <div class="category-item d-flex justify-content-between align-items-center mb-3">
+                                        <div class="d-flex align-items-center">
+                                            <div class="category-rank me-3">
+                                                <span class="badge bg-primary rounded-circle"><?php echo $index + 1; ?></span>
+                                            </div>
+                                            <div>
+                                                <h6 class="mb-0"><?php echo htmlspecialchars($category['category_name']); ?></h6>
+                                                <small class="text-muted"><?php echo number_format($category['total_quantity']); ?> items sold</small>
+                                            </div>
+                                        </div>
+                                        <div class="text-end">
+                                            <h6 class="mb-0 text-success"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($category['total_revenue'], 2); ?></h6>
+                                            <small class="text-muted"><?php echo number_format($category['percentage'], 1); ?>% of total</small>
+                                        </div>
+                                    </div>
+                                    <?php endforeach; ?>
+                                </div>
+                                <?php else: ?>
+                                <div class="text-center py-4">
+                                    <i class="bi bi-tags fs-1 text-muted"></i>
+                                    <p class="text-muted mt-2">No category data available</p>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top Products and Payment Methods -->
+                <div class="row mb-4">
+                    <!-- Top Selling Products -->
+                    <div class="col-xl-6 mb-4">
+                        <div class="card stat-card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0"><i class="bi bi-trophy"></i> Top Selling Products (30 Days)</h5>
                             </div>
                             <div class="card-body">
                                 <div class="table-responsive">
-                                    <table class="table table-sm">
-                                        <thead>
+                                    <table class="table table-hover">
+                                        <thead class="table-light">
                                             <tr>
                                                 <th>Product</th>
                                                 <th>SKU</th>
-                                                <th>Sold</th>
+                                                <th>Qty Sold</th>
                                                 <th>Revenue</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <?php foreach ($analytics_data['top_products'] as $product): ?>
+                                            <?php foreach ($analytics['top_products'] as $product): ?>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($product['name']); ?></td>
-                                                <td><small class="text-muted"><?php echo htmlspecialchars($product['sku']); ?></small></td>
-                                                <td><span class="badge bg-primary"><?php echo $product['total_sales']; ?></span></td>
-                                                <td><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($product['total_revenue'], 2); ?></td>
+                                                <td>
+                                                    <strong><?php echo htmlspecialchars($product['product_name']); ?></strong>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-secondary"><?php echo htmlspecialchars($product['sku']); ?></span>
+                                                </td>
+                                                <td>
+                                                    <span class="fw-bold"><?php echo number_format($product['total_quantity_sold']); ?></span>
+                                                </td>
+                                                <td>
+                                                    <span class="text-success fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($product['total_revenue'], 2); ?></span>
+                                                </td>
                                             </tr>
                                             <?php endforeach; ?>
                                         </tbody>
@@ -331,30 +612,193 @@ $analytics_data['top_customers'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                     </div>
 
-                    <!-- Top Customers -->
-                    <div class="col-md-6">
-                        <div class="card">
+                    <!-- Payment Methods -->
+                    <div class="col-xl-6 mb-4">
+                        <div class="card stat-card">
                             <div class="card-header">
-                                <h5 class="mb-0"><i class="bi bi-people"></i> Top Customers</h5>
+                                <h5 class="card-title mb-0"><i class="bi bi-credit-card"></i> Sales by Payment Method (30 Days)</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container" style="height: 300px;">
+                                    <canvas id="paymentMethodChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions Section -->
+                <div class="row mb-4">
+                    <div class="col-12 mb-3">
+                        <h5><i class="bi bi-lightning"></i> Quick Actions</h5>
+                        <p class="text-muted">Quick access to frequently used features</p>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <!-- View All Sales -->
+                    <div class="col-xl-4 col-md-6 mb-4">
+                        <div class="card quick-action-card" onclick="location.href='index.php'" style="cursor: pointer;">
+                            <div class="card-body">
+                                <div class="d-flex align-items-center">
+                                    <div class="quick-icon me-3">
+                                        <i class="bi bi-receipt text-primary fs-3"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">View All Sales</h6>
+                                        <small class="text-muted">Access complete sales history</small>
+                                    </div>
+                                    <div class="ms-auto">
+                                        <i class="bi bi-arrow-right text-primary"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- View Products -->
+                    <div class="col-xl-4 col-md-6 mb-4">
+                        <div class="card quick-action-card" onclick="location.href='../products/products.php'" style="cursor: pointer;">
+                            <div class="card-body">
+                                <div class="d-flex align-items-center">
+                                    <div class="quick-icon me-3">
+                                        <i class="bi bi-box text-success fs-3"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">View Products</h6>
+                                        <small class="text-muted">Manage product inventory</small>
+                                    </div>
+                                    <div class="ms-auto">
+                                        <i class="bi bi-arrow-right text-success"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- View Customers -->
+                    <div class="col-xl-4 col-md-6 mb-4">
+                        <div class="card quick-action-card" onclick="location.href='../customers/index.php'" style="cursor: pointer;">
+                            <div class="card-body">
+                                <div class="d-flex align-items-center">
+                                    <div class="quick-icon me-3">
+                                        <i class="bi bi-people text-info fs-3"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">View Customers</h6>
+                                        <small class="text-muted">Manage customer database</small>
+                                    </div>
+                                    <div class="ms-auto">
+                                        <i class="bi bi-arrow-right text-info"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Export Sales Data -->
+                    <div class="col-xl-4 col-md-6 mb-4">
+                        <div class="card quick-action-card" onclick="location.href='export_sales.php'" style="cursor: pointer;">
+                            <div class="card-body">
+                                <div class="d-flex align-items-center">
+                                    <div class="quick-icon me-3">
+                                        <i class="bi bi-download text-warning fs-3"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">Export Sales Data</h6>
+                                        <small class="text-muted">Download sales reports</small>
+                                    </div>
+                                    <div class="ms-auto">
+                                        <i class="bi bi-arrow-right text-warning"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- POS Terminal -->
+                    <div class="col-xl-4 col-md-6 mb-4">
+                        <div class="card quick-action-card" onclick="location.href='../pos/sale.php'" style="cursor: pointer;">
+                            <div class="card-body">
+                                <div class="d-flex align-items-center">
+                                    <div class="quick-icon me-3">
+                                        <i class="bi bi-cart-plus text-danger fs-3"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">POS Terminal</h6>
+                                        <small class="text-muted">Process new sales</small>
+                                    </div>
+                                    <div class="ms-auto">
+                                        <i class="bi bi-arrow-right text-danger"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Financial Reports -->
+                    <div class="col-xl-4 col-md-6 mb-4">
+                        <div class="card quick-action-card" onclick="location.href='../finance/index.php'" style="cursor: pointer;">
+                            <div class="card-body">
+                                <div class="d-flex align-items-center">
+                                    <div class="quick-icon me-3">
+                                        <i class="bi bi-calculator text-secondary fs-3"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">Financial Reports</h6>
+                                        <small class="text-muted">View financial analytics</small>
+                                    </div>
+                                    <div class="ms-auto">
+                                        <i class="bi bi-arrow-right text-secondary"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Sales -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card stat-card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0"><i class="bi bi-clock-history"></i> Recent Sales</h5>
                             </div>
                             <div class="card-body">
                                 <div class="table-responsive">
-                                    <table class="table table-sm">
-                                        <thead>
+                                    <table class="table table-hover">
+                                        <thead class="table-light">
                                             <tr>
-                                                <th>Customer</th>
-                                                <th>Phone</th>
-                                                <th>Orders</th>
-                                                <th>Total Spent</th>
+                                                <th>Date & Time</th>
+                                                <th>Sale ID</th>
+                                                <th>Cashier</th>
+                                                <th>Items</th>
+                                                <th>Payment Method</th>
+                                                <th>Total Amount</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <?php foreach ($analytics_data['top_customers'] as $customer): ?>
+                                            <?php foreach ($analytics['recent_sales'] as $sale): ?>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($customer['customer_name']); ?></td>
-                                                <td><small class="text-muted"><?php echo htmlspecialchars($customer['phone']); ?></small></td>
-                                                <td><span class="badge bg-info"><?php echo $customer['total_orders']; ?></span></td>
-                                                <td><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($customer['total_spent'], 2); ?></td>
+                                                <td>
+                                                    <small class="text-muted"><?php echo date('M d, Y', strtotime($sale['sale_date'])); ?></small><br>
+                                                    <small><?php echo date('H:i:s', strtotime($sale['sale_date'])); ?></small>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-primary">#<?php echo htmlspecialchars($sale['sale_number'] ?? $sale['id']); ?></span>
+                                                </td>
+                                                <td>
+                                                    <?php echo htmlspecialchars($sale['cashier_name'] ?? 'Unknown'); ?>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-info"><?php echo $sale['item_count']; ?> items</span>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-secondary"><?php echo htmlspecialchars($sale['payment_method'] ?? 'Unknown'); ?></span>
+                                                </td>
+                                                <td>
+                                                    <span class="fw-bold text-success"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($sale['final_amount'], 2); ?></span>
+                                                </td>
                                             </tr>
                                             <?php endforeach; ?>
                                         </tbody>
@@ -365,65 +809,77 @@ $analytics_data['top_customers'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     </div>
                 </div>
             </div>
-        </div>
-        </div>
+        </main>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Daily Sales Trend Chart
-        const dailyTrendData = <?php echo json_encode($analytics_data['daily_trend']); ?>;
-        const dailyLabels = dailyTrendData.map(item => item.sale_day);
-        const dailyRevenue = dailyTrendData.map(item => parseFloat(item.revenue) || 0);
-        const dailyTransactions = dailyTrendData.map(item => parseInt(item.transactions) || 0);
-
-        new Chart(document.getElementById('dailyTrendChart'), {
+        // Sales Trend Chart
+        const salesTrendCtx = document.getElementById('salesTrendChart').getContext('2d');
+        const salesTrendData = <?php echo json_encode($analytics['last_30_days']); ?>;
+        
+        const salesTrendChart = new Chart(salesTrendCtx, {
             type: 'line',
             data: {
-                labels: dailyLabels,
+                labels: salesTrendData.map(item => new Date(item.sale_date).toLocaleDateString()).reverse(),
                 datasets: [{
-                    label: 'Revenue',
-                    data: dailyRevenue,
-                    borderColor: 'rgb(75, 192, 192)',
-                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                    tension: 0.1
+                    label: 'Daily Revenue',
+                    data: salesTrendData.map(item => parseFloat(item.daily_revenue)).reverse(),
+                    borderColor: 'rgb(99, 102, 241)',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    tension: 0.4,
+                    fill: true
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true
+                    }
+                },
                 scales: {
                     y: {
-                        beginAtZero: true
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + value.toLocaleString();
+                            }
+                        }
                     }
                 }
             }
         });
 
-        // Payment Methods Chart
-        const paymentData = <?php echo json_encode($analytics_data['payment_methods']); ?>;
-        const paymentLabels = paymentData.map(item => item.payment_method);
-        const paymentAmounts = paymentData.map(item => parseFloat(item.total_amount) || 0);
-
-        new Chart(document.getElementById('paymentMethodsChart'), {
+        // Payment Method Chart
+        const paymentMethodCtx = document.getElementById('paymentMethodChart').getContext('2d');
+        const paymentMethodData = <?php echo json_encode($analytics['payment_methods']); ?>;
+        
+        const paymentMethodChart = new Chart(paymentMethodCtx, {
             type: 'doughnut',
             data: {
-                labels: paymentLabels,
+                labels: paymentMethodData.map(item => item.payment_method),
                 datasets: [{
-                    data: paymentAmounts,
+                    data: paymentMethodData.map(item => parseFloat(item.total_amount)),
                     backgroundColor: [
-                        '#FF6384',
-                        '#36A2EB',
-                        '#FFCE56',
-                        '#4BC0C0',
-                        '#9966FF',
-                        '#FF9F40'
+                        '#667eea',
+                        '#764ba2',
+                        '#11998e',
+                        '#38ef7d',
+                        '#fc466b',
+                        '#3f5efb'
                     ]
                 }]
             },
             options: {
                 responsive: true,
-                maintainAspectRatio: false
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
             }
         });
     </script>

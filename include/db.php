@@ -399,7 +399,7 @@ try {
         CREATE TABLE IF NOT EXISTS sale_items (
             id INT AUTO_INCREMENT PRIMARY KEY,
             sale_id INT NOT NULL,
-            product_id INT NOT NULL,
+            product_id INT NULL,
             selling_unit_id INT DEFAULT NULL COMMENT 'Auto BOM selling unit ID',
             product_name VARCHAR(255) NOT NULL DEFAULT '' COMMENT 'Product name at time of sale',
             quantity INT NOT NULL,
@@ -409,7 +409,7 @@ try {
             is_auto_bom TINYINT(1) DEFAULT 0 COMMENT 'Whether this is an Auto BOM item',
             base_quantity_deducted DECIMAL(10,3) DEFAULT 0 COMMENT 'Base quantity deducted from inventory',
             FOREIGN KEY (sale_id) REFERENCES sales(id),
-            FOREIGN KEY (product_id) REFERENCES products(id),
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
             FOREIGN KEY (selling_unit_id) REFERENCES auto_bom_selling_units(id) ON DELETE SET NULL,
             INDEX idx_selling_unit_id (selling_unit_id),
             INDEX idx_is_auto_bom (is_auto_bom)
@@ -502,6 +502,16 @@ try {
             $conn->exec("ALTER TABLE customers ADD COLUMN tax_exempt_certificate VARCHAR(100) DEFAULT NULL AFTER tax_exempt_reason");
             $conn->exec("ALTER TABLE customers ADD INDEX idx_tax_exempt (tax_exempt)");
         }
+        
+        // Add customer_id to sales table
+        $stmt = $conn->query("DESCRIBE sales");
+        $sales_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        if (!in_array('customer_id', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN customer_id INT DEFAULT NULL AFTER user_id");
+            $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL");
+            $conn->exec("ALTER TABLE sales ADD INDEX idx_customer_id (customer_id)");
+        }
     } catch (PDOException $e) {
         error_log("Could not add tax management columns: " . $e->getMessage());
     }
@@ -560,6 +570,20 @@ try {
         FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
     )");
     
+    // Create permission_groups table for organizing permissions
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS permission_groups (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            permission_name VARCHAR(100) NOT NULL,
+            group_name VARCHAR(100) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_permission_group (permission_name, group_name),
+            INDEX idx_permission_name (permission_name),
+            INDEX idx_group_name (group_name)
+        )
+    ");
+    
     // Create menu_sections table for navigation control
     $conn->exec("
         CREATE TABLE IF NOT EXISTS menu_sections (
@@ -617,12 +641,16 @@ try {
         if ($result['count'] == 0) {
             // Insert default menu sections
             $menu_sections = [
-                ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 1],
-                ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 2],
-                ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 3],
-                ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 4],
-                ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 5],
-                ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 6]
+                ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 3],
+                ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 4],
+                ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 5],
+                ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 6],
+                ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 7],
+                ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 8],
+                ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 9],
+                ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 10],
+                ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 11],
+                ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 12]
             ];
             
             $stmt = $conn->prepare("
@@ -634,6 +662,41 @@ try {
                 $stmt->execute($section);
             }
         }
+        
+        // Ensure all required sections exist (for existing databases)
+        $required_sections = [
+            ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 3],
+            ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 4],
+            ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 5],
+            ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 6],
+            ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 7],
+            ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 8],
+            ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 9],
+            ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 10],
+            ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 11],
+            ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 12]
+        ];
+        
+        $stmt = $conn->prepare("
+            INSERT IGNORE INTO menu_sections (section_key, section_name, section_icon, section_description, sort_order) 
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        
+        foreach ($required_sections as $section) {
+            $stmt->execute($section);
+        }
+        
+        // Update existing sections with new sort order
+        $stmt = $conn->prepare("
+            UPDATE menu_sections 
+            SET section_name = ?, section_icon = ?, section_description = ?, sort_order = ? 
+            WHERE section_key = ?
+        ");
+        
+        foreach ($required_sections as $section) {
+            $stmt->execute([$section[1], $section[2], $section[3], $section[4], $section[0]]);
+        }
+        
     } catch (PDOException $e) {
         error_log("Warning: Could not initialize menu sections: " . $e->getMessage());
     }
@@ -1492,13 +1555,13 @@ try {
     
     // Add indexes for user management
     $userIndexes = [
-        "CREATE INDEX IF NOT EXISTS idx_users_first_name ON users (first_name)",
-        "CREATE INDEX IF NOT EXISTS idx_users_last_name ON users (last_name)",
-        "CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone)",
-        "CREATE INDEX IF NOT EXISTS idx_users_status ON users (status)",
-        "CREATE INDEX IF NOT EXISTS idx_users_employee_id ON users (employee_id)",
-        "CREATE INDEX IF NOT EXISTS idx_users_manager_id ON users (manager_id)",
-        "CREATE INDEX IF NOT EXISTS idx_users_department ON users (department)"
+        "CREATE INDEX idx_users_first_name ON users (first_name)",
+        "CREATE INDEX idx_users_last_name ON users (last_name)",
+        "CREATE INDEX idx_users_phone ON users (phone)",
+        "CREATE INDEX idx_users_status ON users (status)",
+        "CREATE INDEX idx_users_employee_id ON users (employee_id)",
+        "CREATE INDEX idx_users_manager_id ON users (manager_id)",
+        "CREATE INDEX idx_users_department ON users (department)"
     ];
 
     foreach ($userIndexes as $indexSql) {
@@ -1626,13 +1689,6 @@ try {
         ['search_transactions', 'Search and filter transactions', 'Sales & Transactions'],
         ['reconcile_transactions', 'Reconcile transaction records', 'Sales & Transactions'],
 
-        // Receipt and Printing Management
-        ['print_receipts', 'Print sales receipts', 'Sales & Transactions'],
-        ['reprint_receipts', 'Reprint previously printed receipts', 'Sales & Transactions'],
-        ['email_receipts', 'Email receipts to customers', 'Sales & Transactions'],
-        ['customize_receipts', 'Customize receipt templates and formats', 'Sales & Transactions'],
-        ['manage_receipt_templates', 'Manage receipt template designs', 'Sales & Transactions'],
-        ['view_receipt_history', 'View receipt printing history', 'Sales & Transactions'],
 
         // Point of Sale (POS) Settings
         ['manage_pos_settings', 'Manage POS system settings', 'Sales & Transactions'],
@@ -1640,7 +1696,6 @@ try {
         ['view_pos_settings', 'View current POS configuration', 'Sales & Transactions'],
         ['customize_pos_layout', 'Customize POS screen layout', 'Sales & Transactions'],
         ['manage_pos_shortcuts', 'Manage POS keyboard shortcuts', 'Sales & Transactions'],
-        ['configure_receipt_printer', 'Configure receipt printer settings', 'Sales & Transactions'],
         ['manage_pos_users', 'Manage users with POS access', 'Sales & Transactions'],
 
         // Cash Drawer Management
@@ -2306,8 +2361,7 @@ try {
         ['manage_currency_settings', 'Manage currency and financial settings', 'System Settings'],
         ['configure_tax_settings', 'Configure tax rates and tax-related settings', 'System Settings'],
         
-        // Receipt and POS Settings
-        ['configure_receipt_settings', 'Configure receipt templates and printing options', 'System Settings'],
+        // POS Settings
         ['manage_pos_settings', 'Manage point-of-sale system configurations', 'System Settings'],
         ['configure_payment_methods', 'Configure accepted payment methods', 'System Settings'],
         ['manage_barcode_settings', 'Configure barcode generation and scanning settings', 'System Settings'],
@@ -2552,12 +2606,12 @@ try {
 
     // Add indexes for better performance
     $indexes = [
-        "CREATE INDEX IF NOT EXISTS idx_sku ON products (sku)",
-        "CREATE INDEX IF NOT EXISTS idx_product_type ON products (product_type)",
-        "CREATE INDEX IF NOT EXISTS idx_status ON products (status)",
-        "CREATE INDEX IF NOT EXISTS idx_brand ON products (brand)",
-        "CREATE INDEX IF NOT EXISTS idx_brand_id ON products (brand_id)",
-        "CREATE INDEX IF NOT EXISTS idx_supplier_id ON products (supplier_id)"
+        "CREATE INDEX idx_sku ON products (sku)",
+        "CREATE INDEX idx_product_type ON products (product_type)",
+        "CREATE INDEX idx_status ON products (status)",
+        "CREATE INDEX idx_brand ON products (brand)",
+        "CREATE INDEX idx_brand_id ON products (brand_id)",
+        "CREATE INDEX idx_supplier_id ON products (supplier_id)"
     ];
 
     foreach ($indexes as $indexSql) {
@@ -2595,18 +2649,9 @@ try {
         ['currency_symbol', 'KES'],
         ['currency_position', 'before'],
         ['currency_decimal_places', '2'],
-        ['tax_rate', '0'],
+        ['tax_rate', '16'],
         ['tax_name', 'VAT'],
         ['tax_registration_number', ''],
-        ['receipt_header', 'POS SYSTEM'],
-        ['receipt_contact', 'Contact: [Configure in Settings]'],
-        ['receipt_show_tax', '1'],
-        ['receipt_show_discount', '1'],
-        ['receipt_footer', 'Thank you for your purchase!'],
-        ['receipt_thanks_message', 'Please come again.'],
-        ['receipt_width', '80'],
-        ['receipt_font_size', '12'],
-        ['auto_print_receipt', '0'],
         ['theme_color', '#6366f1'],
         ['sidebar_color', '#1e293b'],
         ['timezone', 'Africa/Nairobi'],
@@ -4038,10 +4083,14 @@ try {
         
         // Add indexes for better performance
         try {
-            $conn->exec("CREATE INDEX IF NOT EXISTS idx_sale_items_selling_unit ON sale_items(selling_unit_id)");
-            $conn->exec("CREATE INDEX IF NOT EXISTS idx_sale_items_auto_bom ON sale_items(is_auto_bom)");
+            $conn->exec("CREATE INDEX idx_sale_items_selling_unit ON sale_items(selling_unit_id)");
         } catch (PDOException $e) {
-            // Indexes might already exist, continue silently
+            // Index might already exist, continue silently
+        }
+        try {
+            $conn->exec("CREATE INDEX idx_sale_items_auto_bom ON sale_items(is_auto_bom)");
+        } catch (PDOException $e) {
+            // Index might already exist, continue silently
         }
         
         // Update existing sale_items data
@@ -4079,7 +4128,7 @@ try {
         
         // Add performance indexes for sales table
         try {
-            $conn->exec("CREATE INDEX IF NOT EXISTS idx_sales_cash_received ON sales(cash_received)");
+            $conn->exec("CREATE INDEX idx_sales_cash_received ON sales(cash_received)");
         } catch (PDOException $e) {
             // Index might already exist, continue silently
         }
@@ -4091,6 +4140,36 @@ try {
             } catch (Exception $e) {
                 // Column modification might fail, continue silently
                 error_log("Warning: Could not modify price column: " . $e->getMessage());
+            }
+        }
+        
+        // Update product_id column in sale_items to allow NULL values
+        if (in_array('product_id', $sale_items_columns)) {
+            try {
+                // Check if column already allows NULL
+                $checkStmt = $conn->query("SHOW COLUMNS FROM sale_items LIKE 'product_id'");
+                $columnInfo = $checkStmt->fetch(PDO::FETCH_ASSOC);
+                
+                if ($columnInfo && $columnInfo['Null'] === 'NO') {
+                    error_log("product_id column does not allow NULL, applying migration...");
+                    
+                    // First, drop the existing foreign key constraint
+                    $conn->exec("ALTER TABLE sale_items DROP FOREIGN KEY IF EXISTS sale_items_ibfk_2");
+                    error_log("Dropped existing foreign key constraint on sale_items.product_id");
+                    
+                    // Modify the column to allow NULL values
+                    $conn->exec("ALTER TABLE sale_items MODIFY COLUMN product_id INT NULL");
+                    error_log("Updated sale_items.product_id to allow NULL values");
+                    
+                    // Recreate the foreign key constraint with ON DELETE SET NULL
+                    $conn->exec("ALTER TABLE sale_items ADD CONSTRAINT fk_sale_items_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL");
+                    error_log("Recreated foreign key constraint on sale_items.product_id with ON DELETE SET NULL");
+                } else {
+                    error_log("product_id column already allows NULL values");
+                }
+            } catch (Exception $e) {
+                // Column modification might fail, continue silently
+                error_log("Warning: Could not modify product_id column: " . $e->getMessage());
             }
         }
         
@@ -4119,13 +4198,6 @@ try {
         )
     ");
     
-    // Add receipt reprint settings
-    $conn->exec("
-        INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
-        ('allow_receipt_reprint', '1'),
-        ('max_reprint_attempts', '3'),
-        ('require_password_for_reprint', '1')
-    ");
 
     // Add Employee ID settings
     $conn->exec("
@@ -4154,18 +4226,6 @@ try {
         // Column might already exist
     }
     
-    // Create receipt reprint permission (if permissions table exists)
-    $conn->exec("
-        INSERT IGNORE INTO permissions (name, description) VALUES
-        ('reprint_receipt', 'Allow reprinting of receipts')
-    ");
-    
-    // Grant reprint permission to admin role (if role_permissions table exists)
-    $conn->exec("
-        INSERT IGNORE INTO role_permissions (role_id, permission_id)
-        SELECT r.id, p.id FROM roles r, permissions p 
-        WHERE r.name = 'admin' AND p.name = 'reprint_receipt'
-    ");
 
     // ========================================
     // BUDGET MANAGEMENT SYSTEM TABLES
@@ -4361,12 +4421,36 @@ try {
     ");
 
     // Create indexes for better performance
-    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budgets_status ON budgets(status)");
-    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budgets_dates ON budgets(start_date, end_date)");
-    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budget_items_budget ON budget_items(budget_id)");
-    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budget_transactions_budget ON budget_transactions(budget_id)");
-    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budget_transactions_date ON budget_transactions(transaction_date)");
-    $conn->exec("CREATE INDEX IF NOT EXISTS idx_budget_alerts_active ON budget_alerts(is_active, is_read)");
+    try {
+        $conn->exec("CREATE INDEX idx_budgets_status ON budgets(status)");
+    } catch (PDOException $e) {
+        // Index might already exist, ignore error
+    }
+    try {
+        $conn->exec("CREATE INDEX idx_budgets_dates ON budgets(start_date, end_date)");
+    } catch (PDOException $e) {
+        // Index might already exist, ignore error
+    }
+    try {
+        $conn->exec("CREATE INDEX idx_budget_items_budget ON budget_items(budget_id)");
+    } catch (PDOException $e) {
+        // Index might already exist, ignore error
+    }
+    try {
+        $conn->exec("CREATE INDEX idx_budget_transactions_budget ON budget_transactions(budget_id)");
+    } catch (PDOException $e) {
+        // Index might already exist, ignore error
+    }
+    try {
+        $conn->exec("CREATE INDEX idx_budget_transactions_date ON budget_transactions(transaction_date)");
+    } catch (PDOException $e) {
+        // Index might already exist, ignore error
+    }
+    try {
+        $conn->exec("CREATE INDEX idx_budget_alerts_active ON budget_alerts(is_active, is_read)");
+    } catch (PDOException $e) {
+        // Index might already exist, ignore error
+    }
 
     // ========================================
     // FINANCE DASHBOARD PERMISSIONS
@@ -4870,16 +4954,17 @@ try {
 
     // Insert default POS settings
     $default_pos_settings = [
-        ['receipt_printer_enabled', '1', 'boolean', 'receipt', 'Enable receipt printing', 1],
-        ['receipt_template', 'default', 'string', 'receipt', 'Receipt template to use', 1],
-        ['auto_print_receipt', '0', 'boolean', 'receipt', 'Automatically print receipts', 1],
         ['require_customer_info', '0', 'boolean', 'sales', 'Require customer information for sales', 1],
         ['default_payment_method', 'cash', 'string', 'payment', 'Default payment method', 1],
         ['tax_inclusive', '1', 'boolean', 'tax', 'Prices include tax by default', 1],
         ['round_to_nearest', '0.01', 'number', 'calculation', 'Round amounts to nearest value', 1],
         ['low_stock_threshold', '10', 'number', 'inventory', 'Low stock alert threshold', 1],
         ['max_discount_percentage', '50', 'number', 'sales', 'Maximum discount percentage allowed', 1],
-        ['enable_loyalty_program', '0', 'boolean', 'customer', 'Enable customer loyalty program', 1]
+        ['enable_loyalty_program', '1', 'boolean', 'customer', 'Enable customer loyalty program', 1],
+        ['loyalty_points_per_currency', '1', 'decimal', 'customer', 'Points earned per currency unit (e.g., 1 point per $1)', 1],
+        ['loyalty_minimum_purchase', '0', 'decimal', 'customer', 'Minimum purchase amount to earn points', 1],
+        ['loyalty_points_expiry_days', '365', 'integer', 'customer', 'Days until loyalty points expire (0 = never)', 1],
+        ['loyalty_auto_level_upgrade', '1', 'boolean', 'customer', 'Automatically upgrade customer membership level based on points', 1]
     ];
 
     $stmt = $conn->prepare("
@@ -4911,6 +4996,25 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    // Create membership_levels table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS membership_levels (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            level_name VARCHAR(100) NOT NULL,
+            level_description TEXT,
+            points_multiplier DECIMAL(5, 2) NOT NULL DEFAULT 1.00,
+            minimum_points_required INT DEFAULT 0,
+            color_code VARCHAR(7) DEFAULT '#6c757d',
+            is_active TINYINT(1) DEFAULT 1,
+            sort_order INT DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_level_name (level_name),
+            INDEX idx_is_active (is_active),
+            INDEX idx_sort_order (sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
     // Create loyalty_rewards table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS loyalty_rewards (
@@ -4927,6 +5031,22 @@ try {
             INDEX idx_is_active (is_active)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    // Insert default membership levels
+    $default_levels = [
+        ['Basic', 'Basic membership level', 1.00, 0, '#6c757d', 1, 1],
+        ['Silver', 'Silver membership level', 1.50, 100, '#c0c0c0', 1, 2],
+        ['Gold', 'Gold membership level', 2.00, 500, '#ffd700', 1, 3],
+        ['Platinum', 'Platinum membership level', 2.50, 1000, '#e5e4e2', 1, 4],
+        ['Diamond', 'Diamond membership level', 3.00, 2500, '#b9f2ff', 1, 5]
+    ];
+    $stmt = $conn->prepare("
+        INSERT IGNORE INTO membership_levels (level_name, level_description, points_multiplier, minimum_points_required, color_code, is_active, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ");
+    foreach ($default_levels as $level) {
+        $stmt->execute($level);
+    }
 
     // Insert default loyalty rewards
     $default_rewards = [

@@ -302,27 +302,37 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         <div class="transaction-info">
             <div class="info-row">
                 <span><strong>Transaction ID:</strong></span>
-                <span><?php echo htmlspecialchars($receiptData['transaction_id']); ?></span>
+                <span><?php echo htmlspecialchars($receiptData['transaction_id'] ?? $receiptData['sale_id'] ?? 'N/A'); ?></span>
+            </div>
+            <div class="info-row">
+                <span><strong>Receipt #:</strong></span>
+                <span><?php echo htmlspecialchars($receiptData['receipt_id'] ?? $receiptData['sale_id'] ?? 'N/A'); ?></span>
             </div>
             <div class="info-row">
                 <span><strong>Date:</strong></span>
-                <span><?php echo htmlspecialchars($receiptData['date']); ?></span>
+                <span><?php echo htmlspecialchars($receiptData['date'] ?? date('Y-m-d')); ?></span>
             </div>
             <div class="info-row">
                 <span><strong>Time:</strong></span>
-                <span><?php echo htmlspecialchars($receiptData['time']); ?></span>
+                <span><?php echo htmlspecialchars($receiptData['time'] ?? date('H:i:s')); ?></span>
             </div>
             <div class="info-row">
                 <span><strong>Payment:</strong></span>
-                <span><?php echo htmlspecialchars($receiptData['payment_method']); ?></span>
+                <span><?php echo htmlspecialchars($receiptData['method'] ?? $receiptData['payment_method'] ?? 'Cash'); ?></span>
             </div>
+            <?php if (!empty($receiptData['customer_name']) && $receiptData['customer_name'] !== 'Walk-in Customer'): ?>
+            <div class="info-row">
+                <span><strong>Customer:</strong></span>
+                <span><?php echo htmlspecialchars($receiptData['customer_name']); ?></span>
+            </div>
+            <?php endif; ?>
         </div>
 
         <!-- Receipt Barcode -->
         <div class="barcode-section text-center" style="margin: 15px 0; padding: 10px 0; border: 1px dashed #ccc; border-left: none; border-right: none;">
             <svg id="receiptBarcode"></svg>
             <div style="font-size: 10px; color: #666; margin-top: 5px; font-family: 'Courier New', monospace; font-weight: bold; letter-spacing: 1px;">
-                <?php echo htmlspecialchars($receiptData['transaction_id']); ?>
+                <?php echo htmlspecialchars($receiptData['transaction_id'] ?? $receiptData['sale_id'] ?? 'N/A'); ?>
             </div>
         </div>
 
@@ -341,29 +351,46 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                         <?php foreach ($receiptData['items'] as $item): ?>
                             <tr>
                                 <td>
-                                    <div><?php echo htmlspecialchars($item['name']); ?></div>
+                                    <div><?php echo htmlspecialchars($item['name'] ?? $item['product_name'] ?? 'Item'); ?></div>
                                     <?php if (!empty($item['qty'])): ?>
                                         <small class="text-muted"><?php echo htmlspecialchars($item['qty']); ?></small>
                                     <?php endif; ?>
                                 </td>
                                 <td>
                                     <?php 
-                                    // Extract quantity from qty string (e.g., "1 × $ 4.25" -> "1")
-                                    $qtyParts = explode(' × ', $item['qty']);
-                                    echo htmlspecialchars($qtyParts[0] ?? '1');
+                                    // Handle both old and new data structures
+                                    if (isset($item['quantity'])) {
+                                        echo htmlspecialchars($item['quantity']);
+                                    } else {
+                                        // Extract quantity from qty string (e.g., "1 × $ 4.25" -> "1")
+                                        $qtyParts = explode(' × ', $item['qty'] ?? '1');
+                                        echo htmlspecialchars($qtyParts[0] ?? '1');
+                                    }
                                     ?>
                                 </td>
-                                <td class="text-end"><?php echo htmlspecialchars($item['price']); ?></td>
+                                <td class="text-end">
+                                    <?php 
+                                    $currency_symbol = $settings['currency_symbol'] ?? 'KES';
+                                    if (isset($item['total_price'])) {
+                                        $total_price = is_numeric($item['total_price']) ? $item['total_price'] : 0;
+                                        echo $currency_symbol . ' ' . number_format($total_price, 2);
+                                    } elseif (isset($item['price'])) {
+                                        $price = is_numeric($item['price']) ? $item['price'] : 0;
+                                        echo $currency_symbol . ' ' . number_format($price, 2);
+                                    } else {
+                                        echo $currency_symbol . ' 0.00';
+                                    }
+                                    ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php else: ?>
                         <tr>
                             <td colspan="3">
-                                <div>Americano</div>
-                                <small class="text-muted">1 × <?php echo $settings['currency_symbol']; ?> 3.00</small>
+                                <div>No items</div>
                             </td>
-                            <td>1</td>
-                            <td class="text-end"><?php echo $settings['currency_symbol']; ?> 3.00</td>
+                            <td>0</td>
+                            <td class="text-end"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -374,16 +401,66 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         <div class="totals-section">
             <div class="total-row">
                 <span>Subtotal:</span>
-                <span><?php echo htmlspecialchars($receiptData['subtotal']); ?></span>
+                <span><?php 
+                    $currency_symbol = $settings['currency_symbol'] ?? 'KES';
+                    if (isset($receiptData['subtotal'])) {
+                        $subtotal = is_numeric($receiptData['subtotal']) ? $receiptData['subtotal'] : 0;
+                        echo $currency_symbol . ' ' . number_format($subtotal, 2);
+                    } else {
+                        echo $currency_symbol . ' 0.00';
+                    }
+                ?></span>
             </div>
+            <?php if (isset($receiptData['discount']) && $receiptData['discount'] > 0): ?>
             <div class="total-row">
-                <span>Tax (8%):</span>
-                <span><?php echo htmlspecialchars($receiptData['tax']); ?></span>
+                <span>Discount:</span>
+                <span><?php 
+                    $discount = is_numeric($receiptData['discount']) ? $receiptData['discount'] : 0;
+                    echo $currency_symbol . ' ' . number_format($discount, 2); 
+                ?></span>
+            </div>
+            <?php endif; ?>
+            <div class="total-row">
+                <span>Tax:</span>
+                <span><?php 
+                    if (isset($receiptData['tax'])) {
+                        $tax = is_numeric($receiptData['tax']) ? $receiptData['tax'] : 0;
+                        echo $currency_symbol . ' ' . number_format($tax, 2);
+                    } else {
+                        echo $currency_symbol . ' 0.00';
+                    }
+                ?></span>
             </div>
             <div class="total-row final">
                 <span>TOTAL:</span>
-                <span><?php echo htmlspecialchars($receiptData['total']); ?></span>
+                <span><?php 
+                    if (isset($receiptData['final_amount'])) {
+                        $final_amount = is_numeric($receiptData['final_amount']) ? $receiptData['final_amount'] : 0;
+                        echo $currency_symbol . ' ' . number_format($final_amount, 2);
+                    } elseif (isset($receiptData['amount'])) {
+                        $amount = is_numeric($receiptData['amount']) ? $receiptData['amount'] : 0;
+                        echo $currency_symbol . ' ' . number_format($amount, 2);
+                    } else {
+                        echo $currency_symbol . ' 0.00';
+                    }
+                ?></span>
             </div>
+            <?php if (isset($receiptData['cash_received']) && isset($receiptData['change_due'])): ?>
+            <div class="total-row">
+                <span>Cash Received:</span>
+                <span><?php 
+                    $cash_received = is_numeric($receiptData['cash_received']) ? $receiptData['cash_received'] : 0;
+                    echo $currency_symbol . ' ' . number_format($cash_received, 2); 
+                ?></span>
+            </div>
+            <div class="total-row">
+                <span>Change Due:</span>
+                <span><?php 
+                    $change_due = is_numeric($receiptData['change_due']) ? $receiptData['change_due'] : 0;
+                    echo $currency_symbol . ' ' . number_format($change_due, 2); 
+                ?></span>
+            </div>
+            <?php endif; ?>
         </div>
 
         <!-- Thank You Message -->
@@ -414,7 +491,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     <script>
         // Generate barcode for transaction ID
         document.addEventListener('DOMContentLoaded', function() {
-            const transactionId = '<?php echo htmlspecialchars($receiptData['transaction_id']); ?>';
+            const transactionId = '<?php echo htmlspecialchars($receiptData['transaction_id'] ?? $receiptData['sale_id'] ?? 'N/A'); ?>';
             
             JsBarcode("#receiptBarcode", transactionId, {
                 format: "CODE128",
@@ -466,9 +543,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 
         function startNewSale() {
             // Clear any existing cart/session data and go to POS
-            if (confirm('Start a new sale? This will clear the current cart.')) {
-                window.location.href = 'sale.php?new_sale=true';
-            }
+            window.location.href = 'sale.php?new_sale=true';
         }
     </script>
 </body>

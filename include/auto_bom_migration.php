@@ -316,14 +316,18 @@ class AutoBOMMigrator {
         echo "Creating additional indexes...\n";
 
         $indexes = [
-            "CREATE INDEX IF NOT EXISTS idx_products_auto_bom ON products(is_auto_bom_enabled, auto_bom_type, status)",
-            "CREATE INDEX IF NOT EXISTS idx_auto_bom_configs_product_family ON auto_bom_configs(product_family_id, is_active)",
-            "CREATE INDEX IF NOT EXISTS idx_auto_bom_units_config_status ON auto_bom_selling_units(auto_bom_config_id, status)",
-            "CREATE INDEX IF NOT EXISTS idx_auto_bom_price_history_unit_date ON auto_bom_price_history(selling_unit_id, change_date)"
+            "CREATE INDEX idx_products_auto_bom ON products(is_auto_bom_enabled, auto_bom_type, status)",
+            "CREATE INDEX idx_auto_bom_configs_product_family ON auto_bom_configs(product_family_id, is_active)",
+            "CREATE INDEX idx_auto_bom_units_config_status ON auto_bom_selling_units(auto_bom_config_id, status)",
+            "CREATE INDEX idx_auto_bom_price_history_unit_date ON auto_bom_price_history(selling_unit_id, change_date)"
         ];
 
         foreach ($indexes as $index) {
-            $this->conn->exec($index);
+            try {
+                $this->conn->exec($index);
+            } catch (PDOException $e) {
+                // Index might already exist, continue silently
+            }
         }
 
         echo "Additional indexes created successfully.\n";
