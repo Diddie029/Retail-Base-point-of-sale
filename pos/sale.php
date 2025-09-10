@@ -12,12 +12,300 @@ if (!isset($_SESSION['user_id'])) {
 // Get user information
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'];
+$user_role = $_SESSION['role_name'] ?? 'User';
 
 // Get system settings
 $settings = [];
 $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
+}
+
+// Get register tills
+$stmt = $conn->query("
+    SELECT * FROM register_tills 
+    WHERE is_active = 1 
+    ORDER BY till_name
+");
+$register_tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Check if no tills exist
+$no_tills_available = empty($register_tills);
+
+// Check if user has selected a till for this session
+$selected_till = null;
+if (isset($_SESSION['selected_till_id'])) {
+    $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
+    $stmt->execute([$_SESSION['selected_till_id']]);
+    $selected_till = $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+// Get tills available for switching (excludes current till)
+$switch_tills = $register_tills;
+if ($selected_till) {
+    $switch_tills = array_filter($register_tills, function($till) use ($selected_till) {
+        return $till['id'] != $selected_till['id'];
+    });
+}
+
+// Handle till selection
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'select_till') {
+    $till_id = $_POST['till_id'] ?? null;
+    $opening_amount = floatval($_POST['opening_amount'] ?? 0);
+    
+    if ($till_id) {
+        $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
+        $stmt->execute([$till_id]);
+        $till = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($till) {
+            // Update till with opening amount, set status to opened, and assign to current user
+            $stmt = $conn->prepare("UPDATE register_tills SET current_balance = ?, till_status = 'opened', current_user_id = ? WHERE id = ?");
+            $stmt->execute([$opening_amount, $user_id, $till_id]);
+            
+            $_SESSION['selected_till_id'] = $till_id;
+            $_SESSION['selected_till_name'] = $till['till_name'];
+            $_SESSION['selected_till_code'] = $till['till_code'];
+            $_SESSION['till_opening_amount'] = $opening_amount;
+            $selected_till = $till;
+            $selected_till['current_balance'] = $opening_amount;
+            $selected_till['current_user_id'] = $user_id;
+            
+            // Show warning if till was previously used by another user
+            if ($till['current_user_id'] && $till['current_user_id'] != $user_id) {
+                $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
+                $user_stmt->execute([$till['current_user_id']]);
+                $previous_user = $user_stmt->fetch(PDO::FETCH_ASSOC);
+                $_SESSION['success_message'] = "Till selected successfully. Note: This till was previously used by " . ($previous_user['username'] ?? 'another user') . ".";
+            } else {
+                $_SESSION['success_message'] = "Till selected successfully.";
+            }
+        }
+    }
+    
+    // Redirect to prevent form resubmission
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle till switching
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'switch_till') {
+    $switch_till_id = intval($_POST['switch_till_id'] ?? 0);
+    
+    if ($switch_till_id > 0) {
+        // Prevent switching to the same till
+        if ($selected_till && $switch_till_id == $selected_till['id']) {
+            $_SESSION['error_message'] = "You cannot switch to the same till you are currently using.";
+            header('Location: ' . $_SERVER['PHP_SELF']);
+            exit();
+        }
+        
+        // Get the till to switch to
+        $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
+        $stmt->execute([$switch_till_id]);
+        $switch_till = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($switch_till) {
+            // Release current till first
+            if ($selected_till) {
+                $stmt = $conn->prepare("UPDATE register_tills SET current_user_id = NULL WHERE id = ?");
+                $stmt->execute([$selected_till['id']]);
+            }
+            
+            // Set new till status to opened and assign to current user
+            $stmt = $conn->prepare("UPDATE register_tills SET till_status = 'opened', current_user_id = ? WHERE id = ?");
+            $stmt->execute([$user_id, $switch_till['id']]);
+            
+            // Update session with new till
+            $_SESSION['selected_till_id'] = $switch_till['id'];
+            $_SESSION['selected_till_name'] = $switch_till['till_name'];
+            $_SESSION['selected_till_code'] = $switch_till['till_code'];
+            $_SESSION['till_opening_amount'] = $switch_till['current_balance'];
+            
+            // Show warning if till was previously used by another user
+            if ($switch_till['current_user_id'] && $switch_till['current_user_id'] != $user_id) {
+                $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
+                $user_stmt->execute([$switch_till['current_user_id']]);
+                $previous_user = $user_stmt->fetch(PDO::FETCH_ASSOC);
+                $_SESSION['success_message'] = "Switched to till: " . $switch_till['till_name'] . ". Note: This till was previously used by " . ($previous_user['username'] ?? 'another user') . ".";
+            } else {
+                $_SESSION['success_message'] = "Switched to till: " . $switch_till['till_name'];
+            }
+        } else {
+            $_SESSION['error_message'] = "Selected till not found or inactive.";
+        }
+    } else {
+        $_SESSION['error_message'] = "Please select a till to switch to.";
+    }
+    
+    // Redirect to prevent form resubmission
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle till closing
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'close_till') {
+    $cash_amount = floatval($_POST['cash_amount'] ?? 0);
+    $voucher_amount = floatval($_POST['voucher_amount'] ?? 0);
+    $loyalty_points = floatval($_POST['loyalty_points'] ?? 0);
+    $other_amount = floatval($_POST['other_amount'] ?? 0);
+    $other_description = $_POST['other_description'] ?? '';
+    $closing_notes = $_POST['closing_notes'] ?? '';
+    $allow_exceed = isset($_POST['allow_exceed']) ? 1 : 0;
+    
+    if ($selected_till) {
+        // Calculate total closing amount
+        $total_closing = $cash_amount + $voucher_amount + $loyalty_points + $other_amount;
+        
+        // Check if closing exceeds balance (unless allowed)
+        if (!$allow_exceed && $total_closing > $selected_till['current_balance']) {
+            $_SESSION['error_message'] = "Closing amount exceeds till balance. Please check amounts or enable 'Allow Exceed' option.";
+        } else {
+            // Create till closing record
+            $stmt = $conn->prepare("
+                INSERT INTO till_closings (till_id, user_id, cash_amount, voucher_amount, loyalty_points, other_amount, other_description, total_amount, closing_notes, allow_exceed, closed_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ");
+            $stmt->execute([
+                $selected_till['id'], 
+                $user_id, 
+                $cash_amount, 
+                $voucher_amount, 
+                $loyalty_points, 
+                $other_amount, 
+                $other_description, 
+                $total_closing, 
+                $closing_notes, 
+                $allow_exceed
+            ]);
+            
+            // Reset till balance to 0, set status to closed, and release user assignment
+            $stmt = $conn->prepare("UPDATE register_tills SET current_balance = 0, till_status = 'closed', current_user_id = NULL WHERE id = ?");
+            $stmt->execute([$selected_till['id']]);
+            
+            // Clear till selection
+            unset($_SESSION['selected_till_id']);
+            unset($_SESSION['selected_till_name']);
+            unset($_SESSION['selected_till_code']);
+            unset($_SESSION['till_opening_amount']);
+            $selected_till = null;
+            
+            $_SESSION['success_message'] = "Till closed successfully. You can now select a new till.";
+        }
+    }
+    
+    // Redirect to prevent form resubmission
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle cash drop authentication
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cash_drop_auth') {
+    $auth_user_id = $_POST['user_id'] ?? '';
+    $auth_password = $_POST['password'] ?? '';
+    
+    if ($auth_user_id && $auth_password) {
+        // Verify user credentials
+        $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE id = ? AND status = 'active'");
+        $stmt->execute([$auth_user_id]);
+        $auth_user = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($auth_user && password_verify($auth_password, $auth_user['password'])) {
+            // Check if user has cash drop permission
+            if ($auth_user['role'] === 'admin' || hasPermission('cash_drop', $permissions)) {
+                $_SESSION['cash_drop_authenticated'] = true;
+                $_SESSION['cash_drop_user_id'] = $auth_user['id'];
+                $_SESSION['cash_drop_username'] = $auth_user['username'];
+                $_SESSION['success_message'] = "Authentication successful. You can now proceed with cash drop.";
+            } else {
+                $_SESSION['error_message'] = "You don't have permission to perform cash drop operations.";
+            }
+        } else {
+            $_SESSION['error_message'] = "Invalid user ID or password.";
+        }
+    } else {
+        $_SESSION['error_message'] = "Please enter both user ID and password.";
+    }
+    
+    // Redirect to prevent form resubmission
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle cash drop
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cash_drop') {
+    $notes = $_POST['notes'] ?? '';
+    
+    // Check if user is authenticated for cash drop
+    if (!isset($_SESSION['cash_drop_authenticated']) || !$_SESSION['cash_drop_authenticated']) {
+        $_SESSION['error_message'] = "You must authenticate before performing cash drop operations.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    
+    if ($selected_till) {
+        // Get total sales amount for this till today
+        $today = date('Y-m-d');
+        $stmt = $conn->prepare("
+            SELECT COALESCE(SUM(final_amount), 0) as total_sales
+            FROM sales 
+            WHERE DATE(sale_date) = ? AND till_id = ?
+        ");
+        $stmt->execute([$today, $selected_till['id']]);
+        $sales_data = $stmt->fetch(PDO::FETCH_ASSOC);
+        $total_sales = floatval($sales_data['total_sales']);
+        
+        if ($total_sales > 0) {
+            // Drop the total sales amount
+            $stmt = $conn->prepare("
+                INSERT INTO cash_drops (till_id, user_id, drop_amount, notes, status) 
+                VALUES (?, ?, ?, ?, 'pending')
+            ");
+            $stmt->execute([$selected_till['id'], $user_id, $total_sales, $notes]);
+            
+            // Update till balance
+            $new_balance = $selected_till['current_balance'] - $total_sales;
+            $stmt = $conn->prepare("UPDATE register_tills SET current_balance = ? WHERE id = ?");
+            $stmt->execute([$new_balance, $selected_till['id']]);
+            
+            // Update session
+            $selected_till['current_balance'] = $new_balance;
+            $_SESSION['till_opening_amount'] = $new_balance;
+            $_SESSION['success_message'] = "Cash drop processed successfully by " . $_SESSION['cash_drop_username'] . ". Dropped " . formatCurrency($total_sales, $settings) . " (total sales amount).";
+            
+            // Clear authentication after successful drop
+            unset($_SESSION['cash_drop_authenticated']);
+            unset($_SESSION['cash_drop_user_id']);
+            unset($_SESSION['cash_drop_username']);
+        } else {
+            $_SESSION['error_message'] = "No sales found for today. Nothing to drop.";
+        }
+    }
+    
+    // Redirect to prevent form resubmission
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle cash drop logout
+if (isset($_GET['action']) && $_GET['action'] === 'logout_cash_drop') {
+    unset($_SESSION['cash_drop_authenticated']);
+    unset($_SESSION['cash_drop_user_id']);
+    unset($_SESSION['cash_drop_username']);
+    $_SESSION['success_message'] = "Logged out from cash drop operations.";
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle till release on logout
+if (isset($_GET['action']) && $_GET['action'] === 'release_till') {
+    if ($selected_till) {
+        $stmt = $conn->prepare("UPDATE register_tills SET current_user_id = NULL WHERE id = ?");
+        $stmt->execute([$selected_till['id']]);
+        $_SESSION['success_message'] = "Till released successfully.";
+    }
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
 }
 
 // Get products for the POS interface
@@ -364,11 +652,80 @@ $total_amount = $subtotal + $tax_amount;
             font-family: 'Courier New', monospace;
             font-size: 0.8rem;
         }
+        
+        /* Network Status Indicator */
+        .network-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .network-indicator {
+            position: relative;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .network-indicator i {
+            font-size: 1rem;
+            color: #28a745;
+            animation: networkBlink 2s infinite;
+        }
+        
+        .network-status.offline .network-indicator i {
+            color: #ffffff;
+            animation: none;
+        }
+        
+        .network-text {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: #ffffff;
+        }
+        
+        .network-status.offline .network-text {
+            color: #ffffff;
+        }
+        
+        @keyframes networkBlink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
 
         .user-info {
             display: flex;
             align-items: center;
             gap: 0.5rem;
+        }
+        
+        /* Logout Button Styling */
+        .logout-btn {
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+        
+        .logout-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.5);
+            color: #ffffff;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        
+        .logout-btn:active {
+            transform: translateY(0);
+            background: rgba(255, 255, 255, 0.15);
         }
 
         .avatar {
@@ -436,50 +793,135 @@ $total_amount = $subtotal + $tax_amount;
     <!-- Top Bar -->
     <div class="top-bar">
         <div class="d-flex align-items-center">
-            <h4 class="mb-0 me-3"><?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></h4>
-            <span class="badge bg-light text-dark">Enhanced POS</span>
-                    </div>
-        <div class="time-display" id="currentTime"></div>
-        <div class="user-info">
-            <div class="avatar"><?php echo strtoupper(substr($username, 0, 1)); ?></div>
-            <div>
-                <div class="fw-bold"><?php echo htmlspecialchars($username); ?></div>
-                <small class="opacity-75">Cashier</small>
-                                </div>
-                            </div>
-                        </div>
+            <h3 class="mb-0 me-3 text-white fw-bold"><?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></h3>
+            <?php if ($selected_till): ?>
+            <div class="ms-3 d-flex align-items-center gap-2">
+                <span class="badge bg-success">
+                    <i class="bi bi-cash-register"></i> <?php echo htmlspecialchars($selected_till['till_name']); ?>
+                </span>
+                <span class="badge bg-success text-white">
+                    <i class="bi bi-unlock"></i> Opened
+                </span>
+                <button type="button" class="btn btn-sm btn-primary till-action-btn" onclick="showSwitchTill()" title="Switch Till">
+                    <i class="bi bi-arrow-repeat"></i> Switch Till
+                </button>
+                <button type="button" class="btn btn-sm btn-danger till-action-btn" onclick="showCloseTill()" title="Close Till">
+                    <i class="bi bi-x-circle"></i> Close Till
+                </button>
+                <button type="button" class="btn btn-sm btn-secondary till-action-btn" onclick="releaseTill()" title="Release Till">
+                    <i class="bi bi-person-dash"></i> Release Till
+                </button>
+                <?php if (hasPermission('cash_drop', $permissions) || $user_role === 'admin'): ?>
+                <button type="button" class="btn btn-sm btn-warning till-action-btn" onclick="showCashDropAuth()" title="Cash Drop">
+                    <i class="bi bi-cash-stack"></i> Cash Drop
+                </button>
+                <?php endif; ?>
+            </div>
+            <?php else: ?>
+            <div class="ms-3 d-flex align-items-center gap-2">
+                <div class="alert alert-warning mb-0 py-2 px-3 d-flex align-items-center">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <span class="me-3">Please select a till to continue</span>
+                    <?php if ($no_tills_available): ?>
+                    <button type="button" class="btn btn-warning btn-sm" onclick="showNoTillsModal()">
+                        <i class="bi bi-exclamation-triangle"></i> No Tills Available
+                    </button>
+                    <?php else: ?>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="showTillSelection()">
+                        <i class="bi bi-cash-register"></i> Select Till
+                    </button>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <?php endif; ?>
+        </div>
+        <div class="d-flex align-items-center gap-3">
+            <!-- Network Status Indicator -->
+            <div class="network-status" id="networkStatus" title="Network Connection">
+                <div class="network-indicator">
+                    <i class="bi bi-wifi"></i>
+                </div>
+                <span class="network-text">Online</span>
+            </div>
+            
+            <!-- Time Display -->
+            <div class="time-display" id="currentTime"></div>
+            
+            <!-- User Info -->
+            <div class="user-info">
+                <div class="avatar"><?php echo strtoupper(substr($username, 0, 1)); ?></div>
+                <div>
+                    <div class="fw-bold"><?php echo htmlspecialchars($username); ?></div>
+                    <small class="opacity-75">Cashier</small>
+                </div>
+            </div>
+            
+            <!-- Logout Button -->
+            <button type="button" class="btn btn-outline-light btn-sm logout-btn" onclick="logout()" title="Logout">
+                <i class="bi bi-box-arrow-right"></i> Logout
+            </button>
+        </div>
+    </div>
                         
+    <?php if (isset($_SESSION['success_message'])): ?>
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <?php unset($_SESSION['success_message']); ?>
+    <?php endif; ?>
+    
+    <?php if (isset($_SESSION['error_message'])): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle"></i> <?php echo $_SESSION['error_message']; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <?php unset($_SESSION['error_message']); ?>
+    <?php endif; ?>
+
     <div class="pos-container">
         <div class="row g-0 h-100">
             <!-- Left Sidebar - Products -->
             <div class="col-md-8">
             <div class="pos-main">
                     <!-- Search and Categories -->
-                    <div class="p-1 bg-white border-bottom flex-shrink-0">
-                        <div class="row g-1">
-                            <div class="col-md-6">
+                    <div class="p-2 bg-white border-bottom flex-shrink-0" style="margin-left: 30px;">
+                        <div class="row g-2">
+                            <!-- Search Column (60%) -->
+                            <div class="col-md-7">
                                 <div class="input-group input-group-sm">
                                     <span class="input-group-text"><i class="bi bi-search"></i></span>
                                     <input type="text" class="form-control" id="productSearch" placeholder="Search products...">
+                                </div>
+                            </div>
+                            
+                            <!-- Categories Column (40%) -->
+                            <div class="col-md-5">
+                                <div class="d-flex align-items-center">
+                                    <span class="text-muted small me-2">
+                                        <i class="bi bi-funnel me-1"></i>Filter by Category:
+                                    </span>
+                                    <div class="category-dropdown-container">
+                                        <select class="form-select form-select-sm category-dropdown" id="categoryDropdown">
+                                            <option value="all" selected>
+                                                <i class="bi bi-grid-3x3-gap"></i> All Categories
+                                            </option>
+                                            <?php foreach ($categories as $category): ?>
+                                            <option value="<?php echo $category['id']; ?>">
+                                                <?php echo htmlspecialchars($category['name']); ?>
+                                            </option>
+                                            <?php endforeach; ?>
+                                        </select>
                                     </div>
                                 </div>
-                            <div class="col-md-6">
-                                <div class="d-flex flex-wrap">
-                                    <button class="btn btn-sm category-btn active" data-category="all">All</button>
-                        <?php foreach ($categories as $category): ?>
-                                        <button class="btn btn-sm category-btn" data-category="<?php echo $category['id']; ?>">
-                                <?php echo htmlspecialchars($category['name']); ?>
-                            </button>
-                        <?php endforeach; ?>
+                            </div>
+                        </div>
                     </div>
-                                </div>
-                    </div>
-                </div>
 
                     <!-- Products Grid -->
                     <div class="product-grid" id="productGrid">
                         <?php foreach ($products as $product): ?>
-                        <div class="product-card" data-product-id="<?php echo $product['id']; ?>" data-category-id="<?php echo $product['category_id']; ?>">
+                        <div class="product-card <?php echo !$selected_till ? 'disabled' : ''; ?>" data-product-id="<?php echo $product['id']; ?>" data-category-id="<?php echo $product['category_id']; ?>">
                             <div class="text-center">
                                 <div class="mb-2">
                                     <?php if ($product['image_url']): ?>
@@ -600,9 +1042,9 @@ $total_amount = $subtotal + $tax_amount;
                         <div class="cart-actions">
                             <div class="row g-2 mb-2">
                                 <div class="col-6">
-                                    <button class="btn btn-outline-warning w-100 btn-sm" onclick="holdTransaction()">
+                                    <button class="btn btn-outline-warning w-100 btn-sm" onclick="holdTransaction()" <?php echo !$selected_till ? 'disabled' : ''; ?>>
                                         <i class="bi bi-pause-circle"></i> Hold
-                    </button>
+                                    </button>
                 </div>
                                 <div class="col-6">
                                     <button class="btn btn-outline-info w-100 btn-sm" onclick="loadHeldTransactions()">
@@ -610,7 +1052,7 @@ $total_amount = $subtotal + $tax_amount;
                             </button>
                         </div>
                     </div>
-                            <button class="btn btn-success payment-btn" onclick="processPayment()" <?php echo $cart_count == 0 ? 'disabled' : ''; ?>>
+                            <button class="btn btn-success payment-btn" onclick="processPayment()" <?php echo ($cart_count == 0 || !$selected_till) ? 'disabled' : ''; ?>>
                                 <i class="bi bi-credit-card"></i> Process Payment
                         </button>
                     </div>
@@ -723,25 +1165,6 @@ $total_amount = $subtotal + $tax_amount;
             });
         });
 
-        // Category filtering
-        document.querySelectorAll('.category-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                // Update active button
-                document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                
-                const categoryId = this.dataset.category;
-                const productCards = document.querySelectorAll('.product-card');
-                
-                productCards.forEach(card => {
-                    if (categoryId === 'all' || card.dataset.categoryId === categoryId) {
-                        card.style.display = 'block';
-                    } else {
-                        card.style.display = 'none';
-                    }
-                });
-            });
-        });
 
         // Product selection
         document.querySelectorAll('.product-card').forEach(card => {
@@ -1410,6 +1833,954 @@ $total_amount = $subtotal + $tax_amount;
 
         // Event listeners
         document.getElementById('selectCustomerBtn').addEventListener('click', confirmCustomerSelection);
+        
+        // Till management functions
+        function showTillSelection() {
+            const modalElement = document.getElementById('tillSelectionModal');
+            if (modalElement && typeof bootstrap !== 'undefined') {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+            }
+        }
+        
+        function showNoTillsModal() {
+            const modalElement = document.getElementById('noTillsModal');
+            if (modalElement && typeof bootstrap !== 'undefined') {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+            }
+        }
+        
+        function releaseTill() {
+            if (confirm('Are you sure you want to release this till? Other cashiers will be able to use it.')) {
+                window.location.href = '?action=release_till';
+            }
+        }
+        
+        function showCashDropAuth() {
+            const modalElement = document.getElementById('cashDropAuthModal');
+            if (modalElement && typeof bootstrap !== 'undefined') {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+            }
+        }
+        
+        function showCashDrop() {
+            const modalElement = document.getElementById('cashDropModal');
+            if (modalElement && typeof bootstrap !== 'undefined') {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+            }
+        }
+        
+        function showSwitchTill() {
+            const modalElement = document.getElementById('switchTillModal');
+            if (modalElement && typeof bootstrap !== 'undefined') {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+            }
+        }
+        
+        function showCloseTill() {
+            const modalElement = document.getElementById('closeTillModal');
+            if (modalElement && typeof bootstrap !== 'undefined') {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+            }
+        }
+        
+        function selectSwitchTill(tillId) {
+            // Uncheck all radio buttons
+            document.querySelectorAll('input[name="switch_till_id"]').forEach(radio => {
+                radio.checked = false;
+            });
+            
+            // Check the selected till
+            document.getElementById('switch_till_' + tillId).checked = true;
+            
+            // Enable confirm button
+            document.getElementById('confirmSwitchTill').disabled = false;
+            
+            // Add visual feedback
+            document.querySelectorAll('.till-card').forEach(card => {
+                card.classList.remove('border-primary', 'bg-light');
+            });
+            event.currentTarget.classList.add('border-primary', 'bg-light');
+        }
+        
+        function selectTill(tillId) {
+            // Uncheck all radio buttons
+            document.querySelectorAll('input[name="till_id"]').forEach(radio => {
+                radio.checked = false;
+            });
+            
+            // Check the selected till
+            document.getElementById('till_' + tillId).checked = true;
+            
+            // Enable confirm button
+            document.getElementById('confirmTillSelection').disabled = false;
+            
+            // Add visual feedback
+            document.querySelectorAll('.till-card').forEach(card => {
+                card.classList.remove('border-primary', 'bg-light');
+            });
+            event.currentTarget.classList.add('border-primary', 'bg-light');
+        }
+        
+        function validateTillSelection() {
+            const tillSelected = document.querySelector('input[name="till_id"]:checked');
+            const openingAmount = document.getElementById('opening_amount').value;
+            const confirmBtn = document.getElementById('confirmTillSelection');
+            
+            confirmBtn.disabled = !(tillSelected && openingAmount && parseFloat(openingAmount) >= 0);
+        }
+        
+        function updateCloseTillTotals() {
+            const cashAmount = parseFloat(document.getElementById('cash_amount').value) || 0;
+            const voucherAmount = parseFloat(document.getElementById('voucher_amount').value) || 0;
+            const loyaltyAmount = parseFloat(document.getElementById('loyalty_points').value) || 0;
+            const otherAmount = parseFloat(document.getElementById('other_amount').value) || 0;
+            const tillBalance = <?php echo $selected_till['current_balance'] ?? 0; ?>;
+            
+            const totalClosing = cashAmount + voucherAmount + loyaltyAmount + otherAmount;
+            const difference = totalClosing - tillBalance;
+            
+            document.getElementById('cash_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + cashAmount.toFixed(2);
+            document.getElementById('voucher_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + voucherAmount.toFixed(2);
+            document.getElementById('loyalty_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + loyaltyAmount.toFixed(2);
+            document.getElementById('other_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + otherAmount.toFixed(2);
+            document.getElementById('total_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + totalClosing.toFixed(2);
+            
+            const differenceElement = document.getElementById('difference_display');
+            differenceElement.textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + difference.toFixed(2);
+            
+            if (difference > 0) {
+                differenceElement.className = 'text-danger fw-bold';
+            } else if (difference < 0) {
+                differenceElement.className = 'text-warning fw-bold';
+            } else {
+                differenceElement.className = 'text-success fw-bold';
+            }
+        }
+        
+        // Category dropdown functionality
+        function initializeCategoryDropdown() {
+            const categoryDropdown = document.getElementById('categoryDropdown');
+            const productCards = document.querySelectorAll('.product-card');
+            
+            if (!categoryDropdown) return;
+            
+            // Handle category selection
+            categoryDropdown.addEventListener('change', function() {
+                const selectedCategory = this.value;
+                
+                productCards.forEach(card => {
+                    const categoryId = card.getAttribute('data-category-id');
+                    
+                    if (selectedCategory === 'all' || categoryId === selectedCategory) {
+                        card.style.display = 'block';
+                    } else {
+                        card.style.display = 'none';
+                    }
+                });
+                
+                // Update product count display
+                const visibleProducts = document.querySelectorAll('.product-card[style*="block"], .product-card:not([style*="none"])').length;
+                console.log(`Showing ${visibleProducts} products for category: ${selectedCategory}`);
+            });
+        }
+        
+        // Network status functionality
+        function initializeNetworkStatus() {
+            const networkStatus = document.getElementById('networkStatus');
+            const networkText = networkStatus.querySelector('.network-text');
+            
+            if (!networkStatus) return;
+            
+            function updateNetworkStatus() {
+                if (navigator.onLine) {
+                    networkStatus.classList.remove('offline');
+                    networkText.textContent = 'Online';
+                    networkStatus.title = 'Network Connected';
+                } else {
+                    networkStatus.classList.add('offline');
+                    networkText.textContent = 'Offline';
+                    networkStatus.title = 'Network Disconnected';
+                }
+            }
+            
+            // Initial check
+            updateNetworkStatus();
+            
+            // Listen for online/offline events
+            window.addEventListener('online', updateNetworkStatus);
+            window.addEventListener('offline', updateNetworkStatus);
+            
+            // Periodic check every 30 seconds
+            setInterval(() => {
+                // Test actual connectivity by trying to fetch a small resource
+                fetch('/favicon.ico', { 
+                    method: 'HEAD', 
+                    mode: 'no-cors',
+                    cache: 'no-cache'
+                }).then(() => {
+                    if (!navigator.onLine) {
+                        updateNetworkStatus();
+                    }
+                }).catch(() => {
+                    if (navigator.onLine) {
+                        networkStatus.classList.add('offline');
+                        networkText.textContent = 'Offline';
+                        networkStatus.title = 'Network Disconnected';
+                    }
+                });
+            }, 30000);
+        }
+        
+        // Logout functionality
+        function initializeLogout() {
+            // Logout function is already defined globally
+            // This is just for consistency with other initializations
+        }
+        
+        // Global logout function
+        function logout() {
+            if (confirm('Are you sure you want to logout? Any unsaved changes will be lost.')) {
+                // Release till if selected
+                if (typeof releaseTill === 'function') {
+                    releaseTill();
+                }
+                
+                // Redirect to logout
+                window.location.href = '../logout.php';
+            }
+        }
     </script>
+
+    <!-- No Tills Available Modal -->
+    <div class="modal fade" id="noTillsModal" tabindex="-1" aria-labelledby="noTillsModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title" id="noTillsModalLabel">
+                        <i class="bi bi-exclamation-triangle"></i> No Tills Available
+                    </h5>
+                </div>
+                <div class="modal-body text-center">
+                    <div class="mb-4">
+                        <i class="bi bi-cash-register" style="font-size: 4rem; color: #6c757d;"></i>
+                    </div>
+                    <h4 class="text-muted mb-3">No Tills Have Been Created</h4>
+                    <p class="text-muted mb-4">
+                        You need to create at least one till before you can start processing sales. 
+                        Please contact your administrator to set up tills for your POS system.
+                    </p>
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>What you can do:</strong>
+                        <ul class="list-unstyled mt-2 mb-0">
+                            <li>• Contact your system administrator</li>
+                            <li>• Check if tills are properly configured</li>
+                            <li>• Ensure you have the necessary permissions</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer justify-content-center">
+                    <button type="button" class="btn btn-primary" onclick="location.reload()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh Page
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Till Selection Modal -->
+    <div class="modal fade" id="tillSelectionModal" tabindex="-1" aria-labelledby="tillSelectionModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="tillSelectionModalLabel">
+                        <i class="bi bi-cash-register"></i> Select Till
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="POST" action="">
+                    <input type="hidden" name="action" value="select_till">
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            Please select a till and enter the opening amount to continue with sales operations. You can change this selection at any time.
+                        </div>
+                        
+                        <div class="row">
+                            <?php foreach ($register_tills as $till): ?>
+                            <div class="col-md-6 mb-3">
+                                <div class="card h-100 till-card" onclick="selectTill(<?php echo $till['id']; ?>)">
+                                    <div class="card-body text-center">
+                                        <div class="till-icon mb-3">
+                                            <i class="bi bi-cash-register" style="font-size: 2rem; color: #667eea;"></i>
+                                        </div>
+                                        <h5 class="card-title"><?php echo htmlspecialchars($till['till_name']); ?></h5>
+                                        <p class="card-text">
+                                            <strong>Code:</strong> <?php echo htmlspecialchars($till['till_code']); ?><br>
+                                            <strong>Location:</strong> <?php echo htmlspecialchars($till['location'] ?? 'N/A'); ?><br>
+                                            <strong>Status:</strong> 
+                                            <?php if (($till['till_status'] ?? 'closed') === 'opened'): ?>
+                                                <?php if ($till['current_user_id']): ?>
+                                                    <?php 
+                                                    // Get username of current user
+                                                    $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
+                                                    $user_stmt->execute([$till['current_user_id']]);
+                                                    $current_user = $user_stmt->fetch(PDO::FETCH_ASSOC);
+                                                    ?>
+                                                    <?php if ($till['current_user_id'] == $user_id): ?>
+                                                    <span class="text-success fw-bold">
+                                                        <i class="bi bi-person-check"></i> In Use (You)
+                                                    </span>
+                                                    <?php else: ?>
+                                                    <span class="text-warning fw-bold">
+                                                        <i class="bi bi-person-x"></i> In Use (<?php echo htmlspecialchars($current_user['username'] ?? 'Unknown'); ?>)
+                                                    </span>
+                                                    <?php endif; ?>
+                                                <?php else: ?>
+                                                <span class="text-success fw-bold">
+                                                    <i class="bi bi-unlock"></i> Available
+                                                </span>
+                                                <?php endif; ?>
+                                            <?php else: ?>
+                                            <span class="text-secondary fw-bold">
+                                                <i class="bi bi-lock"></i> Closed
+                                            </span>
+                                            <?php endif; ?>
+                                        </p>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="till_id" value="<?php echo $till['id']; ?>" id="till_<?php echo $till['id']; ?>">
+                                            <label class="form-check-label" for="till_<?php echo $till['id']; ?>">
+                                                Select This Till
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        
+                        <div class="row mt-4">
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-body">
+                                        <h6 class="card-title">
+                                            <i class="bi bi-cash-coin"></i> Opening Amount
+                                        </h6>
+                                        <div class="input-group">
+                                            <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
+                                            <input type="number" class="form-control" name="opening_amount" id="opening_amount" 
+                                                   step="0.01" min="0" placeholder="0.00" required>
+                                        </div>
+                                        <small class="text-muted">Enter the cash amount you're starting with in this till</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <?php if (empty($register_tills)): ?>
+                        <div class="text-center py-4">
+                            <i class="bi bi-exclamation-triangle text-warning" style="font-size: 3rem;"></i>
+                            <h5 class="mt-3">No Active Tills Available</h5>
+                            <p class="text-muted">Please contact your administrator to set up active tills.</p>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="confirmTillSelection" disabled>
+                            <i class="bi bi-check-circle"></i> Confirm Selection
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cash Drop Authentication Modal -->
+    <div class="modal fade" id="cashDropAuthModal" tabindex="-1" aria-labelledby="cashDropAuthModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title" id="cashDropAuthModalLabel">
+                        <i class="bi bi-shield-lock"></i> Cash Drop Authentication
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="POST" action="">
+                    <input type="hidden" name="action" value="cash_drop_auth">
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            Please enter your credentials to proceed with cash drop operation.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="auth_user_id" class="form-label">User ID</label>
+                            <input type="text" class="form-control" name="user_id" id="auth_user_id" 
+                                   placeholder="Enter your user ID" required>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="auth_password" class="form-label">Password</label>
+                            <input type="password" class="form-control" name="password" id="auth_password" 
+                                   placeholder="Enter your password" required>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-warning">
+                            <i class="bi bi-shield-check"></i> Authenticate
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cash Drop Modal -->
+    <div class="modal fade" id="cashDropModal" tabindex="-1" aria-labelledby="cashDropModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title" id="cashDropModalLabel">
+                        <i class="bi bi-cash-stack"></i> Cash Drop
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="POST" action="">
+                    <input type="hidden" name="action" value="cash_drop">
+                    <div class="modal-body">
+                        <?php if (isset($_SESSION['cash_drop_authenticated']) && $_SESSION['cash_drop_authenticated']): ?>
+                        <div class="alert alert-success">
+                            <i class="bi bi-shield-check"></i>
+                            <strong>Authenticated as:</strong> <?php echo htmlspecialchars($_SESSION['cash_drop_username']); ?>
+                            <a href="?action=logout_cash_drop" class="btn btn-sm btn-outline-danger ms-2">
+                                <i class="bi bi-box-arrow-right"></i> Logout
+                            </a>
+                        </div>
+                        <?php else: ?>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            You must authenticate before proceeding with cash drop operations.
+                        </div>
+                        <?php endif; ?>
+                        
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            This will drop the total amount of sales made today from the till. The amount is automatically calculated based on today's sales.
+                        </div>
+                        
+                        <?php
+                        // Get total sales for today
+                        $today = date('Y-m-d');
+                        $stmt = $conn->prepare("
+                            SELECT COALESCE(SUM(final_amount), 0) as total_sales
+                            FROM sales 
+                            WHERE DATE(sale_date) = ? AND till_id = ?
+                        ");
+                        $stmt->execute([$today, $selected_till['id'] ?? 0]);
+                        $sales_data = $stmt->fetch(PDO::FETCH_ASSOC);
+                        $total_sales = floatval($sales_data['total_sales']);
+                        ?>
+                        
+                        <div class="card mb-3">
+                            <div class="card-body text-center">
+                                <h6 class="card-title">
+                                    <i class="bi bi-calculator"></i> Today's Sales Summary
+                                </h6>
+                                <div class="row">
+                                    <div class="col-12">
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>Total Sales:</span>
+                                            <strong class="text-success">
+                                                <?php echo formatCurrency($total_sales, $settings); ?>
+                                            </strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>Status:</span>
+                                            <strong class="text-info">
+                                                <i class="bi bi-shield-check"></i> Till Active
+                                            </strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <?php if ($total_sales > 0): ?>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Drop Amount:</strong> <?php echo formatCurrency($total_sales, $settings); ?> 
+                            (Total sales for today)
+                        </div>
+                        <?php else: ?>
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            No sales found for today. Nothing to drop.
+                        </div>
+                        <?php endif; ?>
+                        
+                        <div class="mb-3">
+                            <label for="notes" class="form-label">Notes (Optional)</label>
+                            <textarea class="form-control" name="notes" id="notes" rows="3" 
+                                      placeholder="Enter any notes about this cash drop..."></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <?php if (isset($_SESSION['cash_drop_authenticated']) && $_SESSION['cash_drop_authenticated']): ?>
+                            <?php if ($total_sales > 0): ?>
+                            <button type="submit" class="btn btn-warning">
+                                <i class="bi bi-cash-stack"></i> Drop <?php echo formatCurrency($total_sales, $settings); ?>
+                            </button>
+                            <?php else: ?>
+                            <button type="submit" class="btn btn-warning" disabled>
+                                <i class="bi bi-cash-stack"></i> Nothing to Drop
+                            </button>
+                            <?php endif; ?>
+                        <?php else: ?>
+                            <button type="button" class="btn btn-warning" onclick="showCashDropAuth()">
+                                <i class="bi bi-shield-lock"></i> Authenticate First
+                            </button>
+                        <?php endif; ?>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Switch Till Modal -->
+    <div class="modal fade" id="switchTillModal" tabindex="-1" aria-labelledby="switchTillModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="switchTillModalLabel">
+                        <i class="bi bi-arrow-repeat"></i> Switch Till
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="POST" action="">
+                    <input type="hidden" name="action" value="switch_till">
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>Switch Till:</strong> Select a different till to switch to. Your current till will remain open.
+                        </div>
+                        
+                        <?php if (empty($switch_tills)): ?>
+                        <div class="alert alert-warning text-center">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>No Other Tills Available</strong><br>
+                            There are no other active tills to switch to.
+                        </div>
+                        <?php else: ?>
+                        <div class="row">
+                            <?php foreach ($switch_tills as $till): ?>
+                            <div class="col-md-6 mb-3">
+                                <div class="card till-card" onclick="selectSwitchTill(<?php echo $till['id']; ?>)">
+                                    <div class="card-body text-center">
+                                        <div class="till-icon mb-3">
+                                            <i class="bi bi-cash-register" style="font-size: 2rem; color: #667eea;"></i>
+                                        </div>
+                                        <h5 class="card-title"><?php echo htmlspecialchars($till['till_name']); ?></h5>
+                                        <p class="card-text">
+                                            <strong>Code:</strong> <?php echo htmlspecialchars($till['till_code']); ?><br>
+                                            <strong>Location:</strong> <?php echo htmlspecialchars($till['location'] ?? 'N/A'); ?><br>
+                                            <strong>Status:</strong> 
+                                            <?php if (($till['till_status'] ?? 'closed') === 'opened'): ?>
+                                                <?php if ($till['current_user_id']): ?>
+                                                    <?php 
+                                                    // Get username of current user
+                                                    $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
+                                                    $user_stmt->execute([$till['current_user_id']]);
+                                                    $current_user = $user_stmt->fetch(PDO::FETCH_ASSOC);
+                                                    ?>
+                                                    <?php if ($till['current_user_id'] == $user_id): ?>
+                                                    <span class="text-success fw-bold">
+                                                        <i class="bi bi-person-check"></i> In Use (You)
+                                                    </span>
+                                                    <?php else: ?>
+                                                    <span class="text-warning fw-bold">
+                                                        <i class="bi bi-person-x"></i> In Use (<?php echo htmlspecialchars($current_user['username'] ?? 'Unknown'); ?>)
+                                                    </span>
+                                                    <?php endif; ?>
+                                                <?php else: ?>
+                                                <span class="text-success fw-bold">
+                                                    <i class="bi bi-unlock"></i> Available
+                                                </span>
+                                                <?php endif; ?>
+                                            <?php else: ?>
+                                            <span class="text-secondary fw-bold">
+                                                <i class="bi bi-lock"></i> Closed
+                                            </span>
+                                            <?php endif; ?>
+                                        </p>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="switch_till_id" value="<?php echo $till['id']; ?>" id="switch_till_<?php echo $till['id']; ?>">
+                                            <label class="form-check-label" for="switch_till_<?php echo $till['id']; ?>">
+                                                Switch to This Till
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" id="confirmSwitchTill" <?php echo empty($switch_tills) ? 'disabled' : ''; ?>>
+                            <i class="bi bi-arrow-repeat"></i> Switch Till
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Close Till Modal -->
+    <div class="modal fade" id="closeTillModal" tabindex="-1" aria-labelledby="closeTillModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="closeTillModalLabel">
+                        <i class="bi bi-x-circle"></i> Close Till
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="POST" action="">
+                    <input type="hidden" name="action" value="close_till">
+                    <div class="modal-body">
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Close Till:</strong> This will permanently close the current till and reset its balance to zero. This action cannot be undone.
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="mb-3">
+                                    <i class="bi bi-cash-coin"></i> Payment Breakdown
+                                </h6>
+                                
+                                <div class="mb-3">
+                                    <label for="cash_amount" class="form-label">Cash Amount</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
+                                        <input type="number" class="form-control" name="cash_amount" id="cash_amount" 
+                                               step="0.01" min="0" placeholder="0.00" required>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="voucher_amount" class="form-label">Voucher Amount</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
+                                        <input type="number" class="form-control" name="voucher_amount" id="voucher_amount" 
+                                               step="0.01" min="0" placeholder="0.00">
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="loyalty_points" class="form-label">Loyalty Points (Value)</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
+                                        <input type="number" class="form-control" name="loyalty_points" id="loyalty_points" 
+                                               step="0.01" min="0" placeholder="0.00">
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="other_amount" class="form-label">Other Amount</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
+                                        <input type="number" class="form-control" name="other_amount" id="other_amount" 
+                                               step="0.01" min="0" placeholder="0.00">
+                                    </div>
+                                    <input type="text" class="form-control mt-2" name="other_description" id="other_description" 
+                                           placeholder="Description of other payment type">
+                                </div>
+                            </div>
+                            
+                            <div class="col-md-6">
+                                <h6 class="mb-3">
+                                    <i class="bi bi-calculator"></i> Summary
+                                </h6>
+                                
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>Current Till Balance:</span>
+                                            <strong><?php echo formatCurrency($selected_till['current_balance'] ?? 0, $settings); ?></strong>
+                                        </div>
+                                        <hr>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>Cash:</span>
+                                            <span id="cash_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>Voucher:</span>
+                                            <span id="voucher_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>Loyalty Points:</span>
+                                            <span id="loyalty_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>Other:</span>
+                                            <span id="other_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
+                                        </div>
+                                        <hr>
+                                        <div class="d-flex justify-content-between">
+                                            <strong>Total Closing:</strong>
+                                            <strong id="total_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mt-2">
+                                            <span>Difference:</span>
+                                            <span id="difference_display" class="text-muted"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" name="allow_exceed" id="allow_exceed" checked>
+                                    <label class="form-check-label" for="allow_exceed">
+                                        Allow closing amount to exceed till balance
+                                    </label>
+                                </div>
+                                
+                                <div class="mb-3 mt-3">
+                                    <label for="closing_notes" class="form-label">Closing Notes (Optional)</label>
+                                    <textarea class="form-control" name="closing_notes" id="closing_notes" rows="3" 
+                                              placeholder="Enter any notes about this till closing..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-x-circle"></i> Close Till
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Till management event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            // Till selection event listeners
+            document.querySelectorAll('input[name="till_id"]').forEach(radio => {
+                radio.addEventListener('change', validateTillSelection);
+            });
+            
+            // Switch till event listeners
+            document.querySelectorAll('input[name="switch_till_id"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    document.getElementById('confirmSwitchTill').disabled = false;
+                });
+            });
+            
+            const openingAmountInput = document.getElementById('opening_amount');
+            if (openingAmountInput) {
+                openingAmountInput.addEventListener('input', validateTillSelection);
+            }
+            
+            // Close till calculations event listeners
+            const cashAmountInput = document.getElementById('cash_amount');
+            const voucherAmountInput = document.getElementById('voucher_amount');
+            const loyaltyAmountInput = document.getElementById('loyalty_points');
+            const otherAmountInput = document.getElementById('other_amount');
+            
+            if (cashAmountInput) cashAmountInput.addEventListener('input', updateCloseTillTotals);
+            if (voucherAmountInput) voucherAmountInput.addEventListener('input', updateCloseTillTotals);
+            if (loyaltyAmountInput) loyaltyAmountInput.addEventListener('input', updateCloseTillTotals);
+            if (otherAmountInput) otherAmountInput.addEventListener('input', updateCloseTillTotals);
+            
+            // Category dropdown functionality
+            initializeCategoryDropdown();
+            
+            // Network status functionality
+            initializeNetworkStatus();
+            
+            // Logout functionality
+            initializeLogout();
+            
+            // Show appropriate modal on page load if no till is selected
+            <?php if (!$selected_till): ?>
+                <?php if ($no_tills_available): ?>
+                showNoTillsModal();
+                <?php else: ?>
+                showTillSelection();
+                <?php endif; ?>
+            <?php endif; ?>
+        });
+    </script>
+    
+    <style>
+        .till-card {
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+        
+        .till-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            border-color: #667eea;
+        }
+        
+        .till-card.border-primary {
+            border-color: #667eea !important;
+            background-color: #f8f9ff !important;
+        }
+        
+        
+        .product-card.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+            cursor: not-allowed;
+        }
+        
+        /* Category Dropdown Styles */
+        .category-dropdown-container {
+            flex: 1;
+        }
+        
+        .category-dropdown {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            background: #f8f9fa;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.2s ease;
+            cursor: pointer;
+            position: relative;
+        }
+        
+        .category-dropdown:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25);
+            outline: none;
+        }
+        
+        .category-dropdown:hover {
+            border-color: #007bff;
+            box-shadow: 0 2px 8px rgba(0,123,255,0.15);
+            transform: translateY(-1px);
+        }
+        
+        .category-dropdown:active {
+            transform: translateY(0);
+        }
+        
+        /* Custom dropdown arrow styling */
+        .category-dropdown {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m1 6 7 7 7-7'/%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 0.75rem center;
+            background-size: 16px 12px;
+            padding-right: 2.5rem;
+        }
+        
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .category-dropdown {
+                font-size: 0.9rem;
+            }
+            
+            /* Stack columns vertically on mobile */
+            .col-md-7, .col-md-5 {
+                margin-bottom: 8px;
+            }
+        }
+        
+        .product-card.disabled:hover {
+            transform: none;
+            box-shadow: none;
+        }
+        
+        /* Till Action Buttons Styling */
+        .till-action-btn {
+            font-weight: 600;
+            border: 2px solid transparent;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+            transition: all 0.2s ease;
+            min-width: 120px;
+        }
+        
+        .till-action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            border-color: rgba(255,255,255,0.3);
+        }
+        
+        .till-action-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+        }
+        
+        .till-action-btn.btn-primary {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            border-color: #007bff;
+        }
+        
+        .till-action-btn.btn-primary:hover {
+            background: linear-gradient(135deg, #0056b3, #004085);
+            border-color: #0056b3;
+        }
+        
+        .till-action-btn.btn-danger {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            border-color: #dc3545;
+        }
+        
+        .till-action-btn.btn-danger:hover {
+            background: linear-gradient(135deg, #c82333, #bd2130);
+            border-color: #c82333;
+        }
+        
+        .till-action-btn.btn-secondary {
+            background: linear-gradient(135deg, #6c757d, #5a6268);
+            border-color: #6c757d;
+        }
+        
+        .till-action-btn.btn-secondary:hover {
+            background: linear-gradient(135deg, #5a6268, #495057);
+            border-color: #5a6268;
+        }
+        
+        .till-action-btn.btn-warning {
+            background: linear-gradient(135deg, #ffc107, #e0a800);
+            border-color: #ffc107;
+            color: #212529;
+        }
+        
+        .till-action-btn.btn-warning:hover {
+            background: linear-gradient(135deg, #e0a800, #d39e00);
+            border-color: #e0a800;
+            color: #212529;
+        }
+        
+        .till-icon {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            color: white;
+        }
+    </style>
 </body>
 </html>

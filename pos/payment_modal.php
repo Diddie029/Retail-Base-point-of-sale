@@ -23,35 +23,8 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
-// Get active payment methods
-$stmt = $conn->query("
-    SELECT * FROM payment_types 
-    WHERE is_active = 1 
-    ORDER BY sort_order, display_name
-");
-$payment_methods = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Add loyalty points as a payment method if not already present
-$hasLoyaltyPoints = false;
-foreach ($payment_methods as $method) {
-    if ($method['name'] === 'loyalty_points') {
-        $hasLoyaltyPoints = true;
-        break;
-    }
-}
-
-if (!$hasLoyaltyPoints) {
-    $payment_methods[] = [
-        'id' => 999,
-        'name' => 'loyalty_points',
-        'display_name' => 'Loyalty Points',
-        'description' => 'Pay with loyalty points',
-        'icon' => 'bi bi-gift',
-        'color' => '#ffc107',
-        'is_active' => 1,
-        'sort_order' => 99
-    ];
-}
+// Get active payment methods using db.php function
+$payment_methods = getPaymentMethods($conn);
 
 // Get cart data from session or POST
 $cart_items = $_POST['cart_items'] ?? $_SESSION['cart'] ?? [];
@@ -109,14 +82,14 @@ $total_amount = $cart_totals['total'];
                 <div class="mb-4">
                     <h6 class="fw-bold mb-3">Select Payment Method</h6>
                     
-                    <!-- Cash Payment Method (Always Visible) -->
+                    <!-- Primary Payment Methods (Always Visible) -->
                     <div class="row g-2 mb-3">
                         <?php foreach ($payment_methods as $index => $method): ?>
-                            <?php if ($method['name'] === 'cash'): ?>
+                            <?php if ($method['name'] === 'cash' || $method['name'] === 'loyalty_points'): ?>
                             <div class="col-md-4 col-sm-6">
-                                <div class="payment-method card h-100 selected" 
+                                <div class="payment-method card h-100 <?php echo $method['name'] === 'cash' ? 'selected' : ''; ?>" 
                                      data-method="<?php echo $method['name']; ?>" 
-                                     style="cursor: pointer; transition: all 0.3s; border-color: #007bff; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+                                     style="cursor: pointer; transition: all 0.3s; <?php echo $method['name'] === 'cash' ? 'border-color: #007bff; box-shadow: 0 4px 12px rgba(0,0,0,0.2);' : ''; ?>">
                                     <div class="card-body text-center p-3">
                                         <div class="mb-2">
                                             <div class="rounded-circle d-inline-flex align-items-center justify-content-center" 
@@ -143,7 +116,7 @@ $total_amount = $cart_totals['total'];
                     <div class="collapse" id="otherPaymentMethods">
                         <div class="row g-2">
                             <?php foreach ($payment_methods as $index => $method): ?>
-                                <?php if ($method['name'] !== 'cash'): ?>
+                                <?php if ($method['name'] !== 'cash' && $method['name'] !== 'loyalty_points'): ?>
                                 <div class="col-md-4 col-sm-6">
                                     <div class="payment-method card h-100" 
                                          data-method="<?php echo $method['name']; ?>" 
@@ -245,6 +218,44 @@ $total_amount = $cart_totals['total'];
                             <button type="button" class="btn btn-outline-success btn-sm" id="exactAmountBtn">
                                 <i class="bi bi-check-circle me-1"></i>Exact Amount
                             </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Customer Selection for Loyalty Points -->
+                    <div class="mt-4">
+                        <label class="form-label fw-semibold">
+                            <i class="bi bi-person-gift me-2"></i>Select Customer (Optional - for loyalty points)
+                        </label>
+                        <div class="input-group">
+                            <span class="input-group-text">
+                                <i class="bi bi-person"></i>
+                            </span>
+                            <input type="text" class="form-control" id="cashCustomerSearch" placeholder="Search customer by name, phone, email, or customer number...">
+                            <button class="btn btn-outline-secondary" type="button" id="cashCustomerSearchBtn">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                        <div id="cashCustomerResults" class="mt-2" style="max-height: 200px; overflow-y: auto; display: none;">
+                            <!-- Customer search results will appear here -->
+                        </div>
+                        <div id="cashSelectedCustomer" class="mt-2" style="display: none;">
+                            <div class="alert alert-info d-flex justify-content-between align-items-center">
+                                <div>
+                                    <i class="bi bi-person-check me-2"></i>
+                                    <strong id="cashSelectedCustomerName">Customer Name</strong>
+                                    <br>
+                                    <small id="cashSelectedCustomerPoints">0 points available</small>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-danger" id="cashClearCustomer">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="cashLoyaltyPointsInfo" class="mt-2" style="display: none;">
+                            <div class="alert alert-success">
+                                <i class="bi bi-gift me-2"></i>
+                                <strong>Loyalty Points:</strong> Customer will earn <span id="cashPointsToEarn">0</span> points from this purchase
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -403,6 +414,10 @@ $total_amount = $cart_totals['total'];
                         <i class="bi bi-check-circle-fill text-success" style="font-size: 4rem;"></i>
                     </div>
                     <h4 class="text-success">Transaction Completed Successfully!</h4>
+                    <div id="autoPrintIndicator" class="alert alert-info d-none" role="alert">
+                        <i class="bi bi-printer me-2"></i>
+                        <strong>Auto-Print Enabled:</strong> Receipt will be printed automatically...
+                    </div>
                     <p class="text-muted">Your payment has been processed and recorded.</p>
                 </div>
 
@@ -480,9 +495,6 @@ $total_amount = $cart_totals['total'];
                 </button>
                 <button type="button" class="btn btn-outline-primary receipt-btn print">
                     <i class="bi bi-printer me-1"></i>Print
-                </button>
-                <button type="button" class="btn btn-outline-secondary receipt-btn download">
-                    <i class="bi bi-download me-1"></i>Download
                 </button>
                 <button type="button" class="btn btn-success receipt-btn new-transaction">
                     <i class="bi bi-plus-circle me-1"></i>New Transaction
@@ -615,4 +627,6 @@ window.paymentTotals = {
     tax: <?php echo $tax_amount; ?>,
     total: <?php echo $total_amount; ?>
 };
+window.autoPrintReceipt = <?php echo ($settings['auto_print_receipt'] ?? '0') == '1' ? 'true' : 'false'; ?>;
+window.autoClosePrintWindow = <?php echo ($settings['auto_close_print_window'] ?? '1') == '1' ? 'true' : 'false'; ?>;
 </script>

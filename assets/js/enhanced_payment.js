@@ -10,6 +10,8 @@ class PaymentProcessor {
         this.transactionData = null;
         this.currency = '$';
         this.taxRate = 0;
+        this.cashSelectedCustomer = null;
+        this.loyaltySelectedCustomer = null;
         
         this.init();
     }
@@ -63,6 +65,7 @@ class PaymentProcessor {
         if (paymentModal) {
             paymentModal.addEventListener('show.bs.modal', () => {
                 this.refreshCartData();
+                this.bindQuickAmountButtons();
             });
         }
 
@@ -102,6 +105,44 @@ class PaymentProcessor {
             });
         }
 
+        // Cash customer search functionality
+        const cashCustomerSearch = document.getElementById('cashCustomerSearch');
+        const cashCustomerSearchBtn = document.getElementById('cashCustomerSearchBtn');
+        const cashClearCustomer = document.getElementById('cashClearCustomer');
+
+        if (cashCustomerSearch) {
+            let searchTimeout;
+            cashCustomerSearch.addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                const searchTerm = e.target.value.trim();
+                if (searchTerm.length >= 2) {
+                    searchTimeout = setTimeout(() => {
+                        this.searchCashCustomers(searchTerm);
+                    }, 300);
+                } else {
+                    document.getElementById('cashCustomerResults').style.display = 'none';
+                }
+            });
+        }
+
+        if (cashCustomerSearchBtn) {
+            cashCustomerSearchBtn.addEventListener('click', () => {
+                const searchTerm = cashCustomerSearch.value.trim();
+                if (searchTerm.length >= 2) {
+                    this.searchCashCustomers(searchTerm);
+                }
+            });
+        }
+
+        if (cashClearCustomer) {
+            cashClearCustomer.addEventListener('click', () => {
+                this.showCashCustomerSearch();
+                cashCustomerSearch.value = '';
+                this.cashSelectedCustomer = null;
+                this.updateCashLoyaltyPoints();
+            });
+        }
+
         // Collapsible button for other payment methods
         const collapseBtn = document.querySelector('[data-bs-target="#otherPaymentMethods"]');
         if (collapseBtn) {
@@ -118,7 +159,10 @@ class PaymentProcessor {
         // Cash input events
         const cashInput = document.getElementById('cashReceived');
         if (cashInput) {
-            cashInput.addEventListener('input', () => this.calculateChange());
+            cashInput.addEventListener('input', () => {
+                this.calculateChange();
+                this.updateCashLoyaltyPoints();
+            });
             cashInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
@@ -126,6 +170,9 @@ class PaymentProcessor {
                 }
             });
         }
+
+        // Bind quick amount buttons
+        this.bindQuickAmountButtons();
 
         // Card number formatting
         const cardNumber = document.getElementById('cardNumber');
@@ -160,10 +207,6 @@ class PaymentProcessor {
             printBtn.addEventListener('click', () => this.printReceipt());
         }
 
-        const downloadBtn = document.querySelector('.receipt-btn.download');
-        if (downloadBtn) {
-            downloadBtn.addEventListener('click', () => this.downloadReceipt());
-        }
 
         const newTransactionBtn = document.querySelector('.receipt-btn.new-transaction');
         if (newTransactionBtn) {
@@ -293,8 +336,8 @@ class PaymentProcessor {
         this.showPaymentSection(this.selectedPaymentMethod);
         this.updateConfirmButton();
 
-        // If selecting a non-cash method, expand the collapsible section
-        if (this.selectedPaymentMethod !== 'cash') {
+        // If selecting a method that's in the collapsible section, expand it
+        if (this.selectedPaymentMethod !== 'cash' && this.selectedPaymentMethod !== 'loyalty_points') {
             const collapseElement = document.getElementById('otherPaymentMethods');
             const collapseBtn = document.querySelector('[data-bs-target="#otherPaymentMethods"]');
             if (collapseElement && collapseBtn) {
@@ -313,6 +356,7 @@ class PaymentProcessor {
         document.getElementById('cashPaymentSection').style.display = 'none';
         document.getElementById('mobileMoneySection').style.display = 'none';
         document.getElementById('cardPaymentSection').style.display = 'none';
+        document.getElementById('loyaltyPointsPaymentSection').style.display = 'none';
 
         // Show relevant section
         switch (method) {
@@ -449,7 +493,17 @@ class PaymentProcessor {
         const total = subtotal + tax;
 
         // Get selected customer data
-        const selectedCustomer = window.selectedCustomer || null;
+        let selectedCustomer = window.selectedCustomer || null;
+        
+        // For cash payments, use the cash selected customer if available
+        if (this.selectedPaymentMethod === 'cash' && this.cashSelectedCustomer) {
+            selectedCustomer = {
+                id: this.cashSelectedCustomer.id,
+                display_name: this.cashSelectedCustomer.display_name,
+                customer_type: 'registered',
+                membership_level: this.cashSelectedCustomer.membership_level
+            };
+        }
         
         const paymentData = {
             method: this.selectedPaymentMethod,
@@ -465,6 +519,7 @@ class PaymentProcessor {
             customer_phone: selectedCustomer ? selectedCustomer.phone : '',
             customer_email: selectedCustomer ? selectedCustomer.email : '',
             customer_type: selectedCustomer ? selectedCustomer.customer_type : 'walk_in',
+            membership_level: selectedCustomer ? selectedCustomer.membership_level : 'Basic',
             tax_exempt: selectedCustomer ? selectedCustomer.tax_exempt : false
         };
 
@@ -521,9 +576,27 @@ class PaymentProcessor {
         // Populate receipt data
         this.populateReceipt(paymentData);
 
+        // Show/hide auto-print indicator based on setting
+        const autoPrintIndicator = document.getElementById('autoPrintIndicator');
+        if (autoPrintIndicator) {
+            if (window.autoPrintReceipt) {
+                autoPrintIndicator.classList.remove('d-none');
+            } else {
+                autoPrintIndicator.classList.add('d-none');
+            }
+        }
+
         // Show receipt modal
         const receiptModal = new bootstrap.Modal(document.getElementById('receiptModal'));
         receiptModal.show();
+
+        // Auto-print receipt if enabled
+        if (window.autoPrintReceipt) {
+            // Wait a moment for the modal to be fully displayed
+            setTimeout(() => {
+                this.printReceipt();
+            }, 500);
+        }
     }
 
     populateReceipt(paymentData) {
@@ -591,6 +664,33 @@ class PaymentProcessor {
         // Open print window
         const printWindow = window.open(printUrl, '_blank', 'width=800,height=600');
         
+        // Check if window was opened successfully
+        if (!printWindow) {
+            console.error('Failed to open print window. Popup may be blocked.');
+            alert('Print window could not be opened. Please check if popups are blocked and try again.');
+            return;
+        }
+        
+        // Auto-trigger print dialog when window loads
+        printWindow.onload = function() {
+            printWindow.focus();
+            printWindow.print();
+            
+            // Auto-close print window if enabled
+            if (window.autoClosePrintWindow) {
+                // Close window after a short delay to allow printing to complete
+                setTimeout(() => {
+                    printWindow.close();
+                }, 2000);
+            }
+        };
+        
+        // Handle window load error
+        printWindow.onerror = function() {
+            console.error('Error loading print window');
+            alert('Error loading print window. Please try again.');
+        };
+        
         // Listen for the print window to close or complete printing
         const checkClosed = setInterval(() => {
             if (printWindow.closed) {
@@ -601,35 +701,6 @@ class PaymentProcessor {
         }, 1000);
     }
 
-    async downloadReceipt() {
-        try {
-            const receiptData = this.getReceiptData();
-            const response = await fetch('generate_pdf_receipt.php', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(receiptData)
-            });
-
-            if (response.ok) {
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `receipt_${receiptData.transaction_id}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-            } else {
-                throw new Error('PDF generation failed');
-            }
-        } catch (error) {
-            console.error('Download error:', error);
-            alert('Receipt download failed. Please try again.');
-        }
-    }
 
     getReceiptData() {
         const modal = document.getElementById('receiptModal');
@@ -744,6 +815,150 @@ class PaymentProcessor {
         document.getElementById('loyaltyPointsAvailable').value = '0';
         document.getElementById('loyaltyPointsValue').value = '0.00';
         document.getElementById('remainingAmount').value = this.formatAmount(this.paymentAmount);
+    }
+
+    // Cash Customer Search Methods
+    showCashCustomerSearch() {
+        // Clear any previous selection
+        this.cashSelectedCustomer = null;
+        document.getElementById('cashSelectedCustomer').style.display = 'none';
+        document.getElementById('cashCustomerResults').style.display = 'none';
+        document.getElementById('cashLoyaltyPointsInfo').style.display = 'none';
+    }
+
+    async searchCashCustomers(searchTerm) {
+        try {
+            const response = await fetch(`../api/search_customers_loyalty.php?search=${encodeURIComponent(searchTerm)}`);
+            const data = await response.json();
+
+            if (data.success) {
+                this.displayCashCustomerResults(data.customers);
+            } else {
+                this.showCashError(data.error || 'Failed to search customers');
+            }
+        } catch (error) {
+            console.error('Error searching customers:', error);
+            this.showCashError('Failed to search customers');
+        }
+    }
+
+    displayCashCustomerResults(customers) {
+        const resultsDiv = document.getElementById('cashCustomerResults');
+        
+        if (customers.length === 0) {
+            resultsDiv.innerHTML = '<div class="alert alert-info">No customers found</div>';
+        } else {
+            let html = '<div class="list-group">';
+            customers.forEach(customer => {
+                html += `
+                    <div class="list-group-item list-group-item-action" onclick="window.paymentProcessor.selectCashCustomer(${customer.id}, '${customer.display_name}', '${customer.membership_level}')">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">${customer.display_name}</h6>
+                            <small class="text-muted">${customer.membership_level}</small>
+                        </div>
+                        <p class="mb-1 text-muted">${customer.customer_number}</p>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            resultsDiv.innerHTML = html;
+        }
+        
+        resultsDiv.style.display = 'block';
+    }
+
+    selectCashCustomer(customerId, customerName, membershipLevel) {
+        this.cashSelectedCustomer = {
+            id: customerId,
+            display_name: customerName,
+            membership_level: membershipLevel
+        };
+        
+        // Hide search results
+        document.getElementById('cashCustomerResults').style.display = 'none';
+        
+        // Show selected customer
+        document.getElementById('cashSelectedCustomerName').textContent = customerName;
+        document.getElementById('cashSelectedCustomerPoints').textContent = `${membershipLevel} member`;
+        document.getElementById('cashSelectedCustomer').style.display = 'block';
+        
+        // Update loyalty points calculation
+        this.updateCashLoyaltyPoints();
+    }
+
+    updateCashLoyaltyPoints() {
+        if (this.cashSelectedCustomer && this.paymentAmount > 0) {
+            // Calculate loyalty points that would be earned
+            const pointsToEarn = this.calculateLoyaltyPointsForAmount(this.paymentAmount, this.cashSelectedCustomer.membership_level);
+            document.getElementById('cashPointsToEarn').textContent = pointsToEarn;
+            document.getElementById('cashLoyaltyPointsInfo').style.display = 'block';
+        } else {
+            document.getElementById('cashLoyaltyPointsInfo').style.display = 'none';
+        }
+    }
+
+    calculateLoyaltyPointsForAmount(amount, membershipLevel) {
+        // This is a simplified calculation - in a real implementation, 
+        // you'd want to call the server to get the actual loyalty settings
+        const basePointsPerDollar = 1; // Default rate
+        const multiplier = this.getMembershipMultiplier(membershipLevel);
+        return Math.floor(amount * basePointsPerDollar * multiplier);
+    }
+
+    getMembershipMultiplier(level) {
+        const multipliers = {
+            'Basic': 1.0,
+            'Silver': 1.5,
+            'Gold': 2.0,
+            'Platinum': 2.5,
+            'Diamond': 3.0
+        };
+        return multipliers[level] || 1.0;
+    }
+
+    showCashError(message) {
+        const resultsDiv = document.getElementById('cashCustomerResults');
+        resultsDiv.innerHTML = `<div class="alert alert-danger">${message}</div>`;
+        resultsDiv.style.display = 'block';
+    }
+
+    bindQuickAmountButtons() {
+        // Re-bind quick amount buttons (in case they were dynamically added)
+        const quickAmountBtns = document.querySelectorAll('.quick-amount');
+        quickAmountBtns.forEach(btn => {
+            // Remove existing event listeners to avoid duplicates
+            btn.removeEventListener('click', this.handleQuickAmountClick);
+            // Add new event listener
+            btn.addEventListener('click', this.handleQuickAmountClick.bind(this));
+        });
+
+        // Re-bind exact amount button
+        const exactAmountBtn = document.getElementById('exactAmountBtn');
+        if (exactAmountBtn) {
+            exactAmountBtn.removeEventListener('click', this.handleExactAmountClick);
+            exactAmountBtn.addEventListener('click', this.handleExactAmountClick.bind(this));
+        }
+    }
+
+    handleQuickAmountClick(event) {
+        const amount = parseFloat(event.currentTarget.dataset.amount) || 0;
+        const cashInput = document.getElementById('cashReceived');
+        if (cashInput) {
+            cashInput.value = amount;
+            cashInput.focus();
+            this.calculateChange();
+            this.updateCashLoyaltyPoints();
+        }
+    }
+
+    handleExactAmountClick() {
+        const cashInput = document.getElementById('cashReceived');
+        if (cashInput) {
+            cashInput.value = this.paymentAmount;
+            cashInput.focus();
+            this.calculateChange();
+            this.updateCashLoyaltyPoints();
+        }
     }
 
     async searchLoyaltyCustomers(searchTerm) {
@@ -966,10 +1181,15 @@ class PaymentProcessor {
     }
 
     generateTransactionId() {
+        // For now, use simple format. In production, this should be generated by the server
         const prefix = 'TXN';
-        const timestamp = Date.now();
-        const random = Math.floor(Math.random() * 1000);
-        return `${prefix}${timestamp}${random}`;
+        // Use mixed characters (numbers + uppercase + lowercase) for more variety
+        const characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+        let randomString = '';
+        for (let i = 0; i < 6; i++) {
+            randomString += characters.charAt(Math.floor(Math.random() * characters.length));
+        }
+        return `${prefix}${randomString}`;
     }
 
     formatPaymentMethod(method) {

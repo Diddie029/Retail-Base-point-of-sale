@@ -30,7 +30,27 @@ if ($role_id) {
 }
 
 // Check if user has permission to manage cash drops
-if (!hasPermission('manage_sales', $permissions) && !hasPermission('view_sales', $permissions)) {
+// Allow access if user is admin OR has sales permissions
+$hasAccess = false;
+
+// Check if user is admin
+if (isAdmin($role_name)) {
+    $hasAccess = true;
+}
+
+// Check if user has sales permissions
+if (!$hasAccess && !empty($permissions)) {
+    if (hasPermission('manage_sales', $permissions) || hasPermission('view_sales', $permissions)) {
+        $hasAccess = true;
+    }
+}
+
+// Check if user has admin access through permissions
+if (!$hasAccess && hasAdminAccess($role_name, $permissions)) {
+    $hasAccess = true;
+}
+
+if (!$hasAccess) {
     header('Location: ../dashboard/dashboard.php?error=access_denied');
     exit();
 }

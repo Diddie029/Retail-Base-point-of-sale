@@ -173,6 +173,7 @@ Best regards,
     'receipt_width' => '80',
     'receipt_font_size' => '12',
     'auto_print_receipt' => '0',
+    'auto_close_print_window' => '1',
     'auto_generate_receipt_number' => '1',
     'receipt_number_prefix' => 'RCP',
     'receipt_number_length' => '6',
@@ -180,7 +181,10 @@ Best regards,
     'receipt_number_format' => 'prefix-date-number',
     'allow_receipt_reprint' => '1',
     'max_reprint_attempts' => '3',
-    'require_password_for_reprint' => '0'
+    'require_password_for_reprint' => '0',
+    'transaction_id_prefix' => 'TXN',
+    'transaction_id_length' => '6',
+    'transaction_id_format' => 'prefix-random'
 ];
 
 // Merge with defaults
@@ -349,6 +353,75 @@ function generateReceiptNumberPreview($settings) {
             return $sampleNumber;
         default:
             return $prefix . $separator . $currentDate . $separator . $sampleNumber;
+    }
+}
+
+// Function to generate transaction ID preview
+function generateTransactionIdPreview($settings) {
+    $prefix = $settings['transaction_id_prefix'] ?? 'TXN';
+    $length = intval($settings['transaction_id_length'] ?? 6);
+    $format = $settings['transaction_id_format'] ?? 'prefix-random';
+
+    // Define character sets based on format
+    $characters = '';
+    switch($format) {
+        case 'prefix-random':
+        case 'random-only':
+        case 'prefix-date-random':
+            $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            break;
+        case 'prefix-mixed':
+        case 'mixed-only':
+        case 'prefix-date-mixed':
+            $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+            break;
+        case 'prefix-lowercase':
+        case 'lowercase-only':
+        case 'prefix-date-lowercase':
+            $characters = '0123456789abcdefghijklmnopqrstuvwxyz';
+            break;
+        case 'prefix-numbers':
+        case 'numbers-only':
+        case 'prefix-date-numbers':
+            $characters = '0123456789';
+            break;
+        case 'prefix-letters':
+        case 'letters-only':
+        case 'prefix-date-letters':
+            $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+            break;
+        default:
+            $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    }
+
+    // Generate sample random string
+    $randomString = '';
+    for ($i = 0; $i < $length; $i++) {
+        $randomString .= $characters[rand(0, strlen($characters) - 1)];
+    }
+
+    switch ($format) {
+        case 'prefix-random':
+        case 'prefix-mixed':
+        case 'prefix-lowercase':
+        case 'prefix-numbers':
+        case 'prefix-letters':
+            return $prefix . $randomString;
+        case 'random-only':
+        case 'mixed-only':
+        case 'lowercase-only':
+        case 'numbers-only':
+        case 'letters-only':
+            return $randomString;
+        case 'prefix-date-random':
+        case 'prefix-date-mixed':
+        case 'prefix-date-lowercase':
+        case 'prefix-date-numbers':
+        case 'prefix-date-letters':
+            $currentDate = date('Ymd');
+            return $prefix . $currentDate . $randomString;
+        default:
+            return $prefix . $randomString;
     }
 }
 
@@ -562,13 +635,31 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Maximum reprint attempts must be between 1 and 10.";
         }
     }
+
+    // Transaction ID settings validation
+    if (isset($_POST['transaction_id_prefix'])) {
+        $transaction_prefix = trim($_POST['transaction_id_prefix']);
+        if (strlen($transaction_prefix) > 10) {
+            $errors[] = "Transaction ID prefix cannot exceed 10 characters.";
+        }
+        if (!preg_match('/^[A-Za-z0-9_-]*$/', $transaction_prefix)) {
+            $errors[] = "Transaction ID prefix can only contain letters, numbers, hyphens, and underscores.";
+        }
+    }
+
+    if (isset($_POST['transaction_id_length'])) {
+        $transaction_length = intval($_POST['transaction_id_length']);
+        if ($transaction_length < 3 || $transaction_length > 10) {
+            $errors[] = "Transaction ID length must be between 3 and 10 digits.";
+        }
+    }
     
     if (empty($errors)) {
         try {
             $conn->beginTransaction();
             
             // Handle checkbox values
-            $checkbox_fields = ['enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_customer_number', 'receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'auto_generate_receipt_number', 'allow_receipt_reprint', 'require_password_for_reprint'];
+            $checkbox_fields = ['enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_customer_number', 'receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'auto_close_print_window', 'auto_generate_receipt_number', 'allow_receipt_reprint', 'require_password_for_reprint'];
             foreach($checkbox_fields as $field) {
                 if (!isset($_POST[$field])) {
                     $_POST[$field] = '0';
@@ -2962,6 +3053,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <i class="bi bi-layout-text-sidebar me-2"></i>
                                     Receipt Formatting
                                 </h5>
+                                <small class="text-muted">Receipt IDs are sequential (+1 from previous transaction)</small>
                             </div>
                             <div class="card-body">
                                 <div class="row">
@@ -3096,7 +3188,101 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <div class="alert alert-info">
                                         <i class="bi bi-eye me-2"></i>
                                         <strong>Preview:</strong>
-                                        <span id="receiptNumberPreview">RCP-20241201-000001</span>
+                                        <span id="receiptNumberPreview"><?php echo generateReceiptNumberPreview($settings); ?></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Transaction ID Settings -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-warning text-dark">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-hash me-2"></i>
+                                    Transaction ID Settings
+                                </h5>
+                                <small class="text-muted">Transaction IDs are random with various character combinations (e.g., TXN1g2h3j, TXNabcDEF)</small>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="transaction_id_prefix" class="form-label fw-semibold">Transaction ID Prefix</label>
+                                            <input type="text" class="form-control" id="transaction_id_prefix" name="transaction_id_prefix"
+                                                   value="<?php echo htmlspecialchars($settings['transaction_id_prefix'] ?? 'TXN'); ?>"
+                                                   placeholder="TXN">
+                                            <div class="form-text">Prefix for transaction IDs</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="transaction_id_length" class="form-label fw-semibold">Number Length</label>
+                                            <input type="number" class="form-control" id="transaction_id_length" name="transaction_id_length"
+                                                   value="<?php echo htmlspecialchars($settings['transaction_id_length'] ?? '6'); ?>"
+                                                   min="3" max="10">
+                                            <div class="form-text">Number of digits (3-10)</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="form-group mb-3">
+                                    <label for="transaction_id_format" class="form-label fw-semibold">Transaction ID Format</label>
+                                    <select class="form-select" id="transaction_id_format" name="transaction_id_format">
+                                        <option value="prefix-random" <?php echo ($settings['transaction_id_format'] ?? 'prefix-random') == 'prefix-random' ? 'selected' : ''; ?>>
+                                            Prefix-Random (TXN123ABC)
+                                        </option>
+                                        <option value="random-only" <?php echo ($settings['transaction_id_format'] ?? '') == 'random-only' ? 'selected' : ''; ?>>
+                                            Random Only (123ABC)
+                                        </option>
+                                        <option value="prefix-mixed" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-mixed' ? 'selected' : ''; ?>>
+                                            Prefix-Mixed (TXN1g2h3j)
+                                        </option>
+                                        <option value="mixed-only" <?php echo ($settings['transaction_id_format'] ?? '') == 'mixed-only' ? 'selected' : ''; ?>>
+                                            Mixed Only (1g2h3j)
+                                        </option>
+                                        <option value="prefix-lowercase" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-lowercase' ? 'selected' : ''; ?>>
+                                            Prefix-Lowercase (TXN1a2b3c)
+                                        </option>
+                                        <option value="lowercase-only" <?php echo ($settings['transaction_id_format'] ?? '') == 'lowercase-only' ? 'selected' : ''; ?>>
+                                            Lowercase Only (1a2b3c)
+                                        </option>
+                                        <option value="prefix-numbers" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-numbers' ? 'selected' : ''; ?>>
+                                            Prefix-Numbers (TXN123456)
+                                        </option>
+                                        <option value="numbers-only" <?php echo ($settings['transaction_id_format'] ?? '') == 'numbers-only' ? 'selected' : ''; ?>>
+                                            Numbers Only (123456)
+                                        </option>
+                                        <option value="prefix-letters" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-letters' ? 'selected' : ''; ?>>
+                                            Prefix-Letters (TXNabcDEF)
+                                        </option>
+                                        <option value="letters-only" <?php echo ($settings['transaction_id_format'] ?? '') == 'letters-only' ? 'selected' : ''; ?>>
+                                            Letters Only (abcDEF)
+                                        </option>
+                                        <option value="prefix-date-random" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-date-random' ? 'selected' : ''; ?>>
+                                            Prefix-Date-Random (TXN20241201123ABC)
+                                        </option>
+                                        <option value="prefix-date-mixed" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-date-mixed' ? 'selected' : ''; ?>>
+                                            Prefix-Date-Mixed (TXN202412011g2h3j)
+                                        </option>
+                                        <option value="prefix-date-lowercase" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-date-lowercase' ? 'selected' : ''; ?>>
+                                            Prefix-Date-Lowercase (TXN202412011a2b3c)
+                                        </option>
+                                        <option value="prefix-date-numbers" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-date-numbers' ? 'selected' : ''; ?>>
+                                            Prefix-Date-Numbers (TXN20241201123456)
+                                        </option>
+                                        <option value="prefix-date-letters" <?php echo ($settings['transaction_id_format'] ?? '') == 'prefix-date-letters' ? 'selected' : ''; ?>>
+                                            Prefix-Date-Letters (TXN20241201abcDEF)
+                                        </option>
+                                    </select>
+                                    <div class="form-text">Choose how transaction IDs are formatted (random with various character combinations)</div>
+                                </div>
+
+                                <div class="form-group mb-3">
+                                    <label class="form-label fw-semibold">Transaction ID Preview</label>
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-eye me-2"></i>
+                                        <strong>Preview:</strong>
+                                        <span id="transactionIdPreview"><?php echo generateTransactionIdPreview($settings); ?></span>
                                     </div>
                                 </div>
                             </div>
@@ -3122,6 +3308,18 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                 </label>
                                             </div>
                                             <div class="form-text">Automatically print receipts after payment</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="auto_close_print_window" name="auto_close_print_window" value="1"
+                                                       <?php echo (isset($settings['auto_close_print_window']) && $settings['auto_close_print_window'] == '1') ? 'checked' : ''; ?>>
+                                                <label class="form-check-label fw-semibold" for="auto_close_print_window">
+                                                    <i class="bi bi-x-square-fill me-1"></i>Auto-close Print Window
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Automatically close print window after printing</div>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
@@ -4200,8 +4398,8 @@ Best regards,
                 const length = parseInt(document.getElementById('receipt_number_length').value) || 6;
                 const format = document.getElementById('receipt_number_format').value || 'prefix-date-number';
 
-                // Generate sample number
-                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                // Generate sample number (pad with zeros)
+                let sampleNumber = '1'.padStart(length, '0');
                 const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
                 let preview = '';
@@ -4237,6 +4435,94 @@ Best regards,
 
             // Initial receipt number preview update
             updateReceiptNumberPreview();
+
+            // Transaction ID Preview Functionality
+            function updateTransactionIdPreview() {
+                const prefix = document.getElementById('transaction_id_prefix').value || 'TXN';
+                const length = parseInt(document.getElementById('transaction_id_length').value) || 6;
+                const format = document.getElementById('transaction_id_format').value || 'prefix-random';
+
+                // Define character sets based on format
+                let characters = '';
+                switch(format) {
+                    case 'prefix-random':
+                    case 'random-only':
+                    case 'prefix-date-random':
+                        characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                        break;
+                    case 'prefix-mixed':
+                    case 'mixed-only':
+                    case 'prefix-date-mixed':
+                        characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+                        break;
+                    case 'prefix-lowercase':
+                    case 'lowercase-only':
+                    case 'prefix-date-lowercase':
+                        characters = '0123456789abcdefghijklmnopqrstuvwxyz';
+                        break;
+                    case 'prefix-numbers':
+                    case 'numbers-only':
+                    case 'prefix-date-numbers':
+                        characters = '0123456789';
+                        break;
+                    case 'prefix-letters':
+                    case 'letters-only':
+                    case 'prefix-date-letters':
+                        characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+                        break;
+                    default:
+                        characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                }
+
+                // Generate sample random string
+                let randomString = '';
+                for (let i = 0; i < length; i++) {
+                    randomString += characters.charAt(Math.floor(Math.random() * characters.length));
+                }
+                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+                let preview = '';
+                switch(format) {
+                    case 'prefix-random':
+                    case 'prefix-mixed':
+                    case 'prefix-lowercase':
+                    case 'prefix-numbers':
+                    case 'prefix-letters':
+                        preview = prefix + randomString;
+                        break;
+                    case 'random-only':
+                    case 'mixed-only':
+                    case 'lowercase-only':
+                    case 'numbers-only':
+                    case 'letters-only':
+                        preview = randomString;
+                        break;
+                    case 'prefix-date-random':
+                    case 'prefix-date-mixed':
+                    case 'prefix-date-lowercase':
+                    case 'prefix-date-numbers':
+                    case 'prefix-date-letters':
+                        preview = prefix + currentDate + randomString;
+                        break;
+                    default:
+                        preview = prefix + randomString;
+                }
+
+                document.getElementById('transactionIdPreview').textContent = preview;
+            }
+
+            // Add event listeners for transaction ID preview updates
+            const transactionIdInputs = ['transaction_id_prefix', 'transaction_id_length', 'transaction_id_format'];
+            transactionIdInputs.forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.addEventListener('input', updateTransactionIdPreview);
+                    input.addEventListener('change', updateTransactionIdPreview);
+                }
+            });
+
+            // Initial transaction ID preview update
+            updateTransactionIdPreview();
 
             // Check SMTP status on page load with a small delay to ensure DOM is loaded
             setTimeout(() => {

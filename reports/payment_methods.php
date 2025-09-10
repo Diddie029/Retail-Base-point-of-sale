@@ -205,8 +205,8 @@ $total_revenue = array_sum(array_column($payment_methods, 'total_revenue'));
                             <?php echo strtoupper(substr($username, 0, 2)); ?>
                         </div>
                         <div>
-                            <div class="fw-semibold"><?php echo htmlspecialchars($username); ?></div>
-                            <small class="text-muted"><?php echo htmlspecialchars($role_name); ?></small>
+                            <div class="fw-semibold"><?php echo htmlspecialchars($username ?? 'Unknown User'); ?></div>
+                            <small class="text-muted"><?php echo htmlspecialchars($role_name ?? 'Unknown Role'); ?></small>
                         </div>
                     </div>
                 </div>
@@ -306,7 +306,7 @@ $total_revenue = array_sum(array_column($payment_methods, 'total_revenue'));
                                         <?php foreach ($payment_methods as $method): ?>
                                         <tr>
                                             <td>
-                                                <strong><?php echo htmlspecialchars($method['payment_method']); ?></strong>
+                                                <strong><?php echo htmlspecialchars($method['payment_method'] ?? 'Unknown'); ?></strong>
                                             </td>
                                             <td>
                                                 <strong><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($method['total_revenue'], 2); ?></strong>

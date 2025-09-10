@@ -1,11 +1,51 @@
 <?php
 session_start();
 require_once __DIR__ . '/../include/db.php';
+require_once __DIR__ . '/../include/functions.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: ../auth/login.php");
     exit();
+}
+
+// Helper function to extract numeric value from currency strings
+function extractNumericValue($value) {
+    if (is_numeric($value)) {
+        return $value;
+    }
+    // Remove currency symbols and extract number
+    $numeric = preg_replace('/[^\d.-]/', '', $value);
+    return is_numeric($numeric) ? $numeric : 0;
+}
+
+// Helper function to generate receipt number based on settings
+function generateReceiptNumberFromSettings($saleId, $settings, $date = null) {
+    if ($date === null) {
+        $date = date('Y-m-d');
+    }
+    
+    $format = $settings['receipt_number_format'] ?? 'prefix-date-number';
+    $prefix = $settings['receipt_number_prefix'] ?? 'RCP';
+    $separator = $settings['receipt_number_separator'] ?? '-';
+    $length = (int)($settings['receipt_number_length'] ?? 6);
+    
+    // Pad sale ID to required length
+    $paddedId = str_pad($saleId, $length, '0', STR_PAD_LEFT);
+    $dateFormatted = date('Ymd', strtotime($date));
+    
+    switch($format) {
+        case 'prefix-date-number':
+            return $prefix . $separator . $dateFormatted . $separator . $paddedId;
+        case 'prefix-number':
+            return $prefix . $separator . $paddedId;
+        case 'date-prefix-number':
+            return $dateFormatted . $separator . $prefix . $separator . $paddedId;
+        case 'number-only':
+            return $paddedId;
+        default:
+            return $prefix . $separator . $dateFormatted . $separator . $paddedId;
+    }
 }
 
 // Get receipt data from URL parameter
@@ -306,7 +346,18 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             </div>
             <div class="info-row">
                 <span><strong>Receipt #:</strong></span>
-                <span><?php echo htmlspecialchars($receiptData['receipt_id'] ?? $receiptData['sale_id'] ?? 'N/A'); ?></span>
+                <span><?php 
+                    // Use receipt_id if provided, otherwise generate sequential receipt ID
+                    if (isset($receiptData['receipt_id']) && $receiptData['receipt_id'] !== 'N/A') {
+                        echo htmlspecialchars($receiptData['receipt_id']);
+                    } elseif (isset($receiptData['sale_id']) && is_numeric($receiptData['sale_id'])) {
+                        // Generate sequential receipt ID based on sale_id
+                        echo htmlspecialchars(generateSequentialReceiptId($conn));
+                    } else {
+                        // Fallback to generating a new sequential receipt ID
+                        echo htmlspecialchars(generateSequentialReceiptId($conn));
+                    }
+                ?></span>
             </div>
             <div class="info-row">
                 <span><strong>Date:</strong></span>
@@ -372,10 +423,26 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                                     <?php 
                                     $currency_symbol = $settings['currency_symbol'] ?? 'KES';
                                     if (isset($item['total_price'])) {
-                                        $total_price = is_numeric($item['total_price']) ? $item['total_price'] : 0;
+                                        // Extract numeric value from total_price string
+                                        $totalPriceStr = $item['total_price'];
+                                        if (is_numeric($totalPriceStr)) {
+                                            $total_price = $totalPriceStr;
+                                        } else {
+                                            // Remove currency symbols and extract number
+                                            $total_price = preg_replace('/[^\d.-]/', '', $totalPriceStr);
+                                            $total_price = is_numeric($total_price) ? $total_price : 0;
+                                        }
                                         echo $currency_symbol . ' ' . number_format($total_price, 2);
                                     } elseif (isset($item['price'])) {
-                                        $price = is_numeric($item['price']) ? $item['price'] : 0;
+                                        // Extract numeric value from price string (e.g., "KES100.00" -> 100.00)
+                                        $priceStr = $item['price'];
+                                        if (is_numeric($priceStr)) {
+                                            $price = $priceStr;
+                                        } else {
+                                            // Remove currency symbols and extract number
+                                            $price = preg_replace('/[^\d.-]/', '', $priceStr);
+                                            $price = is_numeric($price) ? $price : 0;
+                                        }
                                         echo $currency_symbol . ' ' . number_format($price, 2);
                                     } else {
                                         echo $currency_symbol . ' 0.00';
@@ -404,7 +471,14 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 <span><?php 
                     $currency_symbol = $settings['currency_symbol'] ?? 'KES';
                     if (isset($receiptData['subtotal'])) {
-                        $subtotal = is_numeric($receiptData['subtotal']) ? $receiptData['subtotal'] : 0;
+                        // Extract numeric value from subtotal string
+                        $subtotalStr = $receiptData['subtotal'];
+                        if (is_numeric($subtotalStr)) {
+                            $subtotal = $subtotalStr;
+                        } else {
+                            $subtotal = preg_replace('/[^\d.-]/', '', $subtotalStr);
+                            $subtotal = is_numeric($subtotal) ? $subtotal : 0;
+                        }
                         echo $currency_symbol . ' ' . number_format($subtotal, 2);
                     } else {
                         echo $currency_symbol . ' 0.00';
@@ -424,7 +498,14 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 <span>Tax:</span>
                 <span><?php 
                     if (isset($receiptData['tax'])) {
-                        $tax = is_numeric($receiptData['tax']) ? $receiptData['tax'] : 0;
+                        // Extract numeric value from tax string
+                        $taxStr = $receiptData['tax'];
+                        if (is_numeric($taxStr)) {
+                            $tax = $taxStr;
+                        } else {
+                            $tax = preg_replace('/[^\d.-]/', '', $taxStr);
+                            $tax = is_numeric($tax) ? $tax : 0;
+                        }
                         echo $currency_symbol . ' ' . number_format($tax, 2);
                     } else {
                         echo $currency_symbol . ' 0.00';
@@ -434,11 +515,35 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             <div class="total-row final">
                 <span>TOTAL:</span>
                 <span><?php 
-                    if (isset($receiptData['final_amount'])) {
-                        $final_amount = is_numeric($receiptData['final_amount']) ? $receiptData['final_amount'] : 0;
+                    if (isset($receiptData['total'])) {
+                        // Extract numeric value from total string
+                        $totalStr = $receiptData['total'];
+                        if (is_numeric($totalStr)) {
+                            $total = $totalStr;
+                        } else {
+                            $total = preg_replace('/[^\d.-]/', '', $totalStr);
+                            $total = is_numeric($total) ? $total : 0;
+                        }
+                        echo $currency_symbol . ' ' . number_format($total, 2);
+                    } elseif (isset($receiptData['final_amount'])) {
+                        // Extract numeric value from final_amount string
+                        $finalAmountStr = $receiptData['final_amount'];
+                        if (is_numeric($finalAmountStr)) {
+                            $final_amount = $finalAmountStr;
+                        } else {
+                            $final_amount = preg_replace('/[^\d.-]/', '', $finalAmountStr);
+                            $final_amount = is_numeric($final_amount) ? $final_amount : 0;
+                        }
                         echo $currency_symbol . ' ' . number_format($final_amount, 2);
                     } elseif (isset($receiptData['amount'])) {
-                        $amount = is_numeric($receiptData['amount']) ? $receiptData['amount'] : 0;
+                        // Extract numeric value from amount string
+                        $amountStr = $receiptData['amount'];
+                        if (is_numeric($amountStr)) {
+                            $amount = $amountStr;
+                        } else {
+                            $amount = preg_replace('/[^\d.-]/', '', $amountStr);
+                            $amount = is_numeric($amount) ? $amount : 0;
+                        }
                         echo $currency_symbol . ' ' . number_format($amount, 2);
                     } else {
                         echo $currency_symbol . ' 0.00';
@@ -449,14 +554,28 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             <div class="total-row">
                 <span>Cash Received:</span>
                 <span><?php 
-                    $cash_received = is_numeric($receiptData['cash_received']) ? $receiptData['cash_received'] : 0;
+                    // Extract numeric value from cash_received string
+                    $cashReceivedStr = $receiptData['cash_received'];
+                    if (is_numeric($cashReceivedStr)) {
+                        $cash_received = $cashReceivedStr;
+                    } else {
+                        $cash_received = preg_replace('/[^\d.-]/', '', $cashReceivedStr);
+                        $cash_received = is_numeric($cash_received) ? $cash_received : 0;
+                    }
                     echo $currency_symbol . ' ' . number_format($cash_received, 2); 
                 ?></span>
             </div>
             <div class="total-row">
                 <span>Change Due:</span>
                 <span><?php 
-                    $change_due = is_numeric($receiptData['change_due']) ? $receiptData['change_due'] : 0;
+                    // Extract numeric value from change_due string
+                    $changeDueStr = $receiptData['change_due'];
+                    if (is_numeric($changeDueStr)) {
+                        $change_due = $changeDueStr;
+                    } else {
+                        $change_due = preg_replace('/[^\d.-]/', '', $changeDueStr);
+                        $change_due = is_numeric($change_due) ? $change_due : 0;
+                    }
                     echo $currency_symbol . ' ' . number_format($change_due, 2); 
                 ?></span>
             </div>

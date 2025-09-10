@@ -2440,12 +2440,12 @@ function calculateLoyaltyPoints($conn, $amount, $membershipLevel = 'Basic') {
     }
     
     // Check minimum purchase requirement
-    if ($amount < $settings['loyalty_minimum_purchase']) {
+    if ($amount < $settings['minimum_purchase']) {
         return 0;
     }
     
     // Get base points per currency unit
-    $basePointsPerCurrency = $settings['loyalty_points_per_currency'];
+    $basePointsPerCurrency = $settings['points_per_currency'];
     
     // Get membership level multiplier from database
     $multiplier = getMembershipLevelMultiplier($conn, $membershipLevel);
@@ -2745,6 +2745,7 @@ function getCustomerLoyaltyHistory($conn, $customerId, $limit = 20) {
         return [];
     }
 }
+
 
 /**
  * Check if a customer is the walk-in customer
@@ -3389,6 +3390,83 @@ function getSaleDetails($conn, $sale_id) {
     } catch (PDOException $e) {
         return null;
     }
+}
+
+/**
+ * Generate sequential receipt ID (+1 from previous transaction)
+ */
+function generateSequentialReceiptId($conn) {
+    try {
+        // Get the last receipt ID from sales table
+        $stmt = $conn->query("SELECT MAX(id) as last_id FROM sales");
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        $nextId = ($result['last_id'] ?? 0) + 1;
+        
+        // Get receipt settings
+        $settings = [];
+        $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $settings[$row['setting_key']] = $row['setting_value'];
+        }
+        
+        $prefix = $settings['receipt_number_prefix'] ?? 'RCP';
+        $separator = $settings['receipt_number_separator'] ?? '-';
+        $length = (int)($settings['receipt_number_length'] ?? 6);
+        $format = $settings['receipt_number_format'] ?? 'prefix-date-number';
+        
+        // Pad the ID to required length
+        $paddedId = str_pad($nextId, $length, '0', STR_PAD_LEFT);
+        $currentDate = date('Ymd');
+        
+        switch($format) {
+            case 'prefix-date-number':
+                return $prefix . $separator . $currentDate . $separator . $paddedId;
+            case 'prefix-number':
+                return $prefix . $separator . $paddedId;
+            case 'date-prefix-number':
+                return $currentDate . $separator . $prefix . $separator . $paddedId;
+            case 'number-only':
+                return $paddedId;
+            default:
+                return $prefix . $separator . $currentDate . $separator . $paddedId;
+        }
+    } catch (PDOException $e) {
+        // Fallback to simple format if database error
+        return 'RCP-' . str_pad(1, 6, '0', STR_PAD_LEFT);
+    }
+}
+
+/**
+ * Check if user is admin
+ */
+function isAdmin($role_name = null) {
+    if ($role_name === null) {
+        $role_name = $_SESSION['role_name'] ?? 'User';
+    }
+    return strtolower($role_name) === 'admin';
+}
+
+/**
+ * Check if user has admin access (either admin role or has admin permissions)
+ */
+function hasAdminAccess($role_name = null, $userPermissions = []) {
+    // Check if user is admin by role
+    if (isAdmin($role_name)) {
+        return true;
+    }
+    
+    // Check if user has admin permissions
+    if (!empty($userPermissions)) {
+        $adminPermissions = ['manage_users', 'manage_roles', 'manage_settings', 'view_all_sales'];
+        foreach ($adminPermissions as $adminPerm) {
+            if (hasPermission($adminPerm, $userPermissions)) {
+                return true;
+            }
+        }
+    }
+    
+    return false;
 }
 
 ?>

@@ -9,8 +9,34 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
-// Check if user has admin permissions
-// Add your permission checking logic here
+// Get user information
+$user_id = $_SESSION['user_id'];
+$username = $_SESSION['username'];
+$role_name = $_SESSION['role_name'] ?? 'User';
+$role_id = $_SESSION['role_id'] ?? 0;
+
+// Get user permissions
+$permissions = [];
+if ($role_id) {
+    $stmt = $conn->prepare("
+        SELECT p.name 
+        FROM permissions p 
+        JOIN role_permissions rp ON p.id = rp.permission_id 
+        WHERE rp.role_id = :role_id
+    ");
+    $stmt->bindParam(':role_id', $role_id);
+    $stmt->execute();
+    $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
+}
+
+// Check if user has permission to manage loyalty settings
+if (!hasPermission('manage_loyalty', $permissions) && !hasPermission('manage_settings', $permissions)) {
+    header("Location: ../dashboard/dashboard.php?error=access_denied");
+    exit();
+}
+
+// Get system settings for theming
+$settings = getSystemSettings($conn);
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -54,35 +80,31 @@ $currentSettings = getLoyaltySettings($conn);
     <title>Loyalty Settings - POS System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8f9fa;
+        }
+        .main-content {
+            margin-left: 250px;
+            min-height: 100vh;
+            background-color: #f8f9fa;
+            transition: margin-left 0.3s ease;
+        }
+        @media (max-width: 768px) {
+            .main-content {
+                margin-left: 0;
+            }
+        }
+    </style>
 </head>
 <body>
-    <div class="container-fluid">
-        <div class="row">
-            <!-- Sidebar -->
-            <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar">
-                <div class="position-sticky pt-3">
-                    <ul class="nav flex-column">
-                        <li class="nav-item">
-                            <a class="nav-link" href="../pos/sale.php">
-                                <i class="bi bi-cart3 me-2"></i>POS
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="../dashboard/dashboard.php">
-                                <i class="bi bi-speedometer2 me-2"></i>Dashboard
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link active" href="#">
-                                <i class="bi bi-gift me-2"></i>Loyalty Settings
-                            </a>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-
-            <!-- Main content -->
-            <div class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
+    <?php include '../include/navmenu.php'; ?>
+    
+    <div class="main-content">
+        <div class="container-fluid">
+            <div class="row">
+                <div class="col-12">
                 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
                     <h1 class="h2">
                         <i class="bi bi-gift me-2"></i>Loyalty Program Settings
@@ -274,6 +296,7 @@ $currentSettings = getLoyaltySettings($conn);
                         </div>
                     </div>
                 </form>
+                </div>
             </div>
         </div>
     </div>

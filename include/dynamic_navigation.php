@@ -4,6 +4,12 @@
 
 // Define section content mappings for each section key
 $sectionContentMappings = [
+    'dashboard' => [
+        ['/dashboard/dashboard.php', 'bi-speedometer2', 'Dashboard']
+    ],
+    'pos' => [
+        ['/sales/salesdashboard.php', 'bi-cart-plus', 'Point of Sale']
+    ],
     'customer_crm' => [
         ['/customers/crm_dashboard.php', 'bi-speedometer2', 'CRM Dashboard']
     ],
@@ -50,14 +56,13 @@ $sectionContentMappings = [
     'analytics' => [
         ['/analytics/index.php', 'bi-graph-up', 'Analytics Dashboard']
     ],
+    'pos_management' => [
+        ['/sales/salesdashboard.php', 'bi-cash-register', 'POS Management Dashboard'],
+    ],
     'sales' => [
         ['/sales/index.php', 'bi-graph-up', 'Sales Dashboard'],
         ['/sales/salesdashboard.php', 'bi-speedometer2', 'Sales Overview'],
-        ['/sales/analytics.php', 'bi-bar-chart', 'Sales Analytics'],
-        ['/sales/export_sales.php', 'bi-download', 'Export Sales'],
-        ['/sales/cash-drop.php', 'bi-cash-stack', 'Cash Drop'],
-        ['/sales/tills.php', 'bi-cash-register', 'Till Management'],
-        ['/sales/payment-methods.php', 'bi-credit-card', 'Payment Methods']
+        ['/sales/export_sales.php', 'bi-download', 'Export Sales']
     ],
     'shelf_labels' => [
         ['/shelf_label/index.php', 'bi-tags', 'Shelf Labels'],
@@ -130,6 +135,9 @@ if (isset($menuAccess) && !empty($menuAccess)) {
 } else {
     // Fallback for users without roles - use hardcoded sections
     $sectionConfig = [
+        'dashboard' => ['Dashboard', 'bi-speedometer2', $sectionContentMappings['dashboard'] ?? []],
+        'pos' => ['Point of Sale', 'bi-cart-plus', $sectionContentMappings['pos'] ?? []],
+        'pos_management' => ['POS Management', 'bi-cash-register', $sectionContentMappings['pos_management'] ?? []],
         'customer_crm' => ['Customer CRM', 'bi-people', $sectionContentMappings['customer_crm'] ?? []],
         'inventory' => ['Inventory', 'bi-boxes', $sectionContentMappings['inventory'] ?? []],
         'expiry' => ['Expiry Management', 'bi-clock-history', $sectionContentMappings['expiry'] ?? []],

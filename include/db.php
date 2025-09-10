@@ -334,6 +334,7 @@ try {
             membership_status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
             membership_level VARCHAR(50) DEFAULT 'Bronze',
             preferred_payment_method VARCHAR(50),
+            reward_program_active TINYINT(1) DEFAULT 1 COMMENT 'Whether customer is enrolled in reward program',
             notes TEXT,
             created_by INT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -511,6 +512,35 @@ try {
             $conn->exec("ALTER TABLE sales ADD COLUMN customer_id INT DEFAULT NULL AFTER user_id");
             $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL");
             $conn->exec("ALTER TABLE sales ADD INDEX idx_customer_id (customer_id)");
+        }
+        
+        // Add till_id column to sales table if it doesn't exist
+        if (!in_array('till_id', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN till_id INT DEFAULT NULL AFTER customer_id");
+            $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE SET NULL");
+            $conn->exec("ALTER TABLE sales ADD INDEX idx_till_id (till_id)");
+        }
+        
+        // Ensure is_active column exists in register_tills table
+        $stmt = $conn->query("DESCRIBE register_tills");
+        $till_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        if (!in_array('is_active', $till_columns)) {
+            $conn->exec("ALTER TABLE register_tills ADD COLUMN is_active TINYINT(1) DEFAULT 1 AFTER location");
+            $conn->exec("UPDATE register_tills SET is_active = 1 WHERE is_active IS NULL");
+        }
+        
+        // Add till_status column to register_tills table if it doesn't exist
+        if (!in_array('till_status', $till_columns)) {
+            $conn->exec("ALTER TABLE register_tills ADD COLUMN till_status ENUM('closed', 'opened') DEFAULT 'closed' AFTER is_active");
+            $conn->exec("UPDATE register_tills SET till_status = 'closed' WHERE till_status IS NULL");
+        }
+        
+        // Add current_user_id column to register_tills table if it doesn't exist
+        if (!in_array('current_user_id', $till_columns)) {
+            $conn->exec("ALTER TABLE register_tills ADD COLUMN current_user_id INT DEFAULT NULL AFTER till_status");
+            $conn->exec("ALTER TABLE register_tills ADD FOREIGN KEY (current_user_id) REFERENCES users(id) ON DELETE SET NULL");
+            $conn->exec("ALTER TABLE register_tills ADD INDEX idx_current_user_id (current_user_id)");
         }
     } catch (PDOException $e) {
         error_log("Could not add tax management columns: " . $e->getMessage());
@@ -4894,6 +4924,30 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    // Create till_closings table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS till_closings (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            till_id INT NOT NULL,
+            user_id INT NOT NULL,
+            cash_amount DECIMAL(15,2) DEFAULT 0.00,
+            voucher_amount DECIMAL(15,2) DEFAULT 0.00,
+            loyalty_points DECIMAL(15,2) DEFAULT 0.00,
+            other_amount DECIMAL(15,2) DEFAULT 0.00,
+            other_description VARCHAR(255),
+            total_amount DECIMAL(15,2) NOT NULL,
+            closing_notes TEXT,
+            allow_exceed TINYINT(1) DEFAULT 0,
+            closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            INDEX idx_till_id (till_id),
+            INDEX idx_user_id (user_id),
+            INDEX idx_closed_at (closed_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
     // Create pos_settings table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS pos_settings (
@@ -4987,14 +5041,109 @@ try {
             transaction_reference VARCHAR(100),
             description TEXT,
             expiry_date DATE NULL,
+            approval_status ENUM('pending', 'approved', 'rejected') DEFAULT 'approved',
+            approved_by INT DEFAULT NULL,
+            approved_at TIMESTAMP NULL,
+            rejection_reason TEXT NULL,
+            source ENUM('purchase', 'manual', 'welcome', 'bonus', 'adjustment') DEFAULT 'manual',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+            FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
             INDEX idx_customer_id (customer_id),
             INDEX idx_transaction_type (transaction_type),
-            INDEX idx_created_at (created_at)
+            INDEX idx_created_at (created_at),
+            INDEX idx_approval_status (approval_status),
+            INDEX idx_source (source)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    // Add new columns to existing loyalty_points table if they don't exist
+    try {
+        // Check if approval_status column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'approval_status'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN approval_status ENUM('pending', 'approved', 'rejected') DEFAULT 'approved'");
+        }
+        
+        // Check if approved_by column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'approved_by'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN approved_by INT DEFAULT NULL");
+        }
+        
+        // Check if approved_at column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'approved_at'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN approved_at TIMESTAMP NULL");
+        }
+        
+        // Check if rejection_reason column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'rejection_reason'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN rejection_reason TEXT NULL");
+        }
+        
+        // Check if source column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'source'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN source ENUM('purchase', 'manual', 'welcome', 'bonus', 'adjustment') DEFAULT 'manual'");
+        }
+        
+        // Add foreign key constraint for approved_by if it doesn't exist
+        $result = $conn->query("
+            SELECT CONSTRAINT_NAME 
+            FROM information_schema.KEY_COLUMN_USAGE 
+            WHERE TABLE_NAME = 'loyalty_points' 
+            AND COLUMN_NAME = 'approved_by' 
+            AND CONSTRAINT_NAME != 'PRIMARY'
+        ");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD CONSTRAINT fk_loyalty_points_approved_by FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL");
+        }
+        
+        // Add indexes if they don't exist
+        $result = $conn->query("SHOW INDEX FROM loyalty_points WHERE Key_name = 'idx_approval_status'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD INDEX idx_approval_status (approval_status)");
+        }
+        
+        $result = $conn->query("SHOW INDEX FROM loyalty_points WHERE Key_name = 'idx_source'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD INDEX idx_source (source)");
+        }
+        
+    } catch (PDOException $e) {
+        // Log error but don't stop execution
+        error_log("Error adding loyalty_points columns: " . $e->getMessage());
+    }
+
+    // Add reward_program_active column to customers table if it doesn't exist
+    try {
+        $result = $conn->query("SHOW COLUMNS FROM customers LIKE 'reward_program_active'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE customers ADD COLUMN reward_program_active TINYINT(1) DEFAULT 1 COMMENT 'Whether customer is enrolled in reward program'");
+        }
+    } catch (PDOException $e) {
+        // Log error but don't stop execution
+        error_log("Error adding reward_program_active column: " . $e->getMessage());
+    }
+
+    // Update existing loyalty_points records to have default values for new columns
+    try {
+        // Set approval_status to 'approved' for existing records that don't have it set
+        $conn->exec("UPDATE loyalty_points SET approval_status = 'approved' WHERE approval_status IS NULL");
+        
+        // Set source to 'manual' for existing records that don't have it set
+        $conn->exec("UPDATE loyalty_points SET source = 'manual' WHERE source IS NULL");
+        
+        // Set approved_at to created_at for existing approved records
+        $conn->exec("UPDATE loyalty_points SET approved_at = created_at WHERE approval_status = 'approved' AND approved_at IS NULL");
+        
+    } catch (PDOException $e) {
+        // Log error but don't stop execution
+        error_log("Error updating existing loyalty_points records: " . $e->getMessage());
+    }
 
     // Create membership_levels table
     $conn->exec("
@@ -5032,6 +5181,7 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+
     // Insert default membership levels
     $default_levels = [
         ['Basic', 'Basic membership level', 1.00, 0, '#6c757d', 1, 1],
@@ -5063,10 +5213,135 @@ try {
     foreach ($default_rewards as $reward) {
         $stmt->execute($reward);
     }
+
     
 } catch(PDOException $e) {
     // Store connection error for login page
     $GLOBALS['db_connected'] = false;
     $GLOBALS['db_error'] = $e->getMessage();
+}
+
+/**
+ * Get active payment methods including loyalty points and cash
+ */
+function getPaymentMethods($conn) {
+    try {
+        // Get payment methods from database
+        $stmt = $conn->query("
+            SELECT * FROM payment_types 
+            WHERE is_active = 1 
+            ORDER BY sort_order, display_name
+        ");
+        $payment_methods = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Add loyalty points as a payment method if not already present
+        $hasLoyaltyPoints = false;
+        foreach ($payment_methods as $method) {
+            if ($method['name'] === 'loyalty_points') {
+                $hasLoyaltyPoints = true;
+                break;
+            }
+        }
+        
+        if (!$hasLoyaltyPoints) {
+            $payment_methods[] = [
+                'id' => 999,
+                'name' => 'loyalty_points',
+                'display_name' => 'Loyalty Points',
+                'description' => 'Pay with loyalty points',
+                'category' => 'other',
+                'icon' => 'bi-gift',
+                'color' => '#ffc107',
+                'is_active' => 1,
+                'requires_reconciliation' => 0,
+                'sort_order' => 999
+            ];
+        }
+        
+        // Ensure cash is present
+        $hasCash = false;
+        foreach ($payment_methods as $method) {
+            if ($method['name'] === 'cash') {
+                $hasCash = true;
+                break;
+            }
+        }
+        
+        if (!$hasCash) {
+            array_unshift($payment_methods, [
+                'id' => 1,
+                'name' => 'cash',
+                'display_name' => 'Cash',
+                'description' => 'Cash payment',
+                'category' => 'cash',
+                'icon' => 'bi-cash',
+                'color' => '#28a745',
+                'is_active' => 1,
+                'requires_reconciliation' => 1,
+                'sort_order' => 1
+            ]);
+        }
+        
+        return $payment_methods;
+        
+    } catch (PDOException $e) {
+        error_log("Error getting payment methods: " . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Get payment method by name
+ */
+function getPaymentMethodByName($conn, $name) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT * FROM payment_types 
+            WHERE name = :name AND is_active = 1
+        ");
+        $stmt->execute([':name' => $name]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting payment method by name: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Add or update payment method
+ */
+function savePaymentMethod($conn, $data) {
+    try {
+        $stmt = $conn->prepare("
+            INSERT INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order)
+            VALUES (:name, :display_name, :description, :category, :icon, :color, :is_active, :requires_reconciliation, :sort_order)
+            ON DUPLICATE KEY UPDATE
+            display_name = VALUES(display_name),
+            description = VALUES(description),
+            category = VALUES(category),
+            icon = VALUES(icon),
+            color = VALUES(color),
+            is_active = VALUES(is_active),
+            requires_reconciliation = VALUES(requires_reconciliation),
+            sort_order = VALUES(sort_order),
+            updated_at = CURRENT_TIMESTAMP
+        ");
+        
+        return $stmt->execute([
+            ':name' => $data['name'],
+            ':display_name' => $data['display_name'],
+            ':description' => $data['description'] ?? '',
+            ':category' => $data['category'] ?? 'other',
+            ':icon' => $data['icon'] ?? 'bi-cash',
+            ':color' => $data['color'] ?? '#6c757d',
+            ':is_active' => $data['is_active'] ?? 1,
+            ':requires_reconciliation' => $data['requires_reconciliation'] ?? 1,
+            ':sort_order' => $data['sort_order'] ?? 0
+        ]);
+        
+    } catch (PDOException $e) {
+        error_log("Error saving payment method: " . $e->getMessage());
+        return false;
+    }
 }
 ?>

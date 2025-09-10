@@ -44,6 +44,74 @@ if (isset($_GET['success'])) {
     $success = urldecode($_GET['success']);
 }
 
+// Handle AJAX requests for pagination and search
+if (isset($_GET['ajax']) && $_GET['ajax'] == 'transactions') {
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $per_page = 20;
+    $search = $_GET['search'] ?? '';
+    $status_filter = $_GET['status'] ?? '';
+    $type_filter = $_GET['type'] ?? '';
+    $date_from = $_GET['date_from'] ?? '';
+    $date_to = $_GET['date_to'] ?? '';
+    
+    $where_conditions = [];
+    $params = [];
+    
+    if (!empty($search)) {
+        $where_conditions[] = "(CONCAT(c.first_name, ' ', c.last_name) LIKE :search OR c.phone LIKE :search OR lp.description LIKE :search)";
+        $params[':search'] = '%' . $search . '%';
+    }
+    
+    if (!empty($status_filter)) {
+        $where_conditions[] = "lp.approval_status = :status";
+        $params[':status'] = $status_filter;
+    }
+    
+    if (!empty($type_filter)) {
+        $where_conditions[] = "lp.transaction_type = :type";
+        $params[':type'] = $type_filter;
+    }
+    
+    if (!empty($date_from)) {
+        $where_conditions[] = "DATE(lp.created_at) >= :date_from";
+        $params[':date_from'] = $date_from;
+    }
+    
+    if (!empty($date_to)) {
+        $where_conditions[] = "DATE(lp.created_at) <= :date_to";
+        $params[':date_to'] = $date_to;
+    }
+    
+    $where_clause = !empty($where_conditions) ? 'WHERE ' . implode(' AND ', $where_conditions) : '';
+    
+    $offset = ($page - 1) * $per_page;
+    
+    $sql = "
+        SELECT 
+            lp.*,
+            CONCAT(c.first_name, ' ', c.last_name) as customer_name,
+            c.phone,
+            u.username as approved_by_username
+        FROM loyalty_points lp
+        JOIN customers c ON lp.customer_id = c.id
+        LEFT JOIN users u ON lp.approved_by = u.id
+        $where_clause
+        ORDER BY lp.created_at DESC
+        LIMIT $offset, $per_page
+    ";
+    
+    $stmt = $conn->prepare($sql);
+    foreach ($params as $key => $value) {
+        $stmt->bindValue($key, $value);
+    }
+    $stmt->execute();
+    $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    header('Content-Type: application/json');
+    echo json_encode(['transactions' => $transactions, 'page' => $page]);
+    exit();
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
@@ -52,12 +120,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $customer_id = $_POST['customer_id'];
                     $points = $_POST['points'];
                     $description = $_POST['description'];
+                    $source = $_POST['source'] ?? 'manual';
                     
                     // Get customer's current balance
                     $stmt = $conn->prepare("
                         SELECT COALESCE(SUM(points_earned - points_redeemed), 0) as current_balance 
                         FROM loyalty_points 
-                        WHERE customer_id = ?
+                        WHERE customer_id = ? AND approval_status = 'approved'
                     ");
                     $stmt->execute([$customer_id]);
                     $current_balance = $stmt->fetch(PDO::FETCH_ASSOC)['current_balance'];
@@ -73,15 +142,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         }
                     }
                     
+                    // Determine approval status based on source
+                    $approval_status = ($source === 'manual') ? 'pending' : 'approved';
+                    $approved_by = ($source === 'manual') ? null : $user_id;
+                    $approved_at = ($source === 'manual') ? null : date('Y-m-d H:i:s');
+                    
                     // Add points
                     $stmt = $conn->prepare("
-                        INSERT INTO loyalty_points (customer_id, points_earned, points_balance, transaction_type, description)
-                        VALUES (?, ?, ?, 'earned', ?)
+                        INSERT INTO loyalty_points (customer_id, points_earned, points_balance, transaction_type, description, source, approval_status, approved_by, approved_at)
+                        VALUES (?, ?, ?, 'earned', ?, ?, ?, ?, ?)
                     ");
                     $new_balance = $current_balance + $points;
-                    $stmt->execute([$customer_id, $points, $new_balance, $description]);
+                    $stmt->execute([$customer_id, $points, $new_balance, $description, $source, $approval_status, $approved_by, $approved_at]);
                     
-                    $success = "Added {$points} points to customer!";
+                    $success = "Added {$points} points to customer! " . ($approval_status === 'pending' ? 'Awaiting approval.' : '');
                     // Redirect to prevent form resubmission
                     header("Location: " . $_SERVER['PHP_SELF'] . "?success=" . urlencode($success));
                     exit();
@@ -126,28 +200,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
                 break;
                 
-            case 'add_reward':
-                try {
-                    $reward_name = $_POST['reward_name'];
-                    $reward_description = $_POST['reward_description'];
-                    $points_required = $_POST['points_required'];
-                    $discount_type = $_POST['discount_type'];
-                    $discount_value = $_POST['discount_value'];
-                    
-                    $stmt = $conn->prepare("
-                        INSERT INTO loyalty_rewards (reward_name, reward_description, points_required, discount_type, discount_value)
-                        VALUES (?, ?, ?, ?, ?)
-                    ");
-                    $stmt->execute([$reward_name, $reward_description, $points_required, $discount_type, $discount_value]);
-                    
-                    $success = 'Reward added successfully!';
-                    // Redirect to prevent form resubmission
-                    header("Location: " . $_SERVER['PHP_SELF'] . "?success=" . urlencode($success));
-                    exit();
-                } catch (Exception $e) {
-                    $error = 'Error adding reward: ' . $e->getMessage();
-                }
-                break;
                 
             case 'update_settings':
                 try {
@@ -175,19 +227,142 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
                 break;
                 
-            case 'delete_reward':
+            case 'add_custom_points':
                 try {
-                    $reward_id = $_POST['reward_id'];
-                    $stmt = $conn->prepare("DELETE FROM loyalty_rewards WHERE id = ?");
-                    $stmt->execute([$reward_id]);
-                    $success = 'Reward deleted successfully!';
+                    $customer_id = $_POST['customer_id'];
+                    $points = $_POST['points'];
+                    $description = $_POST['description'];
+                    $points_type = $_POST['points_type']; // 'welcome', 'bonus', 'adjustment'
+                    
+                    // Validate customer exists
+                    $customer = getCustomerById($conn, $customer_id);
+                    if (!$customer) {
+                        throw new Exception('Customer not found');
+                    }
+                    
+                    // Generate transaction reference
+                    $transactionRef = strtoupper($points_type) . '_' . date('YmdHis') . '_' . $customer_id;
+                    
+                    // Add custom points
+                    $success = addLoyaltyPoints(
+                        $conn, 
+                        $customer_id, 
+                        $points, 
+                        $description ?: ucfirst($points_type) . " points by " . ($_SESSION['username'] ?? 'Admin'),
+                        $transactionRef
+                    );
+                    
+                    if ($success) {
+                        $success_message = "Added {$points} {$points_type} points to customer!";
+                        // Redirect to prevent form resubmission
+                        header("Location: " . $_SERVER['PHP_SELF'] . "?success=" . urlencode($success_message));
+                        exit();
+                    } else {
+                        throw new Exception('Failed to add points');
+                    }
+                } catch (Exception $e) {
+                    $error = 'Error adding custom points: ' . $e->getMessage();
+                }
+                break;
+                
+            case 'update_welcome_points':
+                try {
+                    $welcome_points = (int)$_POST['welcome_points'];
+                    
+                    if ($welcome_points < 0) {
+                        throw new Exception('Welcome points cannot be negative');
+                    }
+                    
+                    // Update welcome points setting
+                    $stmt = $conn->prepare("
+                        INSERT INTO settings (setting_key, setting_value) 
+                        VALUES ('welcome_points', ?) 
+                        ON DUPLICATE KEY UPDATE setting_value = ?
+                    ");
+                    $stmt->execute([$welcome_points, $welcome_points]);
+                    
+                    $success = "Welcome points updated to {$welcome_points}!";
                     // Redirect to prevent form resubmission
                     header("Location: " . $_SERVER['PHP_SELF'] . "?success=" . urlencode($success));
                     exit();
                 } catch (Exception $e) {
-                    $error = 'Error deleting reward: ' . $e->getMessage();
+                    $error = 'Error updating welcome points: ' . $e->getMessage();
                 }
                 break;
+                
+            case 'toggle_loyalty_program':
+                try {
+                    $enable = isset($_POST['enable_loyalty']) ? 1 : 0;
+                    
+                    // Update loyalty program setting
+                    $stmt = $conn->prepare("
+                        INSERT INTO settings (setting_key, setting_value) 
+                        VALUES ('loyalty_program_enabled', ?) 
+                        ON DUPLICATE KEY UPDATE setting_value = ?
+                    ");
+                    $stmt->execute([$enable, $enable]);
+                    
+                    $status = $enable ? 'enabled' : 'disabled';
+                    $success = "Loyalty program {$status} successfully!";
+                    // Redirect to prevent form resubmission
+                    header("Location: " . $_SERVER['PHP_SELF'] . "?success=" . urlencode($success));
+                    exit();
+                } catch (Exception $e) {
+                    $error = 'Error toggling loyalty program: ' . $e->getMessage();
+                }
+                break;
+                
+            case 'approve_points':
+                try {
+                    $transaction_id = $_POST['transaction_id'];
+                    
+                    // Update transaction status
+                    $stmt = $conn->prepare("
+                        UPDATE loyalty_points 
+                        SET approval_status = 'approved', approved_by = ?, approved_at = NOW()
+                        WHERE id = ? AND approval_status = 'pending'
+                    ");
+                    $stmt->execute([$user_id, $transaction_id]);
+                    
+                    if ($stmt->rowCount() > 0) {
+                        $success = "Points transaction approved successfully!";
+                    } else {
+                        $error = "Transaction not found or already processed.";
+                    }
+                    // Redirect to prevent form resubmission
+                    header("Location: " . $_SERVER['PHP_SELF'] . "?success=" . urlencode($success));
+                    exit();
+                } catch (Exception $e) {
+                    $error = 'Error approving points: ' . $e->getMessage();
+                }
+                break;
+                
+            case 'reject_points':
+                try {
+                    $transaction_id = $_POST['transaction_id'];
+                    $rejection_reason = $_POST['rejection_reason'] ?? 'No reason provided';
+                    
+                    // Update transaction status
+                    $stmt = $conn->prepare("
+                        UPDATE loyalty_points 
+                        SET approval_status = 'rejected', approved_by = ?, approved_at = NOW(), rejection_reason = ?
+                        WHERE id = ? AND approval_status = 'pending'
+                    ");
+                    $stmt->execute([$user_id, $rejection_reason, $transaction_id]);
+                    
+                    if ($stmt->rowCount() > 0) {
+                        $success = "Points transaction rejected successfully!";
+                    } else {
+                        $error = "Transaction not found or already processed.";
+                    }
+                    // Redirect to prevent form resubmission
+                    header("Location: " . $_SERVER['PHP_SELF'] . "?success=" . urlencode($success));
+                    exit();
+                } catch (Exception $e) {
+                    $error = 'Error rejecting points: ' . $e->getMessage();
+                }
+                break;
+                
         }
     }
 }
@@ -206,6 +381,12 @@ $loyalty_settings = [
         'type' => 'boolean',
         'value' => $settings['loyalty_program_enabled'] ?? '1',
         'description' => 'Turn the loyalty points system on or off'
+    ],
+    'welcome_points' => [
+        'label' => 'Welcome Points',
+        'type' => 'number',
+        'value' => $settings['welcome_points'] ?? '100',
+        'description' => 'Points awarded to new customers upon registration'
     ],
     'enable_spending_points' => [
         'label' => 'Enable Spending-Based Points',
@@ -432,21 +613,18 @@ $stmt = $conn->query("
     SELECT 
         lp.*,
         CONCAT(c.first_name, ' ', c.last_name) as customer_name,
-        c.phone
+        c.phone,
+        u.username as approved_by_username
     FROM loyalty_points lp
     JOIN customers c ON lp.customer_id = c.id
+    LEFT JOIN users u ON lp.approved_by = u.id
     ORDER BY lp.created_at DESC
     LIMIT 20
 ");
 $recent_transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get available rewards
-$stmt = $conn->query("
-    SELECT * FROM loyalty_rewards 
-    WHERE is_active = 1 
-    ORDER BY points_required ASC
-");
-$rewards = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// Welcome points reward (simplified system)
+$welcomePoints = $settings['welcome_points'] ?? '100';
 
 // Get customers for dropdown
 $stmt = $conn->query("
@@ -471,42 +649,315 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .main-content {
             margin-left: 250px;
             min-height: 100vh;
-            background-color: #f8fafc;
-            padding: 20px;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            padding: 30px;
         }
         
+        /* Enhanced Card Styling */
         .points-card {
-            transition: transform 0.2s;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 20px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            position: relative;
+            overflow: hidden;
         }
+        
+        .points-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, transparent 50%);
+            pointer-events: none;
+        }
+        
         .points-card:hover {
-            transform: translateY(-2px);
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 20px 40px rgba(102, 126, 234, 0.4);
         }
+        
         .points-value {
-            font-size: 2rem;
-            font-weight: bold;
+            font-size: 2.5rem;
+            font-weight: 700;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 0.5rem;
         }
+        
+        /* Quick Actions Styling */
+        .quick-actions-card {
+            background: white;
+            border-radius: 20px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+        }
+        
+        .action-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 15px;
+            padding: 1rem 1.5rem;
+            color: white;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .action-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+        
+        .action-btn:hover::before {
+            left: 100%;
+        }
+        
+        .action-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+        
+        .action-btn.btn-warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            box-shadow: 0 4px 15px rgba(240, 147, 251, 0.3);
+        }
+        
+        .action-btn.btn-warning:hover {
+            box-shadow: 0 8px 25px rgba(240, 147, 251, 0.4);
+        }
+        
+        .action-btn.btn-danger {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+        }
+        
+        .action-btn.btn-danger:hover {
+            box-shadow: 0 8px 25px rgba(255, 107, 107, 0.4);
+        }
+        
+        .action-btn.btn-success {
+            background: linear-gradient(135deg, #4ecdc4 0%, #44a08d 100%);
+            box-shadow: 0 4px 15px rgba(78, 205, 196, 0.3);
+        }
+        
+        .action-btn.btn-success:hover {
+            box-shadow: 0 8px 25px rgba(78, 205, 196, 0.4);
+        }
+        
+        .action-btn.btn-info {
+            background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%);
+            box-shadow: 0 4px 15px rgba(116, 185, 255, 0.3);
+        }
+        
+        .action-btn.btn-info:hover {
+            box-shadow: 0 8px 25px rgba(116, 185, 255, 0.4);
+        }
+        
+        /* Card Enhancements */
+        .card {
+            border-radius: 20px;
+            border: none;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            padding: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .card-body {
+            padding: 2rem;
+        }
+        
+        /* Welcome Points Card */
+        .welcome-points-card {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
+            border-radius: 20px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 10px 30px rgba(255, 234, 167, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .welcome-points-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(255, 234, 167, 0.4);
+        }
+        
+        /* Transaction Cards */
         .customer-card {
             border-left: 4px solid #20c997;
+            background: linear-gradient(135deg, #d1f2eb 0%, #a7f3d0 100%);
         }
+        
         .transaction-earned {
             border-left: 4px solid #28a745;
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
         }
+        
         .transaction-redeemed {
             border-left: 4px solid #dc3545;
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
         }
-        .reward-card {
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 1rem;
-            margin-bottom: 1rem;
+        
+        /* Modal Enhancements */
+        .modal-content {
+            border-radius: 20px;
+            border: none;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 20px 20px 0 0;
+            padding: 1.5rem;
+        }
+        
+        .modal-body {
+            padding: 2rem;
+        }
+        
+        /* Form Enhancements */
+        .form-control {
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+            padding: 0.75rem 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+        
+        .form-select {
+            border-radius: 12px;
+            border: 2px solid #e2e8f0;
+            padding: 0.75rem 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .form-select:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+        
+        /* Button Enhancements */
+        .btn {
+            border-radius: 12px;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+        
+        /* Statistics Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
         }
         
         /* Responsive Design */
         @media (max-width: 768px) {
             .main-content {
                 margin-left: 0;
-                padding: 10px;
+                padding: 15px;
             }
+            
+            .points-card {
+                padding: 1.5rem;
+            }
+            
+            .points-value {
+                font-size: 2rem;
+            }
+            
+            .action-btn {
+                padding: 0.75rem 1rem;
+                font-size: 0.9rem;
+            }
+        }
+        
+        /* Animation Keyframes */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .fade-in-up {
+            animation: fadeInUp 0.6s ease-out;
+        }
+        
+        /* Loading States */
+        .btn.loading {
+            position: relative;
+            color: transparent;
+        }
+        
+        .btn.loading::after {
+            content: '';
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            top: 50%;
+            left: 50%;
+            margin-left: -8px;
+            margin-top: -8px;
+            border: 2px solid transparent;
+            border-top-color: #ffffff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -521,7 +972,7 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <div>
                         <h2><i class="bi bi-star-fill text-warning"></i> Loyalty Points System</h2>
-                        <p class="text-muted">Customer loyalty program and points management</p>
+                        <p class="text-muted">Simple loyalty program with welcome points and purchase-based earning</p>
                     </div>
                     <a href="salesdashboard.php" class="btn btn-outline-secondary">
                         <i class="bi bi-arrow-left"></i> Back to Dashboard
@@ -762,35 +1213,51 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     </div>
                 </div>
 
-                <!-- Action Buttons -->
+                <!-- Quick Actions -->
                 <div class="row mb-4">
                     <div class="col-md-12">
-                        <div class="card">
-                            <div class="card-header">
-                                <h5 class="mb-0"><i class="bi bi-gear"></i> Quick Actions</h5>
+                        <div class="quick-actions-card fade-in-up">
+                            <div class="d-flex align-items-center mb-4">
+                                <div class="me-3">
+                                    <div class="bg-primary rounded-circle p-3 d-inline-flex align-items-center justify-content-center">
+                                        <i class="bi bi-lightning-charge text-white fs-4"></i>
+                                    </div>
+                                </div>
+                                <div>
+                                    <h4 class="mb-1 fw-bold">Quick Actions</h4>
+                                    <p class="text-muted mb-0">Manage loyalty points and program settings</p>
+                                </div>
                             </div>
-                            <div class="card-body">
-                                <div class="row">
-                                    <div class="col-md-3">
-                                        <button class="btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#addPointsModal">
-                                            <i class="bi bi-plus-circle"></i> Add Points
-                                        </button>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <button class="btn btn-warning w-100" data-bs-toggle="modal" data-bs-target="#redeemPointsModal">
-                                            <i class="bi bi-dash-circle"></i> Redeem Points
-                                        </button>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <button class="btn btn-success w-100" data-bs-toggle="modal" data-bs-target="#addRewardModal">
-                                            <i class="bi bi-gift"></i> Add Reward
-                                        </button>
-                                    </div>
-                                    <div class="col-md-3">
-                                        <button class="btn btn-info w-100" data-bs-toggle="modal" data-bs-target="#settingsModal">
-                                            <i class="bi bi-gear"></i> Settings
-                                        </button>
-                                    </div>
+                            <div class="row g-3">
+                                <div class="col-md-4 col-lg-2">
+                                    <button class="btn action-btn btn-success w-100" data-bs-toggle="modal" data-bs-target="#addPointsModal">
+                                        <i class="bi bi-plus-circle me-2"></i> Add Points
+                                    </button>
+                                </div>
+                                <div class="col-md-4 col-lg-2">
+                                    <button class="btn action-btn btn-warning w-100" data-bs-toggle="modal" data-bs-target="#redeemPointsModal">
+                                        <i class="bi bi-dash-circle me-2"></i> Redeem Points
+                                    </button>
+                                </div>
+                                <div class="col-md-4 col-lg-2">
+                                    <button class="btn action-btn btn-info w-100" data-bs-toggle="modal" data-bs-target="#settingsModal">
+                                        <i class="bi bi-gear me-2"></i> Settings
+                                    </button>
+                                </div>
+                                <div class="col-md-4 col-lg-2">
+                                    <button class="btn action-btn btn-primary w-100" data-bs-toggle="modal" data-bs-target="#customPointsModal">
+                                        <i class="bi bi-plus-circle me-2"></i> Custom Points
+                                    </button>
+                                </div>
+                                <div class="col-md-4 col-lg-2">
+                                    <button class="btn action-btn btn-warning w-100" data-bs-toggle="modal" data-bs-target="#welcomePointsModal">
+                                        <i class="bi bi-star me-2"></i> Welcome Points
+                                    </button>
+                                </div>
+                                <div class="col-md-4 col-lg-2">
+                                    <button class="btn action-btn btn-<?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'danger' : 'success'; ?> w-100" data-bs-toggle="modal" data-bs-target="#toggleLoyaltyModal">
+                                        <i class="bi bi-power me-2"></i> <?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'Disable' : 'Enable'; ?>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -833,54 +1300,41 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                     </div>
 
-                    <!-- Available Rewards -->
+                    <!-- Welcome Points System -->
                     <div class="col-md-6">
                         <div class="card">
                             <div class="card-header">
-                                <h5 class="mb-0"><i class="bi bi-gift"></i> Available Rewards</h5>
+                                <h5 class="mb-0"><i class="bi bi-star-fill"></i> Welcome Points System</h5>
                             </div>
                             <div class="card-body">
-                                <?php if (empty($rewards)): ?>
-                                <div class="text-center py-3">
-                                    <i class="bi bi-gift text-muted fs-1 mb-3"></i>
-                                    <p class="text-muted">No rewards available</p>
-                                </div>
-                                <?php else: ?>
-                                <?php foreach ($rewards as $reward): ?>
-                                <div class="reward-card">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div class="flex-grow-1">
-                                            <h6 class="mb-1"><?php echo htmlspecialchars($reward['reward_name']); ?></h6>
-                                            <p class="text-muted mb-1"><?php echo htmlspecialchars($reward['reward_description']); ?></p>
-                                            <small class="text-info">
-                                                <?php 
-                                                if ($reward['discount_type'] == 'percentage') {
-                                                    echo $reward['discount_value'] . '% discount';
-                                                } elseif ($reward['discount_type'] == 'fixed_amount') {
-                                                    echo 'KES ' . number_format($reward['discount_value'], 2) . ' off';
-                                                } else {
-                                                    echo 'Free item';
-                                                }
-                                                ?>
-                                            </small>
-                                        </div>
-                                        <div class="text-end">
-                                            <div class="points-value text-warning"><?php echo number_format($reward['points_required']); ?></div>
-                                            <small class="text-muted">points</small>
-                                            <div class="mt-2">
-                                                <form method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this reward?')">
-                                                    <input type="hidden" name="action" value="delete_reward">
-                                                    <input type="hidden" name="reward_id" value="<?php echo $reward['id']; ?>">
-                                                    <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                        <i class="bi bi-trash"></i>
-                                                    </button>
-                                                </form>
+                                <div class="text-center py-4">
+                                    <i class="bi bi-gift text-primary fs-1 mb-3"></i>
+                                    <h5 class="text-primary">Welcome Points Reward</h5>
+                                    <p class="text-muted mb-3">New customers automatically receive welcome points upon registration</p>
+                                    
+                                    <div class="alert alert-info">
+                                        <div class="d-flex align-items-center">
+                                            <i class="bi bi-info-circle me-2"></i>
+                                            <div class="flex-grow-1">
+                                                <strong>Welcome Points:</strong> <?php echo number_format($welcomePoints); ?> points
+                                                <br>
+                                                <small class="text-muted">Awarded automatically to new customers</small>
+                                            </div>
+                                            <div>
+                                                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#welcomePointsModal">
+                                                    <i class="bi bi-pencil"></i> Edit
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
+                                    
+                                    <div class="mt-3">
+                                        <small class="text-muted">
+                                            <i class="bi bi-lightbulb me-1"></i>
+                                            This simple system focuses on earning points through purchases and redeeming them for discounts.
+                                        </small>
+                                    </div>
                                 </div>
-                                <?php endforeach; ?>
-                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
@@ -891,21 +1345,78 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="col-md-12">
                         <div class="card">
                             <div class="card-header">
-                                <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Point Transactions</h5>
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h5 class="mb-0"><i class="bi bi-clock-history"></i> Recent Point Transactions</h5>
+                                    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#transactionFilters" aria-expanded="false">
+                                        <i class="bi bi-funnel"></i> Filters
+                                    </button>
+                                </div>
                             </div>
                             <div class="card-body">
-                                <div class="table-responsive">
+                                <!-- Transaction Filters -->
+                                <div class="collapse mb-3" id="transactionFilters">
+                                    <div class="card card-body">
+                                        <div class="row g-3">
+                                            <div class="col-md-3">
+                                                <label class="form-label">Search</label>
+                                                <input type="text" class="form-control" id="transactionSearch" placeholder="Customer, phone, description...">
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">Status</label>
+                                                <select class="form-select" id="statusFilter">
+                                                    <option value="">All Status</option>
+                                                    <option value="pending">Pending</option>
+                                                    <option value="approved">Approved</option>
+                                                    <option value="rejected">Rejected</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">Type</label>
+                                                <select class="form-select" id="typeFilter">
+                                                    <option value="">All Types</option>
+                                                    <option value="earned">Earned</option>
+                                                    <option value="redeemed">Redeemed</option>
+                                                    <option value="adjusted">Adjusted</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">From Date</label>
+                                                <input type="date" class="form-control" id="dateFrom">
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label">To Date</label>
+                                                <input type="date" class="form-control" id="dateTo">
+                                            </div>
+                                            <div class="col-md-1">
+                                                <label class="form-label">&nbsp;</label>
+                                                <div class="d-flex gap-1">
+                                                    <button type="button" class="btn btn-primary btn-sm" onclick="loadTransactions()">
+                                                        <i class="bi bi-search"></i>
+                                                    </button>
+                                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearFilters()">
+                                                        <i class="bi bi-x"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
                                     <table class="table table-sm">
-                                        <thead>
+                                        <thead class="sticky-top bg-light">
                                             <tr>
                                                 <th>Customer</th>
                                                 <th>Type</th>
                                                 <th>Points</th>
                                                 <th>Description</th>
+                                                <th>Status</th>
+                                                <th>Source</th>
                                                 <th>Date</th>
+                                                <th>Actions</th>
                                             </tr>
                                         </thead>
-                                        <tbody>
+                                        <tbody id="transactionsTableBody">
                                             <?php foreach ($recent_transactions as $transaction): ?>
                                             <tr class="<?php echo $transaction['transaction_type'] == 'earned' ? 'transaction-earned' : 'transaction-redeemed'; ?>">
                                                 <td>
@@ -923,11 +1434,66 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                                     </strong>
                                                 </td>
                                                 <td><?php echo htmlspecialchars($transaction['description']); ?></td>
+                                                <td>
+                                                    <?php
+                                                    $status_class = '';
+                                                    $status_text = '';
+                                                    switch($transaction['approval_status']) {
+                                                        case 'pending':
+                                                            $status_class = 'warning';
+                                                            $status_text = 'Pending';
+                                                            break;
+                                                        case 'approved':
+                                                            $status_class = 'success';
+                                                            $status_text = 'Approved';
+                                                            break;
+                                                        case 'rejected':
+                                                            $status_class = 'danger';
+                                                            $status_text = 'Rejected';
+                                                            break;
+                                                    }
+                                                    ?>
+                                                    <span class="badge bg-<?php echo $status_class; ?>">
+                                                        <?php echo $status_text; ?>
+                                                    </span>
+                                                    <?php if ($transaction['approved_by_username']): ?>
+                                                    <br><small class="text-muted">by <?php echo htmlspecialchars($transaction['approved_by_username']); ?></small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <span class="badge bg-info"><?php echo ucfirst($transaction['source'] ?? 'manual'); ?></span>
+                                                </td>
                                                 <td><?php echo date('M j, Y g:i A', strtotime($transaction['created_at'])); ?></td>
+                                                <td>
+                                                    <?php if ($transaction['approval_status'] == 'pending'): ?>
+                                                    <div class="btn-group btn-group-sm">
+                                                        <button class="btn btn-success btn-sm" onclick="approveTransaction(<?php echo $transaction['id']; ?>)" title="Approve">
+                                                            <i class="bi bi-check"></i>
+                                                        </button>
+                                                        <button class="btn btn-danger btn-sm" onclick="rejectTransaction(<?php echo $transaction['id']; ?>)" title="Reject">
+                                                            <i class="bi bi-x"></i>
+                                                        </button>
+                                                    </div>
+                                                    <?php else: ?>
+                                                    <span class="text-muted">-</span>
+                                                    <?php endif; ?>
+                                                </td>
                                             </tr>
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
+                                </div>
+                                
+                                <div id="loadingIndicator" class="text-center py-3" style="display: none;">
+                                    <div class="spinner-border text-primary" role="status">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                </div>
+                                
+                                <div id="loadMoreContainer" class="text-center mt-3">
+                                    <button class="btn btn-outline-primary" onclick="loadMoreTransactions()" id="loadMoreBtn">
+                                        <i class="bi bi-arrow-down"></i> Load More
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -968,6 +1534,16 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <div class="mb-3">
                             <label for="description" class="form-label">Description</label>
                             <input type="text" class="form-control" name="description" placeholder="e.g., Welcome bonus, Purchase reward">
+                        </div>
+                        <div class="mb-3">
+                            <label for="source" class="form-label">Source</label>
+                            <select class="form-select" name="source" required>
+                                <option value="manual">Manual Entry</option>
+                                <option value="welcome">Welcome Bonus</option>
+                                <option value="bonus">Special Bonus</option>
+                                <option value="adjustment">Adjustment</option>
+                            </select>
+                            <div class="form-text">Manual entries require approval, others are auto-approved</div>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -1019,50 +1595,6 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
     </div>
 
-    <!-- Add Reward Modal -->
-    <div class="modal fade" id="addRewardModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <form method="POST">
-                    <input type="hidden" name="action" value="add_reward">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Add New Reward</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label for="reward_name" class="form-label">Reward Name</label>
-                            <input type="text" class="form-control" name="reward_name" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="reward_description" class="form-label">Description</label>
-                            <textarea class="form-control" name="reward_description" rows="3"></textarea>
-                        </div>
-                        <div class="mb-3">
-                            <label for="points_required" class="form-label">Points Required</label>
-                            <input type="number" class="form-control" name="points_required" min="1" required>
-                        </div>
-                        <div class="mb-3">
-                            <label for="discount_type" class="form-label">Discount Type</label>
-                            <select class="form-select" name="discount_type" required>
-                                <option value="percentage">Percentage</option>
-                                <option value="fixed_amount">Fixed Amount</option>
-                                <option value="free_item">Free Item</option>
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label for="discount_value" class="form-label">Discount Value</label>
-                            <input type="number" class="form-control" name="discount_value" step="0.01" required>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-success">Add Reward</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
 
     <!-- Settings Modal -->
     <div class="modal fade" id="settingsModal" tabindex="-1">
@@ -1128,6 +1660,183 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Transaction management variables
+        let currentPage = 1;
+        let isLoading = false;
+        let hasMoreData = true;
+        
+        // Load transactions with filters
+        function loadTransactions(reset = true) {
+            if (isLoading) return;
+            
+            if (reset) {
+                currentPage = 1;
+                hasMoreData = true;
+                document.getElementById('transactionsTableBody').innerHTML = '';
+            }
+            
+            isLoading = true;
+            document.getElementById('loadingIndicator').style.display = 'block';
+            
+            const params = new URLSearchParams({
+                ajax: 'transactions',
+                page: currentPage,
+                search: document.getElementById('transactionSearch').value,
+                status: document.getElementById('statusFilter').value,
+                type: document.getElementById('typeFilter').value,
+                date_from: document.getElementById('dateFrom').value,
+                date_to: document.getElementById('dateTo').value
+            });
+            
+            fetch('?' + params.toString())
+                .then(response => response.json())
+                .then(data => {
+                    if (data.transactions.length === 0) {
+                        hasMoreData = false;
+                        if (currentPage === 1) {
+                            document.getElementById('transactionsTableBody').innerHTML = 
+                                '<tr><td colspan="8" class="text-center text-muted">No transactions found</td></tr>';
+                        }
+                    } else {
+                        appendTransactions(data.transactions);
+                        if (data.transactions.length < 20) {
+                            hasMoreData = false;
+                        }
+                    }
+                    currentPage++;
+                    isLoading = false;
+                    document.getElementById('loadingIndicator').style.display = 'none';
+                    document.getElementById('loadMoreBtn').style.display = hasMoreData ? 'block' : 'none';
+                })
+                .catch(error => {
+                    console.error('Error loading transactions:', error);
+                    isLoading = false;
+                    document.getElementById('loadingIndicator').style.display = 'none';
+                });
+        }
+        
+        // Append transactions to table
+        function appendTransactions(transactions) {
+            const tbody = document.getElementById('transactionsTableBody');
+            
+            transactions.forEach(transaction => {
+                const row = document.createElement('tr');
+                row.className = transaction.transaction_type === 'earned' ? 'transaction-earned' : 'transaction-redeemed';
+                
+                const statusClass = transaction.approval_status === 'pending' ? 'warning' : 
+                                  transaction.approval_status === 'approved' ? 'success' : 'danger';
+                const statusText = transaction.approval_status === 'pending' ? 'Pending' :
+                                 transaction.approval_status === 'approved' ? 'Approved' : 'Rejected';
+                
+                const points = parseInt(transaction.points_earned) + parseInt(transaction.points_redeemed);
+                const pointsText = transaction.transaction_type === 'earned' ? '+' + points : '-' + points;
+                const pointsClass = transaction.transaction_type === 'earned' ? 'success' : 'danger';
+                
+                const actionButtons = transaction.approval_status === 'pending' ? 
+                    `<div class="btn-group btn-group-sm">
+                        <button class="btn btn-success btn-sm" onclick="approveTransaction(${transaction.id})" title="Approve">
+                            <i class="bi bi-check"></i>
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="rejectTransaction(${transaction.id})" title="Reject">
+                            <i class="bi bi-x"></i>
+                        </button>
+                    </div>` : '<span class="text-muted">-</span>';
+                
+                row.innerHTML = `
+                    <td>
+                        <strong>${transaction.customer_name}</strong><br>
+                        <small class="text-muted">${transaction.phone}</small>
+                    </td>
+                    <td>
+                        <span class="badge bg-${transaction.transaction_type === 'earned' ? 'success' : 'danger'}">
+                            ${transaction.transaction_type.charAt(0).toUpperCase() + transaction.transaction_type.slice(1)}
+                        </span>
+                    </td>
+                    <td>
+                        <strong class="text-${pointsClass}">${pointsText}</strong>
+                    </td>
+                    <td>${transaction.description || ''}</td>
+                    <td>
+                        <span class="badge bg-${statusClass}">${statusText}</span>
+                        ${transaction.approved_by_username ? `<br><small class="text-muted">by ${transaction.approved_by_username}</small>` : ''}
+                    </td>
+                    <td>
+                        <span class="badge bg-info">${(transaction.source || 'manual').charAt(0).toUpperCase() + (transaction.source || 'manual').slice(1)}</span>
+                    </td>
+                    <td>${new Date(transaction.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</td>
+                    <td>${actionButtons}</td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+        }
+        
+        // Load more transactions
+        function loadMoreTransactions() {
+            if (!isLoading && hasMoreData) {
+                loadTransactions(false);
+            }
+        }
+        
+        // Clear filters
+        function clearFilters() {
+            document.getElementById('transactionSearch').value = '';
+            document.getElementById('statusFilter').value = '';
+            document.getElementById('typeFilter').value = '';
+            document.getElementById('dateFrom').value = '';
+            document.getElementById('dateTo').value = '';
+            loadTransactions();
+        }
+        
+        // Approve transaction
+        function approveTransaction(transactionId) {
+            if (confirm('Are you sure you want to approve this transaction?')) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.innerHTML = `
+                    <input type="hidden" name="action" value="approve_points">
+                    <input type="hidden" name="transaction_id" value="${transactionId}">
+                `;
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
+        
+        // Reject transaction
+        function rejectTransaction(transactionId) {
+            const reason = prompt('Please provide a reason for rejection:');
+            if (reason !== null) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.innerHTML = `
+                    <input type="hidden" name="action" value="reject_points">
+                    <input type="hidden" name="transaction_id" value="${transactionId}">
+                    <input type="hidden" name="rejection_reason" value="${reason}">
+                `;
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
+        
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add event listeners for filter changes
+            document.getElementById('transactionSearch').addEventListener('keyup', function(e) {
+                if (e.key === 'Enter') {
+                    loadTransactions();
+                }
+            });
+            
+            // Auto-load more when scrolling near bottom
+            const tableContainer = document.querySelector('.table-responsive');
+            tableContainer.addEventListener('scroll', function() {
+                if (this.scrollTop + this.clientHeight >= this.scrollHeight - 100) {
+                    loadMoreTransactions();
+                }
+            });
+        });
+    </script>
     <script>
         // Show/hide fields based on enable checkboxes
         document.addEventListener('DOMContentLoaded', function() {
@@ -1354,5 +2063,143 @@ $customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
             document.getElementById('demoResult').style.display = 'block';
         }
     </script>
+
+    <!-- Custom Points Modal -->
+    <div class="modal fade" id="customPointsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="POST">
+                    <input type="hidden" name="action" value="add_custom_points">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-plus-circle"></i> Add Custom Points</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="customer_id" class="form-label">Customer *</label>
+                            <select class="form-select" name="customer_id" id="customer_id" required>
+                                <option value="">Select a customer</option>
+                                <?php foreach ($customers as $customer): ?>
+                                <option value="<?php echo $customer['id']; ?>">
+                                    <?php echo htmlspecialchars($customer['name']); ?> 
+                                    (<?php echo htmlspecialchars($customer['phone']); ?>)
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="points_type" class="form-label">Points Type *</label>
+                            <select class="form-select" name="points_type" id="points_type" required>
+                                <option value="welcome">Welcome Points</option>
+                                <option value="bonus">Bonus Points</option>
+                                <option value="adjustment">Adjustment</option>
+                                <option value="promotion">Promotion</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="points" class="form-label">Points Amount *</label>
+                            <input type="number" class="form-control" name="points" id="points" min="1" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="description" class="form-label">Description</label>
+                            <textarea class="form-control" name="description" id="description" rows="3" placeholder="e.g., Welcome bonus, Special promotion, Manual adjustment"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Add Points</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Welcome Points Modal -->
+    <div class="modal fade" id="welcomePointsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="POST">
+                    <input type="hidden" name="action" value="update_welcome_points">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-star"></i> Edit Welcome Points</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Welcome Points</strong> are automatically awarded to new customers when they register.
+                        </div>
+                        <div class="mb-3">
+                            <label for="welcome_points" class="form-label">Welcome Points Amount *</label>
+                            <input type="number" class="form-control" name="welcome_points" id="welcome_points" 
+                                   value="<?php echo $welcomePoints; ?>" min="0" required>
+                            <div class="form-text">Points awarded to new customers upon registration</div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-warning">Update Welcome Points</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toggle Loyalty Program Modal -->
+    <div class="modal fade" id="toggleLoyaltyModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="POST">
+                    <input type="hidden" name="action" value="toggle_loyalty_program">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="bi bi-power"></i> 
+                            <?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'Disable' : 'Enable'; ?> Loyalty Program
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-<?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'warning' : 'info'; ?>">
+                            <i class="bi bi-<?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'exclamation-triangle' : 'info-circle'; ?> me-2"></i>
+                            <strong>Current Status:</strong> 
+                            <?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'Enabled' : 'Disabled'; ?>
+                        </div>
+                        
+                        <?php if (($settings['loyalty_program_enabled'] ?? '1') == '1'): ?>
+                        <p>Disabling the loyalty program will:</p>
+                        <ul>
+                            <li>Stop awarding points for new purchases</li>
+                            <li>Prevent customers from redeeming points</li>
+                            <li>Keep existing points data intact</li>
+                            <li>Allow re-enabling at any time</li>
+                        </ul>
+                        <?php else: ?>
+                        <p>Enabling the loyalty program will:</p>
+                        <ul>
+                            <li>Start awarding points for new purchases</li>
+                            <li>Allow customers to redeem existing points</li>
+                            <li>Activate all loyalty features</li>
+                        </ul>
+                        <?php endif; ?>
+                        
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="enable_loyalty" id="enable_loyalty" 
+                                   <?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? '' : 'checked'; ?>>
+                            <label class="form-check-label" for="enable_loyalty">
+                                <?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'I understand and want to disable the loyalty program' : 'I want to enable the loyalty program'; ?>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-<?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'danger' : 'success'; ?>">
+                            <?php echo ($settings['loyalty_program_enabled'] ?? '1') == '1' ? 'Disable Program' : 'Enable Program'; ?>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

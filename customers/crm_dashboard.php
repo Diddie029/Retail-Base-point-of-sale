@@ -51,7 +51,6 @@ $stats = [
     'walk_in_customers' => 0,
     'total_orders' => 0,
     'total_revenue' => 0,
-    'loyalty_points_issued' => 0,
     'membership_levels' => 0
 ];
 
@@ -83,23 +82,6 @@ if ($order_stats_result) {
     $stats['total_revenue'] = $order_stats_result['total_revenue'] ?? 0;
 }
 
-// Loyalty points statistics - Check if table exists first
-$loyalty_points_issued = 0;
-try {
-    $loyalty_stats_stmt = $conn->query("
-        SELECT 
-            SUM(points_earned) as loyalty_points_issued
-        FROM loyalty_transactions
-    ");
-    $loyalty_stats_result = $loyalty_stats_stmt->fetch(PDO::FETCH_ASSOC);
-    if ($loyalty_stats_result) {
-        $loyalty_points_issued = $loyalty_stats_result['loyalty_points_issued'] ?? 0;
-    }
-} catch (PDOException $e) {
-    // Table doesn't exist, set to 0
-    $loyalty_points_issued = 0;
-}
-$stats['loyalty_points_issued'] = $loyalty_points_issued;
 
 // Membership levels count - Check if table exists first
 $membership_levels = 0;
@@ -394,14 +376,6 @@ $top_customers = $top_customers_stmt->fetchAll(PDO::FETCH_ASSOC);
             background: linear-gradient(135deg, var(--primary-color), #8b5cf6);
         }
 
-        .loyalty-badge {
-            background: linear-gradient(135deg, #f59e0b, #d97706);
-            color: white;
-            padding: 0.25rem 0.75rem;
-            border-radius: 50px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
     </style>
 </head>
 <body>
@@ -423,7 +397,7 @@ $top_customers = $top_customers_stmt->fetchAll(PDO::FETCH_ASSOC);
                         </ol>
                     </nav>
                     <h1><i class="bi bi-people me-2"></i>Customer CRM Dashboard</h1>
-                    <p class="header-subtitle">Manage customer relationships, loyalty programs, and customer data</p>
+                    <p class="header-subtitle">Manage customer relationships and customer data</p>
                 </div>
                 <div class="header-actions">
                     <?php if (hasPermission('create_customers', $permissions)): ?>
@@ -572,28 +546,6 @@ $top_customers = $top_customers_stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
 
             <div class="row g-4 mb-5">
-                <!-- Loyalty Settings -->
-                <div class="col-lg-4 col-md-6">
-                    <div class="crm-card" onclick="window.location.href='../admin/loyalty_settings.php'">
-                        <div class="crm-card-header">
-                            <div class="crm-card-icon" style="background: linear-gradient(135deg, #8b5cf6, #7c3aed);">
-                                <i class="bi bi-gift"></i>
-                            </div>
-                            <h3 class="crm-card-title">Loyalty Settings</h3>
-                            <p class="crm-card-description">Configure loyalty points system, rewards, and redemption rules</p>
-                        </div>
-                        <div class="crm-card-body">
-                            <div class="crm-card-stats">
-                                <div>
-                                    <div class="crm-stat-number"><?php echo number_format($stats['loyalty_points_issued']); ?></div>
-                                    <div class="crm-stat-label">Points Issued</div>
-                                </div>
-                                <i class="bi bi-arrow-right text-muted"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Membership Levels -->
                 <div class="col-lg-4 col-md-6">
                     <div class="crm-card" onclick="window.location.href='../admin/membership_levels.php'">
@@ -616,27 +568,6 @@ $top_customers = $top_customers_stmt->fetchAll(PDO::FETCH_ASSOC);
                     </div>
                 </div>
 
-                <!-- Customer Analytics -->
-                <div class="col-lg-4 col-md-6">
-                    <div class="crm-card" onclick="window.location.href='../analytics/index.php'">
-                        <div class="crm-card-header">
-                            <div class="crm-card-icon" style="background: linear-gradient(135deg, #06b6d4, #0891b2);">
-                                <i class="bi bi-graph-up"></i>
-                            </div>
-                            <h3 class="crm-card-title">Customer Analytics</h3>
-                            <p class="crm-card-description">View customer insights, trends, and performance metrics</p>
-                        </div>
-                        <div class="crm-card-body">
-                            <div class="crm-card-stats">
-                                <div>
-                                    <div class="crm-stat-number">📊</div>
-                                    <div class="crm-stat-label">Analytics</div>
-                                </div>
-                                <i class="bi bi-arrow-right text-muted"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
 
             <!-- Customer Insights -->
@@ -708,9 +639,6 @@ $top_customers = $top_customers_stmt->fetchAll(PDO::FETCH_ASSOC);
                                         <div class="customer-info">
                                             <div class="customer-name">
                                                 <?php echo htmlspecialchars($customer['first_name'] . ' ' . $customer['last_name']); ?>
-                                                <?php if ($index < 3): ?>
-                                                    <span class="loyalty-badge ms-2">Top <?php echo $index + 1; ?></span>
-                                                <?php endif; ?>
                                             </div>
                                             <div class="customer-details">
                                                 <?php echo htmlspecialchars($customer['email'] ?? 'No email'); ?> • 

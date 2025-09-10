@@ -416,6 +416,47 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
             50% { transform: scale(1.05); }
             100% { transform: scale(1); }
         }
+
+        /* Scroll styling for purchase history and activities */
+        .table-responsive::-webkit-scrollbar,
+        .activity-scroll::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .table-responsive::-webkit-scrollbar-track,
+        .activity-scroll::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .table-responsive::-webkit-scrollbar-thumb,
+        .activity-scroll::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .table-responsive::-webkit-scrollbar-thumb:hover,
+        .activity-scroll::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        /* Smooth transitions for toggle functionality */
+        .activity-item {
+            transition: all 0.3s ease;
+        }
+
+        .table tbody tr {
+            transition: all 0.3s ease;
+        }
+
+        /* Toggle button styling */
+        .toggle-btn {
+            transition: all 0.3s ease;
+        }
+
+        .toggle-btn:hover {
+            transform: translateY(-1px);
+        }
     </style>
 </head>
 <body>
@@ -438,7 +479,13 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
                         </ol>
                     </nav>
                     <h1><i class="bi bi-person-circle me-2"></i><?php echo htmlspecialchars($customer['full_name']); ?></h1>
-                    <p class="header-subtitle">Customer ID: <?php echo htmlspecialchars($customer['customer_number']); ?></p>
+                    <p class="header-subtitle">
+                        Customer ID: <?php echo htmlspecialchars($customer['customer_number']); ?>
+                        <span class="ms-3 text-muted">
+                            <i class="bi bi-currency-exchange me-1"></i>
+                            Currency: <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?>
+                        </span>
+                    </p>
                 </div>
                 <div class="header-actions">
                     <?php if (hasPermission('edit_customers', $permissions)): ?>
@@ -481,10 +528,10 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
                         <p class="mb-2"><?php echo htmlspecialchars($customer['customer_number']); ?></p>
                         <div class="d-flex gap-2 justify-content-center flex-wrap">
                             <span class="status-badge status-<?php echo $customer['membership_status']; ?>">
-                                <?php echo ucfirst($customer['membership_status']); ?>
+                                <?php echo ucfirst($customer['membership_status'] ?? 'Unknown'); ?>
                             </span>
                             <span class="type-badge type-<?php echo $customer['customer_type']; ?>">
-                                <?php echo ($customer['customer_type'] === 'walk_in') ? 'Walk-in' : ucfirst($customer['customer_type']); ?> Customer
+                                <?php echo ($customer['customer_type'] === 'walk_in') ? 'Walk-in' : ucfirst($customer['customer_type'] ?? 'Unknown'); ?> Customer
                             </span>
                             <?php if ($customer['customer_type'] === 'walk_in'): ?>
                             <span class="badge bg-info">
@@ -603,15 +650,45 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
                                 </h5>
                                 <div class="info-item">
                                     <span class="info-label">Credit Limit</span>
-                                    <span class="info-value">$<?php echo number_format($customer['credit_limit'], 2); ?></span>
+                                    <span class="info-value"><?php echo formatCurrency($customer['credit_limit'], $settings); ?></span>
                                 </div>
                                 <div class="info-item">
                                     <span class="info-label">Current Balance</span>
-                                    <span class="info-value">$<?php echo number_format($customer['current_balance'], 2); ?></span>
+                                    <span class="info-value"><?php echo formatCurrency($customer['current_balance'], $settings); ?></span>
                                 </div>
                                 <div class="info-item">
                                     <span class="info-label">Loyalty Points</span>
                                     <span class="info-value"><?php echo number_format($customer['loyalty_points']); ?></span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Currency Format</span>
+                                    <span class="info-value">
+                                        <?php 
+                                        $position = $settings['currency_position'] ?? 'before';
+                                        $symbol = $settings['currency_symbol'] ?? 'KES';
+                                        $decimals = intval($settings['currency_decimal_places'] ?? 2);
+                                        $example = number_format(100.50, $decimals);
+                                        echo $position === 'before' ? $symbol . ' ' . $example : $example . ' ' . $symbol;
+                                        ?>
+                                        <small class="text-muted ms-2">(<?php echo $decimals; ?> decimal<?php echo $decimals !== 1 ? 's' : ''; ?>)</small>
+                                    </span>
+                                </div>
+                                <div class="info-item">
+                                    <span class="info-label">Reward Program</span>
+                                    <div class="d-flex align-items-center">
+                                        <span class="info-value me-2">
+                                            <span class="badge bg-<?php echo ($customer['reward_program_active'] ?? 1) ? 'success' : 'danger'; ?>">
+                                                <?php echo ($customer['reward_program_active'] ?? 1) ? 'Active' : 'Inactive'; ?>
+                                            </span>
+                                        </span>
+                                        <?php if (hasPermission('edit_customers', $permissions)): ?>
+                                        <button class="btn btn-sm btn-outline-<?php echo ($customer['reward_program_active'] ?? 1) ? 'danger' : 'success'; ?>" 
+                                                onclick="toggleRewardProgram(<?php echo $customer['id']; ?>, <?php echo ($customer['reward_program_active'] ?? 1) ? 'false' : 'true'; ?>)">
+                                            <i class="bi bi-<?php echo ($customer['reward_program_active'] ?? 1) ? 'pause' : 'play'; ?>"></i>
+                                            <?php echo ($customer['reward_program_active'] ?? 1) ? 'Deactivate' : 'Activate'; ?>
+                                        </button>
+                                        <?php endif; ?>
+                                    </div>
                                 </div>
                                 <?php if (!empty($customer['preferred_payment_method'])): ?>
                                 <div class="info-item">
@@ -646,13 +723,13 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                         <div class="col-md-3">
                             <div class="stats-card">
-                                <div class="stats-number">$<?php echo number_format($stats['total_spent'], 2); ?></div>
+                                <div class="stats-number"><?php echo formatCurrency($stats['total_spent'], $settings); ?></div>
                                 <div class="stats-label">Total Spent</div>
                             </div>
                         </div>
                         <div class="col-md-3">
                             <div class="stats-card">
-                                <div class="stats-number">$<?php echo number_format($stats['average_order'], 2); ?></div>
+                                <div class="stats-number"><?php echo formatCurrency($stats['average_order'], $settings); ?></div>
                                 <div class="stats-label">Average Order</div>
                             </div>
                         </div>
@@ -738,9 +815,9 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
                                     </p>
                                 </div>
                             <?php else: ?>
-                                <div class="table-responsive">
+                                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
                                     <table class="table table-hover mb-0">
-                                        <thead class="table-light">
+                                        <thead class="sticky-top bg-light">
                                             <tr>
                                                 <th>Date</th>
                                                 <th>Sale ID</th>
@@ -748,32 +825,39 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
                                                 <th>Total</th>
                                                 <th>Payment</th>
                                                 <th>Cashier</th>
-                                                <th>Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <?php foreach ($purchase_history as $purchase): ?>
-                                            <tr>
+                                            <?php 
+                                            $display_count = 0;
+                                            foreach ($purchase_history as $purchase): 
+                                                $display_count++;
+                                            ?>
+                                            <tr class="<?php echo $display_count > 5 ? 'd-none' : ''; ?>" data-purchase-row="<?php echo $display_count; ?>">
                                                 <td><?php echo date('M d, Y', strtotime($purchase['sale_date'])); ?></td>
                                                 <td>#<?php echo $purchase['id']; ?></td>
                                                 <td><?php echo $purchase['items_count']; ?> item(s)</td>
-                                                <td>$<?php echo number_format($purchase['final_amount'], 2); ?></td>
+                                                <td><?php echo formatCurrency($purchase['final_amount'], $settings); ?></td>
                                                 <td>
                                                     <span class="badge bg-<?php echo $purchase['payment_method'] === 'cash' ? 'success' : 'primary'; ?>">
-                                                        <?php echo ucfirst($purchase['payment_method']); ?>
+                                                        <?php echo ucfirst($purchase['payment_method'] ?? 'Unknown'); ?>
                                                     </span>
                                                 </td>
                                                 <td><?php echo $purchase['cashier_name'] ?? 'Unknown'; ?></td>
-                                                <td>
-                                                    <a href="../pos/checkout.php?sale_id=<?php echo $purchase['id']; ?>" class="btn btn-sm btn-outline-primary" title="View Sale">
-                                                        <i class="bi bi-eye"></i>
-                                                    </a>
-                                                </td>
                                             </tr>
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
                                 </div>
+                                
+                                <?php if (count($purchase_history) > 5): ?>
+                                <div class="text-center mt-3">
+                                    <button class="btn btn-outline-primary btn-sm toggle-btn" onclick="togglePurchaseHistory()" id="togglePurchaseBtn">
+                                        <i class="bi bi-arrow-down" id="purchaseToggleIcon"></i>
+                                        <span id="purchaseToggleText">Show More (<?php echo count($purchase_history) - 5; ?> more)</span>
+                                    </button>
+                                </div>
+                                <?php endif; ?>
 
                                 <!-- Purchase History Pagination -->
                                 <?php if ($purchase_total_pages > 1): ?>
@@ -829,21 +913,36 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <i class="bi bi-activity"></i>Recent Activity
                             </h5>
 
-                            <?php foreach ($activities as $activity): ?>
-                            <div class="activity-item">
-                                <div class="d-flex justify-content-between align-items-start">
-                                    <div>
-                                        <p class="mb-1"><?php echo htmlspecialchars($activity['action']); ?></p>
-                                        <small class="activity-time">
-                                            <?php echo date('M d, Y H:i', strtotime($activity['created_at'])); ?>
-                                            <?php if (!empty($activity['performed_by'])): ?>
-                                                by <?php echo htmlspecialchars($activity['performed_by']); ?>
-                                            <?php endif; ?>
-                                        </small>
+                            <div class="activity-scroll" style="max-height: 300px; overflow-y: auto;">
+                                <?php 
+                                $activity_count = 0;
+                                foreach ($activities as $activity): 
+                                    $activity_count++;
+                                ?>
+                                <div class="activity-item <?php echo $activity_count > 5 ? 'd-none' : ''; ?>" data-activity-row="<?php echo $activity_count; ?>">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <p class="mb-1"><?php echo htmlspecialchars($activity['action']); ?></p>
+                                            <small class="activity-time">
+                                                <?php echo date('M d, Y H:i', strtotime($activity['created_at'])); ?>
+                                                <?php if (!empty($activity['performed_by'])): ?>
+                                                    by <?php echo htmlspecialchars($activity['performed_by']); ?>
+                                                <?php endif; ?>
+                                            </small>
+                                        </div>
                                     </div>
                                 </div>
+                                <?php endforeach; ?>
                             </div>
-                            <?php endforeach; ?>
+                            
+                            <?php if (count($activities) > 5): ?>
+                            <div class="text-center mt-3">
+                                <button class="btn btn-outline-primary btn-sm toggle-btn" onclick="toggleActivities()" id="toggleActivityBtn">
+                                    <i class="bi bi-arrow-down" id="activityToggleIcon"></i>
+                                    <span id="activityToggleText">Show More (<?php echo count($activities) - 5; ?> more)</span>
+                                </button>
+                            </div>
+                            <?php endif; ?>
                         </div>
                     </div>
                     <?php endif; ?>
@@ -853,5 +952,95 @@ $activities = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function toggleRewardProgram(customerId, activate) {
+            const action = activate ? 'activate' : 'deactivate';
+            const confirmMessage = activate ? 
+                'Are you sure you want to activate the reward program for this customer?' : 
+                'Are you sure you want to deactivate the reward program for this customer?';
+            
+            if (confirm(confirmMessage)) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = 'toggle_reward_program.php';
+                form.innerHTML = `
+                    <input type="hidden" name="customer_id" value="${customerId}">
+                    <input type="hidden" name="activate" value="${activate}">
+                `;
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
+
+        // Toggle purchase history visibility
+        function togglePurchaseHistory() {
+            const hiddenRows = document.querySelectorAll('[data-purchase-row]');
+            const toggleBtn = document.getElementById('togglePurchaseBtn');
+            const toggleIcon = document.getElementById('purchaseToggleIcon');
+            const toggleText = document.getElementById('purchaseToggleText');
+            
+            let showingAll = true;
+            
+            // Check if we're currently showing all rows
+            hiddenRows.forEach(row => {
+                if (row.classList.contains('d-none')) {
+                    showingAll = false;
+                }
+            });
+            
+            if (showingAll) {
+                // Hide rows beyond the first 5
+                hiddenRows.forEach((row, index) => {
+                    if (index >= 5) {
+                        row.classList.add('d-none');
+                    }
+                });
+                toggleIcon.className = 'bi bi-arrow-down';
+                toggleText.textContent = `Show More (${hiddenRows.length - 5} more)`;
+            } else {
+                // Show all rows
+                hiddenRows.forEach(row => {
+                    row.classList.remove('d-none');
+                });
+                toggleIcon.className = 'bi bi-arrow-up';
+                toggleText.textContent = 'Show Less';
+            }
+        }
+
+        // Toggle activities visibility
+        function toggleActivities() {
+            const hiddenActivities = document.querySelectorAll('[data-activity-row]');
+            const toggleBtn = document.getElementById('toggleActivityBtn');
+            const toggleIcon = document.getElementById('activityToggleIcon');
+            const toggleText = document.getElementById('activityToggleText');
+            
+            let showingAll = true;
+            
+            // Check if we're currently showing all activities
+            hiddenActivities.forEach(activity => {
+                if (activity.classList.contains('d-none')) {
+                    showingAll = false;
+                }
+            });
+            
+            if (showingAll) {
+                // Hide activities beyond the first 5
+                hiddenActivities.forEach((activity, index) => {
+                    if (index >= 5) {
+                        activity.classList.add('d-none');
+                    }
+                });
+                toggleIcon.className = 'bi bi-arrow-down';
+                toggleText.textContent = `Show More (${hiddenActivities.length - 5} more)`;
+            } else {
+                // Show all activities
+                hiddenActivities.forEach(activity => {
+                    activity.classList.remove('d-none');
+                });
+                toggleIcon.className = 'bi bi-arrow-up';
+                toggleText.textContent = 'Show Less';
+            }
+        }
+    </script>
 </body>
 </html>

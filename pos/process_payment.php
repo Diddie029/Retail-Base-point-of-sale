@@ -168,6 +168,9 @@ try {
             }
         }
 
+        // Get loyalty settings for the entire transaction
+        $loyaltySettings = getLoyaltySettings($conn);
+        
         // Handle loyalty points redemption if applicable
         $loyaltyPointsUsed = 0;
         $loyaltyDiscount = 0;
@@ -181,13 +184,16 @@ try {
                 $currentBalance = getCustomerLoyaltyBalance($conn, $customer_id);
                 
                 if ($currentBalance >= $loyaltyPointsToUse) {
-                    // Calculate discount from loyalty points
-                    $loyaltyDiscount = calculateLoyaltyPointsValue($loyaltyPointsToUse);
+                    // Get conversion rate from loyalty settings
+                    $pointsToCurrencyRate = $loyaltySettings['points_to_currency_rate'] ?? 100;
+                    
+                    // Calculate discount from loyalty points using proper rate
+                    $loyaltyDiscount = calculateLoyaltyPointsValue($loyaltyPointsToUse, $pointsToCurrencyRate);
                     
                     // Ensure discount doesn't exceed total amount
                     if ($loyaltyDiscount > $finalAmount) {
                         $loyaltyDiscount = $finalAmount;
-                        $loyaltyPointsToUse = (int)($loyaltyDiscount * 100); // Convert back to points
+                        $loyaltyPointsToUse = (int)($loyaltyDiscount * $pointsToCurrencyRate); // Convert back to points
                     }
                     
                     // Redeem loyalty points
@@ -230,13 +236,15 @@ try {
         // Award loyalty points if customer is not walk-in and loyalty program is enabled
         $loyaltyPointsEarned = 0;
         if ($customer_id && $customer_type !== 'walk_in') {
-            $customer = getCustomerById($conn, $customer_id);
-            if ($customer) {
-                $loyaltyPointsEarned = calculateLoyaltyPoints($conn, $finalAmount, $customer['membership_level']);
-                
-                if ($loyaltyPointsEarned > 0) {
-                    addLoyaltyPoints($conn, $customer_id, $loyaltyPointsEarned, 
-                        "Points earned from purchase #$sale_id", $transaction_id);
+            if ($loyaltySettings['enable_loyalty_program']) {
+                $customer = getCustomerById($conn, $customer_id);
+                if ($customer) {
+                    $loyaltyPointsEarned = calculateLoyaltyPoints($conn, $finalAmount, $customer['membership_level']);
+                    
+                    if ($loyaltyPointsEarned > 0) {
+                        addLoyaltyPoints($conn, $customer_id, $loyaltyPointsEarned, 
+                            "Points earned from purchase #$sale_id", $transaction_id);
+                    }
                 }
             }
         }
@@ -247,12 +255,15 @@ try {
         // Commit transaction
         $conn->commit();
 
+        // Generate sequential receipt ID
+        $receipt_id = generateSequentialReceiptId($conn);
+
         // Return success response with cart totals
         echo json_encode([
             'success' => true,
             'transaction_id' => $transaction_id,
             'sale_id' => $sale_id,
-            'receipt_id' => $sale_id,
+            'receipt_id' => $receipt_id,
             'message' => 'Payment processed successfully',
             'subtotal' => $paymentData['subtotal'],
             'tax' => $paymentData['tax'],
@@ -265,7 +276,9 @@ try {
             'loyalty' => [
                 'points_earned' => $loyaltyPointsEarned,
                 'points_used' => $loyaltyPointsUsed,
-                'discount_applied' => $loyaltyDiscount
+                'discount_applied' => $loyaltyDiscount,
+                'customer_balance' => $customer_id ? getCustomerLoyaltyBalance($conn, $customer_id) : 0,
+                'program_enabled' => $loyaltySettings['enable_loyalty_program'] ?? false
             ]
         ]);
 
@@ -285,13 +298,82 @@ try {
 }
 
 /**
- * Generate unique transaction ID
+ * Generate unique transaction ID (random with characters)
  */
 function generateTransactionId() {
-    $prefix = 'TXN';
-    $timestamp = date('YmdHis');
-    $random = str_pad(rand(0, 9999), 4, '0', STR_PAD_LEFT);
-    return $prefix . $timestamp . $random;
+    // Get settings from database
+    global $conn;
+    $settings = [];
+    $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $settings[$row['setting_key']] = $row['setting_value'];
+    }
+    
+    $prefix = $settings['transaction_id_prefix'] ?? 'TXN';
+    $length = (int)($settings['transaction_id_length'] ?? 6);
+    $format = $settings['transaction_id_format'] ?? 'prefix-random';
+    
+    // Define character sets based on format
+    $characters = '';
+    switch($format) {
+        case 'prefix-random':
+        case 'random-only':
+        case 'prefix-date-random':
+            $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            break;
+        case 'prefix-mixed':
+        case 'mixed-only':
+        case 'prefix-date-mixed':
+            $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+            break;
+        case 'prefix-lowercase':
+        case 'lowercase-only':
+        case 'prefix-date-lowercase':
+            $characters = '0123456789abcdefghijklmnopqrstuvwxyz';
+            break;
+        case 'prefix-numbers':
+        case 'numbers-only':
+        case 'prefix-date-numbers':
+            $characters = '0123456789';
+            break;
+        case 'prefix-letters':
+        case 'letters-only':
+        case 'prefix-date-letters':
+            $characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+            break;
+        default:
+            $characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    }
+    
+    // Generate random string
+    $randomString = '';
+    for ($i = 0; $i < $length; $i++) {
+        $randomString .= $characters[rand(0, strlen($characters) - 1)];
+    }
+    
+    switch($format) {
+        case 'prefix-random':
+        case 'prefix-mixed':
+        case 'prefix-lowercase':
+        case 'prefix-numbers':
+        case 'prefix-letters':
+            return $prefix . $randomString;
+        case 'random-only':
+        case 'mixed-only':
+        case 'lowercase-only':
+        case 'numbers-only':
+        case 'letters-only':
+            return $randomString;
+        case 'prefix-date-random':
+        case 'prefix-date-mixed':
+        case 'prefix-date-lowercase':
+        case 'prefix-date-numbers':
+        case 'prefix-date-letters':
+            $currentDate = date('Ymd');
+            return $prefix . $currentDate . $randomString;
+        default:
+            return $prefix . $randomString;
+    }
 }
 
 /**
