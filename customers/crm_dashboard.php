@@ -42,6 +42,8 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
+// Currency formatting function is now available from functions.php
+
 // Get customer statistics
 $stats = [
     'total_customers' => 0,
@@ -452,7 +454,7 @@ $top_customers = $top_customers_stmt->fetchAll(PDO::FETCH_ASSOC);
                             <i class="bi bi-graph-up"></i>
                         </div>
                     </div>
-                    <div class="stat-value">$<?php echo number_format($stats['total_revenue'], 0); ?></div>
+                    <div class="stat-value"><?php echo formatCurrency($stats['total_revenue'], $settings); ?></div>
                     <div class="stat-label">Total Revenue</div>
                 </div>
             </div>
@@ -604,7 +606,7 @@ $top_customers = $top_customers_stmt->fetchAll(PDO::FETCH_ASSOC);
                                             </div>
                                         </div>
                                         <div class="text-end">
-                                            <div class="customer-spent">$<?php echo number_format($customer['total_spent'], 0); ?></div>
+                                            <div class="customer-spent"><?php echo formatCurrency($customer['total_spent'], $settings); ?></div>
                                             <small class="text-muted"><?php echo $customer['total_orders']; ?> orders</small>
                                         </div>
                                     </div>
@@ -646,7 +648,7 @@ $top_customers = $top_customers_stmt->fetchAll(PDO::FETCH_ASSOC);
                                             </div>
                                         </div>
                                         <div class="text-end">
-                                            <div class="customer-spent">$<?php echo number_format($customer['total_spent'], 0); ?></div>
+                                            <div class="customer-spent"><?php echo formatCurrency($customer['total_spent'], $settings); ?></div>
                                             <small class="text-muted"><?php echo $customer['total_orders']; ?> orders</small>
                                         </div>
                                     </div>

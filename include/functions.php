@@ -14,6 +14,7 @@ function hasPermission($permission, $userPermissions) {
     return in_array($permission, $userPermissions);
 }
 
+
 /**
  * Generate a unique 4-digit user ID (auto-generation only)
  * 
@@ -248,7 +249,14 @@ function formatCurrency($amount, $settings = null) {
     $position = $settings['currency_position'] ?? 'before';
     $decimals = intval($settings['currency_decimal_places'] ?? 2);
 
-    $formatted_amount = number_format($amount, $decimals);
+    // Format amount with k/m notation for large numbers
+    if ($amount >= 1000000) {
+        $formatted_amount = number_format($amount / 1000000, 1) . 'm';
+    } elseif ($amount >= 10000) {
+        $formatted_amount = number_format($amount / 1000, 1) . 'k';
+    } else {
+        $formatted_amount = number_format($amount, $decimals);
+    }
 
     if ($position === 'before') {
         return $symbol . ' ' . $formatted_amount;

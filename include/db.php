@@ -292,6 +292,7 @@ try {
         CREATE TABLE IF NOT EXISTS sales (
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id INT NOT NULL,
+            till_id INT DEFAULT NULL,
             customer_name VARCHAR(255) DEFAULT 'Walking Customer',
             customer_phone VARCHAR(20) DEFAULT '',
             customer_email VARCHAR(255) DEFAULT '',
@@ -305,7 +306,40 @@ try {
             notes TEXT,
             sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id)
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (till_id) REFERENCES register_tills(id)
+        )
+    ");
+    
+    // Add till_id column to existing sales table if it doesn't exist
+    try {
+        $conn->exec("ALTER TABLE sales ADD COLUMN till_id INT DEFAULT NULL AFTER user_id");
+        $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (till_id) REFERENCES register_tills(id)");
+    } catch (PDOException $e) {
+        // Column might already exist, ignore error
+    }
+    
+    // Create void transactions table for audit trail
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS void_transactions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            till_id INT DEFAULT NULL,
+            void_type ENUM('product', 'cart', 'sale') NOT NULL,
+            product_id INT DEFAULT NULL,
+            product_name VARCHAR(255) DEFAULT NULL,
+            quantity DECIMAL(10,3) DEFAULT NULL,
+            unit_price DECIMAL(10,2) DEFAULT NULL,
+            total_amount DECIMAL(10,2) DEFAULT NULL,
+            void_reason TEXT,
+            void_notes TEXT,
+            voided_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (till_id) REFERENCES register_tills(id),
+            FOREIGN KEY (product_id) REFERENCES products(id),
+            INDEX idx_void_type (void_type),
+            INDEX idx_voided_at (voided_at),
+            INDEX idx_user_id (user_id)
         )
     ");
     

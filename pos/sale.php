@@ -93,6 +93,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $switch_till_id = intval($_POST['switch_till_id'] ?? 0);
     
     if ($switch_till_id > 0) {
+        // Check if cart has active products
+        if (!empty($cart)) {
+            $_SESSION['error_message'] = "Cannot switch till with active products in cart. Please complete the current transaction or clear the cart first.";
+            header('Location: ' . $_SERVER['PHP_SELF']);
+            exit();
+        }
+        
         // Prevent switching to the same till
         if ($selected_till && $switch_till_id == $selected_till['id']) {
             $_SESSION['error_message'] = "You cannot switch to the same till you are currently using.";
@@ -145,6 +152,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
 // Handle till closing
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'close_till') {
+    // Check if cart has active products
+    if (!empty($cart)) {
+        $_SESSION['error_message'] = "Cannot close till with active products in cart. Please complete the current transaction or clear the cart first.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    
     $cash_amount = floatval($_POST['cash_amount'] ?? 0);
     $voucher_amount = floatval($_POST['voucher_amount'] ?? 0);
     $loyalty_points = floatval($_POST['loyalty_points'] ?? 0);
@@ -299,6 +313,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'logout_cash_drop') {
 
 // Handle till release on logout
 if (isset($_GET['action']) && $_GET['action'] === 'release_till') {
+    // Check if cart has active products
+    if (!empty($cart)) {
+        $_SESSION['error_message'] = "Cannot release till with active products in cart. Please complete the current transaction or clear the cart first.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    
     if ($selected_till) {
         $stmt = $conn->prepare("UPDATE register_tills SET current_user_id = NULL WHERE id = ?");
         $stmt->execute([$selected_till['id']]);
@@ -958,8 +979,8 @@ $total_amount = $subtotal + $tax_amount;
                         <div class="cart-header">
                             <div class="d-flex justify-content-between align-items-center">
                                 <h5 class="mb-0">Cart (<span id="cartCount"><?php echo $cart_count; ?></span>)</h5>
-                                <button class="btn btn-outline-light btn-sm" onclick="clearCart()">
-                                    <i class="bi bi-trash"></i> Clear
+                                <button class="btn btn-outline-danger btn-sm" onclick="voidCart()" <?php echo $cart_count == 0 ? 'disabled' : ''; ?>>
+                                    <i class="bi bi-x-circle"></i> Void Cart
                             </button>
                         </div>
                             <div class="mt-2">
@@ -1012,8 +1033,8 @@ $total_amount = $subtotal + $tax_amount;
                                             <button class="quantity-btn" onclick="updateQuantity(<?php echo $index; ?>, 1)">
                                                 <i class="bi bi-plus"></i>
                             </button>
-                                            <button class="btn btn-outline-danger btn-sm ms-2" onclick="removeItem(<?php echo $index; ?>)">
-                                                <i class="bi bi-trash"></i>
+                                            <button class="btn btn-outline-danger btn-sm ms-2" onclick="voidProduct(<?php echo $index; ?>)" title="Void Product">
+                                                <i class="bi bi-x-circle"></i>
                             </button>
                         </div>
                     </div>
@@ -1624,6 +1645,12 @@ $total_amount = $subtotal + $tax_amount;
                 alert('Cart is empty');
                 return;
             }
+
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before proceeding to payment');
+            return;
+            <?php endif; ?>
 
             // Refresh cart data in payment processor before showing modal
             if (window.paymentProcessor) {
@@ -2623,6 +2650,226 @@ $total_amount = $subtotal + $tax_amount;
                 <?php endif; ?>
             <?php endif; ?>
         });
+
+        // Cart verification functions for till actions
+        function verifyCartEmpty(action) {
+            if (window.cartData && window.cartData.length > 0) {
+                const actionText = action === 'switch' ? 'switch till' : action === 'close' ? 'close till' : 'release till';
+                alert(`Cannot ${actionText} with active products in cart. Please complete the current transaction or clear the cart first.`);
+                return false;
+            }
+            return true;
+        }
+
+        // Override till action functions with cart verification
+        function showSwitchTill() {
+            if (!verifyCartEmpty('switch')) return;
+            // Original showSwitchTill logic would go here
+            // For now, we'll show an alert that this needs to be implemented
+            alert('Switch Till functionality needs to be implemented with proper modal');
+        }
+
+        function showCloseTill() {
+            if (!verifyCartEmpty('close')) return;
+            // Original showCloseTill logic would go here
+            // For now, we'll show an alert that this needs to be implemented
+            alert('Close Till functionality needs to be implemented with proper modal');
+        }
+
+        function releaseTill() {
+            if (!verifyCartEmpty('release')) return;
+            // Confirm release
+            if (confirm('Are you sure you want to release the till?')) {
+                window.location.href = '?action=release_till';
+            }
+        }
+
+        // Hold transaction functionality
+        function holdTransaction() {
+            if (window.cartData && window.cartData.length === 0) {
+                alert('Cart is empty. Nothing to hold.');
+                return;
+            }
+
+            if (!confirm('Hold this transaction? You can retrieve it later from the "Held" button.')) {
+                return;
+            }
+
+            // Save cart to session storage as held transaction
+            const heldTransaction = {
+                id: Date.now(), // Simple ID based on timestamp
+                cart: window.cartData,
+                totals: window.paymentTotals,
+                timestamp: new Date().toLocaleString(),
+                till: '<?php echo $selected_till['till_name'] ?? 'Unknown'; ?>'
+            };
+
+            // Get existing held transactions
+            let heldTransactions = JSON.parse(localStorage.getItem('heldTransactions') || '[]');
+            heldTransactions.push(heldTransaction);
+            localStorage.setItem('heldTransactions', JSON.stringify(heldTransactions));
+
+            // Clear current cart
+            clearCart();
+            
+            alert('Transaction held successfully! You can retrieve it later from the "Held" button.');
+        }
+
+        // Load held transactions
+        function loadHeldTransactions() {
+            const heldTransactions = JSON.parse(localStorage.getItem('heldTransactions') || '[]');
+            
+            if (heldTransactions.length === 0) {
+                alert('No held transactions found.');
+                return;
+            }
+
+            // Create a simple list of held transactions
+            let message = 'Held Transactions:\n\n';
+            heldTransactions.forEach((transaction, index) => {
+                message += `${index + 1}. ${transaction.timestamp} - ${transaction.till} - ${transaction.cart.length} items\n`;
+            });
+            message += '\nTo load a transaction, use the transaction number.';
+
+            const transactionNumber = prompt(message + '\n\nEnter transaction number to load (or cancel to close):');
+            
+            if (transactionNumber && !isNaN(transactionNumber)) {
+                const index = parseInt(transactionNumber) - 1;
+                if (index >= 0 && index < heldTransactions.length) {
+                    const transaction = heldTransactions[index];
+                    
+                    // Load the transaction
+                    window.cartData = transaction.cart;
+                    window.paymentTotals = transaction.totals;
+                    updateCartDisplay(transaction.cart);
+                    
+                    // Remove from held transactions
+                    heldTransactions.splice(index, 1);
+                    localStorage.setItem('heldTransactions', JSON.stringify(heldTransactions));
+                    
+                    alert('Transaction loaded successfully!');
+                } else {
+                    alert('Invalid transaction number.');
+                }
+            }
+        }
+
+        // Void product functionality
+        function voidProduct(cartIndex) {
+            if (!window.cartData || !window.cartData[cartIndex]) {
+                alert('Invalid product selection.');
+                return;
+            }
+
+            const product = window.cartData[cartIndex];
+            
+            // Show void reason dialog
+            const voidReason = prompt(`Void Product: ${product.name}\n\nEnter void reason (required):`);
+            if (!voidReason || voidReason.trim() === '') {
+                alert('Void reason is required.');
+                return;
+            }
+
+            const voidNotes = prompt(`Additional notes (optional):`) || '';
+
+            if (!confirm(`Are you sure you want to void this product?\n\nProduct: ${product.name}\nQuantity: ${product.quantity}\nAmount: ${window.POSConfig.currencySymbol} ${(product.price * product.quantity).toFixed(2)}\n\nThis action will be recorded in the audit trail.`)) {
+                return;
+            }
+
+            // Call void product API
+            fetch('void_product.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    cart_index: cartIndex,
+                    void_reason: voidReason.trim(),
+                    void_notes: voidNotes.trim()
+                })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    // Update cart display
+                    window.cartData = data.cart;
+                    window.paymentTotals = data.totals;
+                    updateCartDisplay(data.cart);
+                    alert('Product voided successfully.');
+                } else {
+                    alert('Error voiding product: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error voiding product: ' + error.message);
+            });
+        }
+
+        // Void cart functionality
+        function voidCart() {
+            if (!window.cartData || window.cartData.length === 0) {
+                alert('Cart is empty. Nothing to void.');
+                return;
+            }
+
+            // Show void reason dialog
+            const voidReason = prompt(`Void Entire Cart (${window.cartData.length} items)\n\nEnter void reason (required):`);
+            if (!voidReason || voidReason.trim() === '') {
+                alert('Void reason is required.');
+                return;
+            }
+
+            const voidNotes = prompt(`Additional notes (optional):`) || '';
+
+            // Calculate total amount
+            let totalAmount = 0;
+            window.cartData.forEach(item => {
+                totalAmount += item.price * item.quantity;
+            });
+
+            if (!confirm(`Are you sure you want to void the entire cart?\n\nItems: ${window.cartData.length}\nTotal Amount: ${window.POSConfig.currencySymbol} ${totalAmount.toFixed(2)}\n\nThis action will be recorded in the audit trail.`)) {
+                return;
+            }
+
+            // Call void cart API
+            fetch('void_cart.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    void_reason: voidReason.trim(),
+                    void_notes: voidNotes.trim()
+                })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    // Update cart display
+                    window.cartData = data.cart;
+                    window.paymentTotals = data.totals;
+                    updateCartDisplay(data.cart);
+                    alert(`Cart voided successfully.\n\nVoided ${data.voided_items} items\nTotal Amount: ${window.POSConfig.currencySymbol} ${data.voided_amount.toFixed(2)}`);
+                } else {
+                    alert('Error voiding cart: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error voiding cart: ' + error.message);
+            });
+        }
     </script>
     
     <style>

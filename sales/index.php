@@ -271,6 +271,30 @@ $payment_stats = $stmt->fetchAll();
                 overflow: hidden;
             }
         }
+        
+        /* Loyalty Points Styling */
+        .payment-icon.bg-info {
+            background-color: #06b6d4 !important;
+        }
+        
+        .payment-icon.bg-info i {
+            color: white;
+        }
+        
+        .loyalty-points-display {
+            background: linear-gradient(135deg, #06b6d4, #0891b2);
+            color: white;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .loyalty-points-display i {
+            font-size: 1.1rem;
+        }
     </style>
 </head>
 <body>
@@ -410,10 +434,17 @@ $payment_stats = $stmt->fetchAll();
                             <?php foreach ($payment_stats as $stat): ?>
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <div>
-                                    <span class="payment-icon bg-<?= $stat['payment_method'] === 'cash' ? 'success' : ($stat['payment_method'] === 'card' ? 'primary' : 'warning') ?>">
-                                        <i class="bi bi-<?= $stat['payment_method'] === 'cash' ? 'cash' : ($stat['payment_method'] === 'card' ? 'credit-card' : 'phone') ?>"></i>
-                                    </span>
-                                    <?= ucfirst(str_replace('_', ' ', $stat['payment_method'])) ?>
+                                    <?php if ($stat['payment_method'] === 'loyalty_points'): ?>
+                                        <div class="loyalty-points-display">
+                                            <i class="bi bi-star-fill"></i>
+                                            Loyalty Points
+                                        </div>
+                                    <?php else: ?>
+                                        <span class="payment-icon bg-<?= $stat['payment_method'] === 'cash' ? 'success' : ($stat['payment_method'] === 'card' ? 'primary' : 'warning') ?>">
+                                            <i class="bi bi-<?= $stat['payment_method'] === 'cash' ? 'cash' : ($stat['payment_method'] === 'card' ? 'credit-card' : 'phone') ?>"></i>
+                                        </span>
+                                        <?= ucfirst(str_replace('_', ' ', $stat['payment_method'] ?? 'unknown')) ?>
+                                    <?php endif; ?>
                                 </div>
                                 <div class="text-end">
                                     <div class="fw-bold">KES <?= number_format($stat['total'], 2) ?></div>
@@ -481,7 +512,7 @@ $payment_stats = $stmt->fetchAll();
                                 <td>
                                     <span class="badge bg-<?= $sale['payment_method'] === 'cash' ? 'success' : ($sale['payment_method'] === 'card' ? 'primary' : 'warning') ?>">
                                         <i class="bi bi-<?= $sale['payment_method'] === 'cash' ? 'cash' : ($sale['payment_method'] === 'card' ? 'credit-card' : 'phone') ?>"></i>
-                                        <?= ucfirst(str_replace('_', ' ', $sale['payment_method'])) ?>
+                                        <?= ucfirst(str_replace('_', ' ', $sale['payment_method'] ?? 'loyalty points')) ?>
                                     </span>
                                 </td>
                                 <td>
@@ -603,11 +634,17 @@ $payment_stats = $stmt->fetchAll();
         new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: [<?= implode(',', array_map(function($stat) { return '"' . ucfirst(str_replace('_', ' ', $stat['payment_method'])) . '"'; }, $payment_stats)) ?>],
+                labels: [<?= implode(',', array_map(function($stat) { 
+                    $method = $stat['payment_method'] ?? 'unknown';
+                    if ($method === 'loyalty_points') {
+                        return '"Loyalty Points"';
+                    }
+                    return '"' . ucfirst(str_replace('_', ' ', $method)) . '"';
+                }, $payment_stats)) ?>],
                 datasets: [{
                     data: [<?= implode(',', array_column($payment_stats, 'total')) ?>],
                     backgroundColor: [
-                        '#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444'
+                        '#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4'
                     ],
                     borderWidth: 2,
                     borderColor: '#ffffff'

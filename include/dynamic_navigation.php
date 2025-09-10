@@ -8,7 +8,8 @@ $sectionContentMappings = [
         ['/dashboard/dashboard.php', 'bi-speedometer2', 'Dashboard']
     ],
     'pos' => [
-        ['/sales/salesdashboard.php', 'bi-cart-plus', 'Point of Sale']
+        ['/sales/salesdashboard.php', 'bi-cart-plus', 'Point of Sale'],
+        ['/pos/void_reports.php', 'bi-x-circle', 'Void Reports']
     ],
     'customer_crm' => [
         ['/customers/crm_dashboard.php', 'bi-speedometer2', 'CRM Dashboard']
@@ -106,7 +107,7 @@ function generateNavSection($sectionKey, $sectionName, $sectionIcon, $isVisible,
         $bgColor = $isActive ? ($settings['theme_color'] ?? '#6366f1') : 'transparent';
         
         $html .= '<div class="nav-item">';
-        $html .= '<a href="' . $url . '" class="nav-link ' . $isActive . '" style="background-color: ' . $bgColor . '">';
+        $html .= '<a href="/pointofsale' . $url . '" class="nav-link ' . $isActive . '" style="background-color: ' . $bgColor . '">';
         $html .= '<i class="bi ' . $icon . '"></i>';
         $html .= $label;
         $html .= '</a>';

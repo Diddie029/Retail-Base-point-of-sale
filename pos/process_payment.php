@@ -20,6 +20,13 @@ header('Content-Type: application/json');
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'];
 
+// Check if till is selected
+if (!isset($_SESSION['selected_till_id']) || empty($_SESSION['selected_till_id'])) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'error' => 'Please select a till before processing payment']);
+    exit();
+}
+
 try {
     // Get payment data from request
     $input = file_get_contents('php://input');
@@ -47,10 +54,10 @@ try {
         // Create sale record
         $stmt = $conn->prepare("
             INSERT INTO sales (
-                user_id, customer_id, customer_name, customer_phone, customer_email, 
+                user_id, till_id, customer_id, customer_name, customer_phone, customer_email, 
                 total_amount, discount, tax_amount, final_amount, 
                 payment_method, notes, sale_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         ");
 
         $customer_id = $paymentData['customer_id'] ?? null;
@@ -64,6 +71,7 @@ try {
 
         $stmt->execute([
             $user_id,
+            $_SESSION['selected_till_id'],
             $customer_id,
             $customer_name,
             $customer_phone,
