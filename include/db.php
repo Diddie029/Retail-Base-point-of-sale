@@ -382,6 +382,7 @@ try {
         CREATE TABLE IF NOT EXISTS held_transactions (
             id INT PRIMARY KEY AUTO_INCREMENT,
             user_id INT NOT NULL,
+            till_id INT DEFAULT NULL COMMENT 'Till ID where transaction was held',
             cart_data TEXT NOT NULL COMMENT 'JSON encoded cart data with items, customer, and total',
             reason VARCHAR(255) DEFAULT NULL COMMENT 'Reason for holding the transaction',
             customer_reference VARCHAR(255) DEFAULT NULL COMMENT 'Customer name, phone, or reference',
@@ -391,12 +392,15 @@ try {
             
             -- Indexes for better performance
             INDEX idx_user_id (user_id),
+            INDEX idx_till_id (till_id),
             INDEX idx_status (status),
             INDEX idx_created_at (created_at),
             
-            -- Foreign key constraint
+            -- Foreign key constraints
             CONSTRAINT fk_held_transactions_user_id 
-                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            CONSTRAINT fk_held_transactions_till_id 
+                FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE SET NULL
         ) ENGINE=InnoDB 
           DEFAULT CHARSET=utf8mb4 
           COLLATE=utf8mb4_unicode_ci
@@ -578,6 +582,20 @@ try {
         }
     } catch (PDOException $e) {
         error_log("Could not add tax management columns: " . $e->getMessage());
+    }
+
+    // Add till_id column to held_transactions table if it doesn't exist
+    try {
+        $stmt = $conn->query("DESCRIBE held_transactions");
+        $held_transactions_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        if (!in_array('till_id', $held_transactions_columns)) {
+            $conn->exec("ALTER TABLE held_transactions ADD COLUMN till_id INT DEFAULT NULL AFTER user_id");
+            $conn->exec("ALTER TABLE held_transactions ADD FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE SET NULL");
+            $conn->exec("ALTER TABLE held_transactions ADD INDEX idx_till_id (till_id)");
+        }
+    } catch (PDOException $e) {
+        error_log("Could not add till_id column to held_transactions table: " . $e->getMessage());
     }
 
         // Create roles table

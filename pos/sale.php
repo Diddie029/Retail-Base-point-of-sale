@@ -468,10 +468,17 @@ $total_amount = $subtotal + $tax_amount;
         }
 
         .cart-header {
-            background: var(--primary-color);
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
             color: white;
-            padding: 0.5rem;
+            padding: 0.75rem;
             border-radius: 6px 6px 0 0;
+            box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+        }
+
+        .cart-header h5 {
+            color: white !important;
+            font-weight: 700;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
         }
 
         .cart-items {
@@ -488,27 +495,36 @@ $total_amount = $subtotal + $tax_amount;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0.5rem 0;
+            padding: 0.75rem;
             border-bottom: 1px solid #e5e7eb;
-            min-height: 50px;
+            min-height: 55px;
             flex-shrink: 0;
-            transition: all 0.2s ease;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+            border-radius: 6px;
+            margin-bottom: 0.25rem;
+            border: 1px solid #f1f5f9;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
         }
 
         .cart-item:hover {
-            background: #f8fafc;
-            border-radius: 4px;
-            margin: 0 -0.25rem;
-            padding: 0.5rem 0.25rem;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border-color: #e2e8f0;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            margin: 0.25rem 0;
         }
 
         .cart-item .product-name {
             color: #000000 !important;
             font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
         }
 
         .cart-item .product-price {
             color: #000000 !important;
+            font-size: 0.8rem;
         }
 
         .cart-item .product-number {
@@ -518,23 +534,75 @@ $total_amount = $subtotal + $tax_amount;
         }
 
         .cart-item .product-sku {
-            color: #4b5563 !important;
+            color: #374151 !important;
             font-size: 0.7rem;
-            font-weight: 600;
-            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-            padding: 0.2rem 0.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            padding: 0.25rem 0.5rem;
             border-radius: 4px;
-            border: 1px solid #cbd5e1;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            border: 1px solid #bae6fd;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             white-space: nowrap;
+            box-shadow: 0 1px 2px rgba(14, 165, 233, 0.1);
+            margin-right: 0.75rem;
         }
 
         .cart-item .product-sku:hover {
-            background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            border-color: #93c5fd;
             transform: translateY(-1px);
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 2px 4px rgba(14, 165, 233, 0.2);
+        }
+
+        /* Customer Display Styling */
+        .customer-display {
+            color: #ffffff !important;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            cursor: pointer;
+            display: inline-block;
+        }
+
+        .customer-display:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.4);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Void Cart Button Styling */
+        .cart-header .btn-outline-danger {
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            color: white !important;
+            font-weight: 600;
+            font-size: 0.8rem;
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            transition: all 0.3s ease;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .cart-header .btn-outline-danger:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .cart-header .btn-outline-danger:disabled {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.3);
+            color: rgba(255, 255, 255, 0.5) !important;
+            cursor: not-allowed;
         }
 
         .cart-item:last-child {
@@ -601,6 +669,11 @@ $total_amount = $subtotal + $tax_amount;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+            padding: 0.25rem;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
         }
 
         .quantity-btn {
@@ -624,32 +697,113 @@ $total_amount = $subtotal + $tax_amount;
 
         .quantity-display {
             background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-            border: 2px solid #e2e8f0;
+            border: 2px solid #d1d5db;
             border-radius: 6px;
-            padding: 0.3rem 0.6rem;
-            min-width: 45px;
+            padding: 0.25rem 0.5rem;
+            min-width: 50px;
             text-align: center;
-            font-weight: bold;
-            color: #1e293b !important;
-            font-size: 0.85rem;
+            font-weight: 700;
+            color: #1f2937 !important;
+            font-size: 0.9rem;
             cursor: pointer;
             transition: all 0.3s ease;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            position: relative;
         }
 
         .quantity-display:hover {
-            border-color: var(--primary-color);
-            background: linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+            border-color: #3b82f6;
+            background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
         }
 
         .quantity-display:focus {
             outline: none;
-            border-color: var(--primary-color);
+            border-color: #3b82f6;
             background: #ffffff;
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2), 0 4px 8px rgba(0, 0, 0, 0.15);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2), 0 4px 12px rgba(59, 130, 246, 0.15);
+            transform: translateY(-2px);
+        }
+
+        /* Quick Add Buttons */
+        .quick-add-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 2px;
+        }
+
+        .quick-add-btn {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+
+        .quick-add-btn:hover {
             transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+        }
+
+        .quick-add-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 1px 4px rgba(59, 130, 246, 0.2);
+        }
+
+        .quantity-controls .btn-outline-danger {
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+            border: 2px solid #ef4444;
+            border-radius: 6px;
+            padding: 0.25rem;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 6px rgba(239, 68, 68, 0.3);
+            color: #dc2626 !important;
+            font-weight: 700;
+        }
+
+        .quantity-controls .btn-outline-danger:hover {
+            background: linear-gradient(135deg, #fecaca 0%, #fef2f2 100%);
+            border-color: #f87171;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
+        }
+
+        .quantity-controls .btn-outline-danger:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(239, 68, 68, 0.2);
+        }
+
+        /* Quantity Display Input */
+        .quantity-display {
+            background: #ffffff !important;
+            border: 2px solid #e5e7eb !important;
+            color: #1f2937 !important;
+            font-weight: 700 !important;
+            font-size: 0.9rem !important;
+            text-align: center !important;
+            border-radius: 6px !important;
+            padding: 0.4rem !important;
+            width: 60px !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+            transition: all 0.3s ease !important;
+        }
+
+        .quantity-display:focus {
+            outline: none !important;
+            border-color: #3b82f6 !important;
+            background: #ffffff !important;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2), 0 2px 6px rgba(59, 130, 246, 0.15) !important;
+            transform: translateY(-1px) !important;
+        }
+
+        .quantity-display:hover {
+            border-color: #9ca3af !important;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
         }
 
         .payment-btn {
@@ -808,6 +962,92 @@ $total_amount = $subtotal + $tax_amount;
             scrollbar-width: thin;
             scrollbar-color: #c1c1c1 #f1f1f1;
         }
+
+        /* Customer Modal Styling */
+        .customer-list-container {
+            max-height: 450px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #ffffff;
+            overflow: hidden;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .customer-list {
+            max-height: 450px;
+            overflow-y: auto;
+            padding: 0.5rem;
+        }
+
+        /* Customer List Scrollbar */
+        .customer-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .customer-list::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+
+        .customer-list::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .customer-list::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* Customer Count Badge */
+        #customerCountBadge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.9) !important;
+            color: #1e40af !important;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Customer Item Styling */
+        .customer-item {
+            border: 2px solid transparent;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .customer-item:hover {
+            border-color: #3b82f6;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+        }
+
+        .customer-item.border-primary {
+            border-color: #3b82f6 !important;
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+        }
+
+        .customer-name {
+            font-weight: 700;
+            color: #1f2937;
+            font-size: 1.1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .customer-details {
+            color: #6b7280;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
@@ -960,10 +1200,24 @@ $total_amount = $subtotal + $tax_amount;
                                 <p class="text-muted small mb-2"><?php echo htmlspecialchars($product['category_name']); ?></p>
                                 <div class="fw-bold text-success">
                                     <?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($product['price'], 2); ?>
-                        </div>
+                                </div>
+                                
                                 <?php if ($product['quantity'] <= 0): ?>
                                 <div class="badge bg-danger mt-1">Out of Stock</div>
-                        <?php endif; ?>
+                                <?php else: ?>
+                                <!-- Quick Add Buttons -->
+                                <div class="quick-add-buttons mt-2">
+                                    <button class="btn btn-sm btn-outline-primary quick-add-btn me-1" data-quantity="1" title="Add 1">
+                                        +1
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-primary quick-add-btn me-1" data-quantity="5" title="Add 5">
+                                        +5
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-primary quick-add-btn" data-quantity="10" title="Add 10">
+                                        +10
+                                    </button>
+                                </div>
+                                <?php endif; ?>
                     </div>
                         </div>
                         <?php endforeach; ?>
@@ -984,7 +1238,7 @@ $total_amount = $subtotal + $tax_amount;
                             </button>
                         </div>
                             <div class="mt-2">
-                                <small class="customer-display" style="cursor: pointer; color: #007bff;" onclick="openCustomerModal()">
+                                <small class="customer-display" onclick="openCustomerModal()">
                                     <i class="bi bi-person me-1"></i>CUSTOMER: <span id="selectedCustomerName">Walk-in Customer</span>
                                     <i class="bi bi-chevron-down ms-1"></i>
                                 </small>
@@ -1021,18 +1275,12 @@ $total_amount = $subtotal + $tax_amount;
                 </div>
             </div>
                                         <div class="quantity-controls">
-                                            <button class="quantity-btn" onclick="updateQuantity(<?php echo $index; ?>, -1)">
-                                                <i class="bi bi-dash"></i>
-                    </button>
                                             <input type="number" class="quantity-display" value="<?php echo $item['quantity']; ?>" 
                                                    min="1" max="999" data-index="<?php echo $index; ?>"
-                                                   onchange="updateQuantityDirect(<?php echo $index; ?>, this.value)"
+                                                   onchange="debouncedUpdateQuantityDirect(<?php echo $index; ?>, this.value)"
                                                    onkeypress="handleQuantityKeypress(event, <?php echo $index; ?>, this)"
                                                    oninput="filterQuantityInput(this)"
                                                    onpaste="setTimeout(() => filterQuantityInput(this), 10)">
-                                            <button class="quantity-btn" onclick="updateQuantity(<?php echo $index; ?>, 1)">
-                                                <i class="bi bi-plus"></i>
-                            </button>
                                             <button class="btn btn-outline-danger btn-sm ms-2" onclick="voidProduct(<?php echo $index; ?>)" title="Void Product">
                                                 <i class="bi bi-x-circle"></i>
                             </button>
@@ -1093,6 +1341,7 @@ $total_amount = $subtotal + $tax_amount;
                 <div class="modal-header bg-primary text-white">
                     <h5 class="modal-title" id="customerModalLabel">
                         <i class="bi bi-person me-2"></i>Select Customer
+                        <span class="badge bg-light text-dark ms-2" id="customerCountBadge">0 customers</span>
                     </h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
@@ -1108,12 +1357,14 @@ $total_amount = $subtotal + $tax_amount;
                     </div>
                     
                     <!-- Customer List -->
-                    <div class="customer-list" id="customerList" style="max-height: 400px; overflow-y: auto;">
-                        <div class="text-center py-4">
-                            <div class="spinner-border text-primary" role="status">
-                                <span class="visually-hidden">Loading...</span>
+                    <div class="customer-list-container">
+                        <div class="customer-list" id="customerList">
+                            <div class="text-center py-4">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Loading customers...</p>
                             </div>
-                            <p class="mt-2">Loading customers...</p>
                         </div>
                     </div>
                 </div>
@@ -1169,34 +1420,119 @@ $total_amount = $subtotal + $tax_amount;
         setInterval(updateTime, 1000);
         updateTime();
 
-        // Product search and filtering
-        document.getElementById('productSearch').addEventListener('input', function() {
-            const searchTerm = this.value.toLowerCase();
-            const productCards = document.querySelectorAll('.product-card');
+        // Pre-cache product data for better performance
+        function cacheProductData() {
+            if (!window.productCache) {
+                window.productCache = {};
+            }
             
+            const productCards = document.querySelectorAll('.product-card[data-product-id]');
             productCards.forEach(card => {
-                const productName = card.querySelector('h6').textContent.toLowerCase();
-                const categoryName = card.querySelector('p').textContent.toLowerCase();
-                
-                if (productName.includes(searchTerm) || categoryName.includes(searchTerm)) {
-                    card.style.display = 'block';
-                } else {
-                    card.style.display = 'none';
+                const productId = card.dataset.productId;
+                if (!window.productCache[productId]) {
+                    const nameEl = card.querySelector('h6');
+                    const priceEl = card.querySelector('.fw-bold.text-success');
+                    const skuEl = card.querySelector('.product-sku');
+                    const categoryEl = card.querySelector('p');
+                    const imgEl = card.querySelector('img');
+                    const stockEl = card.querySelector('.badge.bg-danger');
+                    
+                    if (nameEl && priceEl && categoryEl) {
+                        window.productCache[productId] = {
+                            name: nameEl.textContent,
+                            price: parseFloat(priceEl.textContent.replace(/[^\d.-]/g, '')),
+                            sku: skuEl?.textContent || '',
+                            categoryName: categoryEl.textContent,
+                            imageUrl: imgEl?.src || '',
+                            isOutOfStock: !!stockEl
+                        };
+                    }
                 }
             });
+        }
+
+        // Cache product data on page load
+        cacheProductData();
+
+        // Product search and filtering - optimized with debouncing
+        let searchTimeout = null;
+        document.getElementById('productSearch').addEventListener('input', function() {
+            // Clear previous timeout
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+            
+            // Debounce search to improve performance
+            searchTimeout = setTimeout(() => {
+                const searchTerm = this.value.toLowerCase();
+                const productCards = document.querySelectorAll('.product-card');
+                
+                // Use requestAnimationFrame for smooth UI updates
+                requestAnimationFrame(() => {
+                    productCards.forEach(card => {
+                        const productName = card.querySelector('h6').textContent.toLowerCase();
+                        const categoryName = card.querySelector('p').textContent.toLowerCase();
+                        
+                        if (productName.includes(searchTerm) || categoryName.includes(searchTerm)) {
+                            card.style.display = 'block';
+                        } else {
+                            card.style.display = 'none';
+                        }
+                    });
+                });
+            }, 150); // 150ms debounce for search
         });
 
 
-        // Product selection
-        document.querySelectorAll('.product-card').forEach(card => {
-            card.addEventListener('click', function() {
-                const productId = this.dataset.productId;
-                addToCart(productId);
+        // Product selection - optimized with targeted event delegation
+        const productGrid = document.getElementById('productGrid');
+        if (productGrid) {
+            productGrid.addEventListener('click', function(event) {
+                // Prevent event bubbling for better performance
+                event.stopPropagation();
+                
+                const productCard = event.target.closest('.product-card');
+                if (!productCard || !productCard.dataset.productId) {
+                    return;
+                }
+                
+                const productId = productCard.dataset.productId;
+                
+                // Check if it's a quick add button (quantity buttons)
+                if (event.target.classList.contains('quick-add-btn')) {
+                    const quantity = parseInt(event.target.dataset.quantity) || 1;
+                    addToCart(productId, quantity);
+                    return;
+                }
+                
+                // Only handle clicks on the product card itself, not on buttons
+                if (event.target.closest('.quick-add-buttons')) {
+                    return; // Don't handle clicks on quick add buttons here
+                }
+                
+                // Default: instant add to cart (only for product card clicks)
+                if (productCard.contains(event.target)) {
+                    addToCart(productId, 1); // Add 1 quantity instantly
+                }
             });
-        });
+        }
+
+        // Track pending API calls to prevent duplicates
+        const pendingApiCalls = new Set();
 
         // Async function to add item to cart
         async function addToCartAsync(productId, quantity, fallbackCart) {
+            // Create unique key for this API call
+            const callKey = `${productId}-${quantity}-${Date.now()}`;
+            
+            // Prevent duplicate calls for the same product and quantity
+            if (pendingApiCalls.has(`${productId}-${quantity}`)) {
+                console.log('Duplicate API call prevented');
+                return;
+            }
+            
+            pendingApiCalls.add(`${productId}-${quantity}`);
+            
             try {
                 const response = await fetch('add_to_cart.php', {
                     method: 'POST',
@@ -1213,19 +1549,28 @@ $total_amount = $subtotal + $tax_amount;
                 const data = await response.json();
                 
                 if (data.success) {
-                    // Server response successful, update with server data
-                    updateCartDisplay(data.cart);
+                    // Server response successful, only update if cart data is different
+                    if (JSON.stringify(data.cart) !== JSON.stringify(window.cartData)) {
+                        window.cartData = data.cart;
+                        window.paymentTotals = data.totals;
+                        updateCartDisplay(data.cart);
+                    }
                 } else {
                     // Server error, revert to previous state
                     console.error('Server error:', data.error);
+                    window.cartData = fallbackCart;
                     updateCartDisplay(fallbackCart);
                     alert('Error adding product to cart: ' + (data.error || 'Unknown error'));
                 }
             } catch (error) {
                 console.error('Error:', error);
                 // Revert the cart to previous state
+                window.cartData = fallbackCart;
                 updateCartDisplay(fallbackCart);
                 alert('Error adding product to cart: ' + error.message);
+            } finally {
+                // Remove from pending calls
+                pendingApiCalls.delete(`${productId}-${quantity}`);
             }
         }
 
@@ -1263,39 +1608,6 @@ $total_amount = $subtotal + $tax_amount;
             }
         }
 
-        // Async function to remove cart item
-        async function removeCartItemAsync(index, fallbackCart) {
-            try {
-                const response = await fetch('remove_cart_item.php', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: `index=${index}`
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
-                const data = await response.json();
-                
-                if (data.success) {
-                    // Server response successful, update with server data
-                    updateCartDisplay(data.cart);
-                } else {
-                    // Server error, revert to previous state
-                    console.error('Server error:', data.error);
-                    updateCartDisplay(fallbackCart);
-                    alert('Error removing item: ' + (data.error || 'Unknown error'));
-                }
-            } catch (error) {
-                console.error('Error:', error);
-                // Revert the cart to previous state
-                updateCartDisplay(fallbackCart);
-                alert('Error removing item: ' + error.message);
-            }
-        }
 
         // Async function to clear cart
         async function clearCartAsync() {
@@ -1358,22 +1670,37 @@ $total_amount = $subtotal + $tax_amount;
         }
 
         // Add to cart function with instant UI update
-        function addToCart(productId) {
-            // Find the clicked product card to get product data
-            const productCard = document.querySelector(`[data-product-id="${productId}"]`);
-            if (!productCard) {
-                console.error('Product card not found');
-                return;
+        function addToCart(productId, quantityToAdd = 1) {
+            // Use cached product data if available, otherwise query DOM
+            let productData = window.productCache?.[productId];
+            
+            if (!productData) {
+                // Find the clicked product card to get product data
+                const productCard = document.querySelector(`[data-product-id="${productId}"]`);
+                if (!productCard) {
+                    console.error('Product card not found');
+                    return;
+                }
+
+                // Extract product data from the card
+                productData = {
+                    name: productCard.querySelector('h6').textContent,
+                    price: parseFloat(productCard.querySelector('.fw-bold.text-success').textContent.replace(/[^\d.-]/g, '')),
+                    sku: productCard.querySelector('.product-sku')?.textContent || '',
+                    categoryName: productCard.querySelector('p').textContent,
+                    imageUrl: productCard.querySelector('img')?.src || '',
+                    isOutOfStock: !!productCard.querySelector('.badge.bg-danger')
+                };
+                
+                // Cache the product data
+                if (!window.productCache) {
+                    window.productCache = {};
+                }
+                window.productCache[productId] = productData;
             }
 
-            // Extract product data from the card
-            const productName = productCard.querySelector('h6').textContent;
-            const productPrice = parseFloat(productCard.querySelector('.fw-bold.text-success').textContent.replace(/[^\d.-]/g, ''));
-            const productSku = productCard.querySelector('.product-sku')?.textContent || '';
-            const categoryName = productCard.querySelector('p').textContent;
-
             // Check if product is out of stock
-            if (productCard.querySelector('.badge.bg-danger')) {
+            if (productData.isOutOfStock) {
                 alert('This product is out of stock');
                 return;
             }
@@ -1381,12 +1708,12 @@ $total_amount = $subtotal + $tax_amount;
             // Create temporary cart item for instant display
             const tempCartItem = {
                 id: productId,
-                name: productName,
-                price: productPrice,
-                quantity: 1,
-                sku: productSku,
-                category_name: categoryName,
-                image_url: productCard.querySelector('img')?.src || ''
+                name: productData.name,
+                price: productData.price,
+                quantity: quantityToAdd,
+                sku: productData.sku,
+                category_name: productData.categoryName,
+                image_url: productData.imageUrl
             };
 
             // Update cart instantly with temporary item
@@ -1395,130 +1722,187 @@ $total_amount = $subtotal + $tax_amount;
             
             let updatedCart;
             if (existingItemIndex >= 0) {
-                // Item exists, increase quantity
+                // Item exists, increase quantity by the amount being added
                 updatedCart = [...currentCart];
-                updatedCart[existingItemIndex].quantity += 1;
+                updatedCart[existingItemIndex].quantity += quantityToAdd;
             } else {
                 // New item, add to cart
                 updatedCart = [...currentCart, tempCartItem];
             }
 
-            // Update UI instantly
-            updateCartDisplay(updatedCart);
+            // Store the optimistic cart state first
+            window.cartData = updatedCart;
 
-            // Send request to server in background
-            addToCartAsync(productId, 1, currentCart);
+            // Update UI with requestAnimationFrame for better performance
+            requestAnimationFrame(() => {
+                debouncedUpdateCartDisplay(updatedCart);
+            });
+
+            // Send request to server in background with small delay to prevent rapid-fire requests
+            setTimeout(() => {
+                addToCartAsync(productId, quantityToAdd, currentCart);
+            }, 50);
         }
 
-        // Update cart display
+        // Cache DOM elements for better performance
+        let cartElements = null;
+        
+        function getCartElements() {
+            if (!cartElements) {
+                cartElements = {
+                    cartItems: document.getElementById('cartItems'),
+                    cartCount: document.getElementById('cartCount'),
+                    cartSubtotal: document.getElementById('cartSubtotal'),
+                    cartTax: document.getElementById('cartTax'),
+                    cartTotal: document.getElementById('cartTotal'),
+                    paymentBtn: document.querySelector('.payment-btn'),
+                    voidCartBtn: document.querySelector('button[onclick="voidCart()"]')
+                };
+            }
+            return cartElements;
+        }
+
+        // Debounce function to prevent excessive calls
+        let updateCartTimeout = null;
+        let updateCartFrame = null;
+        
+        function debouncedUpdateCartDisplay(cart) {
+            if (updateCartTimeout) {
+                clearTimeout(updateCartTimeout);
+            }
+            if (updateCartFrame) {
+                cancelAnimationFrame(updateCartFrame);
+            }
+            
+            updateCartTimeout = setTimeout(() => {
+                updateCartFrame = requestAnimationFrame(() => {
+                    updateCartDisplay(cart);
+                });
+            }, 10); // 10ms debounce
+        }
+
+        // Update cart display - optimized version
         function updateCartDisplay(cart) {
-            const cartItems = document.getElementById('cartItems');
-            const cartCount = document.getElementById('cartCount');
-            const cartSubtotal = document.getElementById('cartSubtotal');
-            const cartTax = document.getElementById('cartTax');
-            const cartTotal = document.getElementById('cartTotal');
-            const paymentBtn = document.querySelector('.payment-btn');
+            const elements = getCartElements();
+            
+            // Check if required elements exist
+            if (!elements.cartItems || !elements.cartCount || !elements.cartSubtotal || !elements.cartTax || !elements.cartTotal) {
+                console.error('Required cart display elements not found');
+                return;
+            }
 
             // Update cart count
-            cartCount.textContent = cart.length;
+            elements.cartCount.textContent = cart.length;
 
             // Update totals
             let subtotal = 0;
             cart.forEach(item => {
                 subtotal += item.price * item.quantity;
             });
-            const tax = subtotal * (window.POSConfig.taxRate / 100);
+            
+            // Ensure POSConfig exists
+            const taxRate = window.POSConfig?.taxRate || 16;
+            const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
+            
+            const tax = subtotal * (taxRate / 100);
             const total = subtotal + tax;
 
-            cartSubtotal.textContent = `${window.POSConfig.currencySymbol} ${subtotal.toFixed(2)}`;
-            cartTax.textContent = `${window.POSConfig.currencySymbol} ${tax.toFixed(2)}`;
-            cartTotal.textContent = `${window.POSConfig.currencySymbol} ${total.toFixed(2)}`;
+            // Update totals display
+            elements.cartSubtotal.textContent = `${currencySymbol} ${subtotal.toFixed(2)}`;
+            elements.cartTax.textContent = `${currencySymbol} ${tax.toFixed(2)}`;
+            elements.cartTotal.textContent = `${currencySymbol} ${total.toFixed(2)}`;
             
             // Ensure proper styling
-            cartSubtotal.className = 'fw-bold small';
-            cartTax.className = 'fw-bold small';
-            cartTotal.className = 'fw-bold small text-primary';
+            elements.cartSubtotal.className = 'fw-bold small';
+            elements.cartTax.className = 'fw-bold small';
+            elements.cartTotal.className = 'fw-bold small text-primary';
 
             // Update payment totals for payment processor
             window.paymentTotals = { subtotal, tax, total };
             window.cartData = cart;
 
-            // Enable/disable payment button
-            paymentBtn.disabled = cart.length === 0;
+            // Enable/disable buttons
+            if (elements.paymentBtn) {
+                elements.paymentBtn.disabled = cart.length === 0;
+            }
+            
+            if (elements.voidCartBtn) {
+                elements.voidCartBtn.disabled = cart.length === 0;
+            }
 
-            // Update cart items display
+            // Update cart items display efficiently
+            updateCartItemsDisplay(cart, elements.cartItems);
+        }
+
+        // Optimized cart items display update
+        function updateCartItemsDisplay(cart, cartItemsElement) {
             if (cart.length === 0) {
-                cartItems.innerHTML = `
+                cartItemsElement.innerHTML = `
                     <div class="text-center text-muted py-4">
                         <i class="bi bi-cart-x fs-1"></i>
                         <p class="mt-2 mb-1">No items in cart</p>
                         <small>Add products to get started</small>
-                        </div>
-                `;
-            } else {
-                let itemsHtml = '';
-                cart.forEach((item, index) => {
-                    itemsHtml += `
-                        <div class="cart-item" data-index="${index}">
-                            <div class="flex-grow-1 d-flex align-items-center">
-                                <span class="product-number">${index + 1}.</span>
-                                <div class="flex-grow-1">
-                                    <div class="d-flex justify-content-between align-items-start mb-1">
-                                        <div class="product-name">${item.name}</div>
-                                        ${item.sku ? `<span class="product-sku">${item.sku}</span>` : ''}
-                            </div>
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <small class="product-price">
-                                            ${window.POSConfig.currencySymbol} ${item.price.toFixed(2)} each
-                                        </small>
-                                    </div>
-                                    </div>
-                                </div>
-                            <div class="quantity-controls">
-                                <button class="quantity-btn" onclick="updateQuantity(${index}, -1)">
-                                    <i class="bi bi-dash"></i>
-                                </button>
-                                <input type="number" class="quantity-display" value="${item.quantity}" 
-                                       min="1" max="999" data-index="${index}"
-                                       onchange="updateQuantityDirect(${index}, this.value)"
-                                       onkeypress="handleQuantityKeypress(event, ${index}, this)"
-                                       oninput="filterQuantityInput(this)"
-                                       onpaste="setTimeout(() => filterQuantityInput(this), 10)">
-                                <button class="quantity-btn" onclick="updateQuantity(${index}, 1)">
-                                    <i class="bi bi-plus"></i>
-                                </button>
-                                <button class="btn btn-outline-danger btn-sm ms-2" onclick="removeItem(${index})">
-                                    <i class="bi bi-trash"></i>
-                                </button>
-                        </div>
                     </div>
                 `;
-            });
-                cartItems.innerHTML = itemsHtml;
+                return;
             }
+
+            // Use DocumentFragment for better performance
+            const fragment = document.createDocumentFragment();
+            
+            cart.forEach((item, index) => {
+                const cartItemDiv = document.createElement('div');
+                cartItemDiv.className = 'cart-item';
+                cartItemDiv.setAttribute('data-index', index);
+                
+                const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
+                
+                cartItemDiv.innerHTML = `
+                    <div class="flex-grow-1 d-flex align-items-center">
+                        <span class="product-number">${index + 1}.</span>
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between align-items-start mb-1">
+                                <div class="product-name">${item.name}</div>
+                                ${item.sku ? `<span class="product-sku">${item.sku}</span>` : ''}
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="product-price">
+                                    ${currencySymbol} ${item.price.toFixed(2)} each
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="quantity-controls">
+                        <input type="number" class="quantity-display" value="${item.quantity}" 
+                               min="1" max="999" data-index="${index}"
+                               onchange="debouncedUpdateQuantityDirect(${index}, this.value)"
+                               onkeypress="handleQuantityKeypress(event, ${index}, this)"
+                               oninput="filterQuantityInput(this)"
+                               onpaste="setTimeout(() => filterQuantityInput(this), 10)">
+                        <button class="btn btn-outline-danger btn-sm ms-2" onclick="voidProduct(${index})" title="Void Product">
+                            <i class="bi bi-x-circle"></i>
+                        </button>
+                    </div>
+                `;
+                
+                fragment.appendChild(cartItemDiv);
+            });
+            
+            // Single DOM update
+            cartItemsElement.innerHTML = '';
+            cartItemsElement.appendChild(fragment);
         }
 
-        // Update quantity
-        function updateQuantity(index, change) {
-            // Update UI instantly
-            const currentCart = window.cartData || [];
-            if (currentCart[index]) {
-                const updatedCart = [...currentCart];
-                const newQuantity = updatedCart[index].quantity + change;
-                
-                if (newQuantity <= 0) {
-                    // Remove item if quantity becomes 0 or negative
-                    updatedCart.splice(index, 1);
-                } else {
-                    updatedCart[index].quantity = newQuantity;
-                }
-                
-                // Update UI instantly
-                updateCartDisplay(updatedCart);
-            }
 
-            // Send request to server in background
-            updateCartItemAsync(index, change, currentCart);
+        // Debounced quantity update to prevent excessive API calls
+        let quantityUpdateTimeout = null;
+        function debouncedUpdateQuantityDirect(index, newQuantity) {
+            if (quantityUpdateTimeout) {
+                clearTimeout(quantityUpdateTimeout);
+            }
+            quantityUpdateTimeout = setTimeout(() => {
+                updateQuantityDirect(index, newQuantity);
+            }, 300); // 300ms debounce for quantity updates
         }
 
         // Update quantity directly from input
@@ -1616,21 +2000,6 @@ $total_amount = $subtotal + $tax_amount;
             }
         }
 
-        // Remove item
-        function removeItem(index) {
-            // Update UI instantly
-            const currentCart = window.cartData || [];
-            if (currentCart[index]) {
-                const updatedCart = [...currentCart];
-                updatedCart.splice(index, 1);
-                
-                // Update UI instantly
-                updateCartDisplay(updatedCart);
-            }
-
-            // Send request to server in background
-            removeCartItemAsync(index, currentCart);
-        }
 
         // Clear cart
         function clearCart() {
@@ -1668,12 +2037,66 @@ $total_amount = $subtotal + $tax_amount;
                 alert('Cart is empty');
                     return;
                 }
-            alert('Hold transaction functionality will be implemented');
+
+            // Show hold reason dialog
+            const holdReason = prompt('Enter reason for holding this transaction (required):');
+            if (!holdReason || holdReason.trim() === '') {
+                alert('Hold reason is required.');
+                return;
+            }
+
+            const customerReference = prompt('Enter customer reference (optional):') || '';
+
+            if (!confirm(`Hold this transaction?\n\nReason: ${holdReason}\nCustomer: ${customerReference || 'N/A'}\n\nYou can retrieve it later from the "Held" button.`)) {
+                return;
+            }
+
+            // Call hold transaction API
+            fetch('hold_transaction.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    reason: holdReason,
+                    customer_reference: customerReference
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update cart display
+                    window.cartData = data.cart;
+                    window.paymentTotals = data.totals;
+                    updateCartDisplay(data.cart);
+                    alert('Transaction held successfully!');
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error holding transaction. Please try again.');
+            });
         }
 
         // Load held transactions
         function loadHeldTransactions() {
-            alert('Load held transactions functionality will be implemented');
+            const modalElement = document.getElementById('heldTransactionsModal');
+            if (!modalElement) {
+                console.error('Held transactions modal element not found');
+                alert('Held transactions modal not found. Please refresh the page.');
+                return;
+            }
+
+            // Show held transactions modal
+            const heldModal = new bootstrap.Modal(modalElement);
+            heldModal.show();
+            
+            // Load held transactions data after modal is shown
+            setTimeout(() => {
+                loadHeldTransactionsData();
+            }, 100);
         }
 
         // Customer Selection Functions
@@ -1689,6 +2112,9 @@ $total_amount = $subtotal + $tax_amount;
             selectedCustomerId = null;
             selectedCustomerData = null;
             document.getElementById('selectCustomerBtn').disabled = true;
+            
+            // Reset customer count badge
+            document.getElementById('customerCountBadge').textContent = '0 customers';
             
             loadCustomers();
         }
@@ -1710,7 +2136,13 @@ $total_amount = $subtotal + $tax_amount;
 
         function displayCustomers(customers) {
             const customerList = document.getElementById('customerList');
+            const customerCountBadge = document.getElementById('customerCountBadge');
             const searchTerm = document.getElementById('customerSearch').value.trim();
+            
+            // Update customer count badge
+            const customerCount = customers.length;
+            const countText = customerCount === 1 ? '1 customer' : `${customerCount} customers`;
+            customerCountBadge.textContent = countText;
             
             if (customers.length === 0) {
                 if (searchTerm) {
@@ -1735,14 +2167,12 @@ $total_amount = $subtotal + $tax_amount;
 
             let customersHtml = '';
             
-            // Add results count header
+            // Add results count header for search results
             if (searchTerm) {
                 customersHtml += `
-                    <div class="mb-3">
-                        <small class="text-muted">
-                            <i class="bi bi-search me-1"></i>
-                            Found ${customers.length} customer${customers.length !== 1 ? 's' : ''} for "${searchTerm}"
-                        </small>
+                    <div class="alert alert-info mb-3">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Found ${customerCount} customer${customerCount === 1 ? '' : 's'} matching "${searchTerm}"
                     </div>
                 `;
             }
@@ -1754,27 +2184,18 @@ $total_amount = $subtotal + $tax_amount;
                                         customer.customer_type === 'business' ? 'text-info' : 'text-dark';
                 
                 customersHtml += `
-                    <div class="customer-item card mb-2 ${isSelected ? 'border-primary' : ''}" 
-                         style="cursor: pointer; transition: all 0.3s;" 
+                    <div class="customer-item ${isSelected ? 'border-primary' : ''}" 
                          onclick="selectCustomer(${customer.id}, '${customer.display_name}', ${JSON.stringify(customer).replace(/"/g, '&quot;')})">
-                        <div class="card-body p-3">
-                            <div class="d-flex justify-content-between align-items-start">
-                                <div class="flex-grow-1">
-                                    <h6 class="mb-1 ${customerTypeClass}">
-                                        ${customer.display_name}
-                                        ${customer.customer_type === 'vip' ? '<i class="bi bi-star-fill text-warning ms-1"></i>' : ''}
-                                        ${customer.tax_exempt ? '<i class="bi bi-shield-check text-success ms-1"></i>' : ''}
-                                    </h6>
-                                    <small class="text-muted">
-                                        ${customer.customer_number} • ${customer.customer_type}
-                                        ${customer.membership_level ? ' • ' + customer.membership_level : ''}
-                                    </small>
-                                </div>
-                                <div class="text-end">
-                                    ${isSelected ? '<i class="bi bi-check-circle-fill text-primary fs-4"></i>' : ''}
-                                </div>
-                            </div>
+                        <div class="customer-name ${customerTypeClass}">
+                            ${customer.display_name}
+                            ${customer.customer_type === 'vip' ? '<i class="bi bi-star-fill text-warning ms-1"></i>' : ''}
+                            ${customer.tax_exempt ? '<i class="bi bi-shield-check text-success ms-1"></i>' : ''}
                         </div>
+                        <div class="customer-details">
+                            ${customer.customer_number} • ${customer.customer_type}
+                            ${customer.membership_level ? ' • ' + customer.membership_level : ''}
+                        </div>
+                        ${isSelected ? '<div class="text-end mt-2"><i class="bi bi-check-circle-fill text-primary"></i></div>' : ''}
                     </div>
                 `;
             });
@@ -2043,25 +2464,8 @@ $total_amount = $subtotal + $tax_amount;
             window.addEventListener('online', updateNetworkStatus);
             window.addEventListener('offline', updateNetworkStatus);
             
-            // Periodic check every 30 seconds
-            setInterval(() => {
-                // Test actual connectivity by trying to fetch a small resource
-                fetch('/favicon.ico', { 
-                    method: 'HEAD', 
-                    mode: 'no-cors',
-                    cache: 'no-cache'
-                }).then(() => {
-                    if (!navigator.onLine) {
-                        updateNetworkStatus();
-                    }
-                }).catch(() => {
-                    if (navigator.onLine) {
-                        networkStatus.classList.add('offline');
-                        networkText.textContent = 'Offline';
-                        networkStatus.title = 'Network Disconnected';
-                    }
-                });
-            }, 30000);
+            // Note: Periodic connectivity check disabled to avoid 404 errors
+            // The browser's built-in online/offline events are sufficient for most use cases
         }
         
         // Logout functionality
@@ -2250,13 +2654,13 @@ $total_amount = $subtotal + $tax_amount;
                         <div class="mb-3">
                             <label for="auth_user_id" class="form-label">User ID</label>
                             <input type="text" class="form-control" name="user_id" id="auth_user_id" 
-                                   placeholder="Enter your user ID" required>
+                                   placeholder="Enter your user ID" autocomplete="username" required>
                         </div>
                         
                         <div class="mb-3">
                             <label for="auth_password" class="form-label">Password</label>
                             <input type="password" class="form-control" name="password" id="auth_password" 
-                                   placeholder="Enter your password" required>
+                                   placeholder="Enter your password" autocomplete="current-password" required>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -2601,6 +3005,65 @@ $total_amount = $subtotal + $tax_amount;
         </div>
     </div>
 
+    <!-- Held Transactions Modal -->
+    <div class="modal fade" id="heldTransactionsModal" tabindex="-1" aria-labelledby="heldTransactionsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title" id="heldTransactionsModalLabel">
+                        <i class="bi bi-clock-history me-2"></i>Held Transactions
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Filters -->
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="tillFilter" class="form-label">Filter by Till:</label>
+                            <select class="form-select" id="tillFilter" onchange="applyHeldTransactionFilters()">
+                                <option value="all">All Tills</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="cashierFilter" class="form-label">Filter by Cashier:</label>
+                            <select class="form-select" id="cashierFilter" onchange="applyHeldTransactionFilters()">
+                                <option value="all">All Cashiers</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Held Transactions Table -->
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Cashier</th>
+                                    <th>Till</th>
+                                    <th>Items</th>
+                                    <th>Total</th>
+                                    <th>Reason</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="heldTransactionsTableBody">
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted">Loading held transactions...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="loadHeldTransactionsData()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Till management event listeners
         document.addEventListener('DOMContentLoaded', function() {
@@ -2684,74 +3147,215 @@ $total_amount = $subtotal + $tax_amount;
             }
         }
 
-        // Hold transaction functionality
-        function holdTransaction() {
-            if (window.cartData && window.cartData.length === 0) {
-                alert('Cart is empty. Nothing to hold.');
+        // Load held transactions data
+        function loadHeldTransactionsData() {
+            // Check if modal exists before making the request
+            const modal = document.getElementById('heldTransactionsModal');
+            if (!modal) {
+                console.error('Held transactions modal not found');
                 return;
             }
 
-            if (!confirm('Hold this transaction? You can retrieve it later from the "Held" button.')) {
-                return;
-            }
-
-            // Save cart to session storage as held transaction
-            const heldTransaction = {
-                id: Date.now(), // Simple ID based on timestamp
-                cart: window.cartData,
-                totals: window.paymentTotals,
-                timestamp: new Date().toLocaleString(),
-                till: '<?php echo $selected_till['till_name'] ?? 'Unknown'; ?>'
-            };
-
-            // Get existing held transactions
-            let heldTransactions = JSON.parse(localStorage.getItem('heldTransactions') || '[]');
-            heldTransactions.push(heldTransaction);
-            localStorage.setItem('heldTransactions', JSON.stringify(heldTransactions));
-
-            // Clear current cart
-            clearCart();
-            
-            alert('Transaction held successfully! You can retrieve it later from the "Held" button.');
+            fetch('get_held_transactions.php')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayHeldTransactions(data.held_transactions, data.filters);
+                    } else {
+                        alert('Error loading held transactions: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error loading held transactions. Please try again.');
+                });
         }
 
-        // Load held transactions
-        function loadHeldTransactions() {
-            const heldTransactions = JSON.parse(localStorage.getItem('heldTransactions') || '[]');
+        // Display held transactions in modal
+        function displayHeldTransactions(transactions, filters) {
+            const tbody = document.getElementById('heldTransactionsTableBody');
+            const tillFilter = document.getElementById('tillFilter');
+            const cashierFilter = document.getElementById('cashierFilter');
             
-            if (heldTransactions.length === 0) {
-                alert('No held transactions found.');
+            // Check if required elements exist
+            if (!tbody || !tillFilter || !cashierFilter) {
+                console.error('Required DOM elements not found for held transactions display');
                 return;
             }
 
-            // Create a simple list of held transactions
-            let message = 'Held Transactions:\n\n';
-            heldTransactions.forEach((transaction, index) => {
-                message += `${index + 1}. ${transaction.timestamp} - ${transaction.till} - ${transaction.cart.length} items\n`;
-            });
-            message += '\nTo load a transaction, use the transaction number.';
-
-            const transactionNumber = prompt(message + '\n\nEnter transaction number to load (or cancel to close):');
-            
-            if (transactionNumber && !isNaN(transactionNumber)) {
-                const index = parseInt(transactionNumber) - 1;
-                if (index >= 0 && index < heldTransactions.length) {
-                    const transaction = heldTransactions[index];
-                    
-                    // Load the transaction
-                    window.cartData = transaction.cart;
-                    window.paymentTotals = transaction.totals;
-                    updateCartDisplay(transaction.cart);
-                    
-                    // Remove from held transactions
-                    heldTransactions.splice(index, 1);
-                    localStorage.setItem('heldTransactions', JSON.stringify(heldTransactions));
-                    
-                    alert('Transaction loaded successfully!');
-                } else {
-                    alert('Invalid transaction number.');
-                }
+            // Update filters
+            if (filters && filters.tills) {
+                tillFilter.innerHTML = '<option value="all">All Tills</option>';
+                filters.tills.forEach(till => {
+                    tillFilter.innerHTML += `<option value="${till.id}">${till.till_name}</option>`;
+                });
             }
+            
+            if (filters && filters.cashiers) {
+                cashierFilter.innerHTML = '<option value="all">All Cashiers</option>';
+                filters.cashiers.forEach(cashier => {
+                    cashierFilter.innerHTML += `<option value="${cashier.id}">${cashier.username}</option>`;
+                });
+            }
+            
+            // Display transactions
+            if (!transactions || transactions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No held transactions found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = '';
+            transactions.forEach(transaction => {
+                const row = document.createElement('tr');
+                const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
+                const total = transaction.totals?.total || 0;
+                const reason = transaction.reason || 'No reason provided';
+                
+                row.innerHTML = `
+                    <td>${transaction.id || 'N/A'}</td>
+                    <td>${transaction.cashier_name || 'Unknown'}</td>
+                    <td>${transaction.till_name || 'N/A'}</td>
+                    <td>${transaction.item_count || 0} items</td>
+                    <td>${currencySymbol} ${total.toFixed(2)}</td>
+                    <td>${reason.replace(/'/g, "&#39;")}</td>
+                    <td>
+                        <button class="btn btn-sm btn-success" onclick="continueHeldTransaction(${transaction.id})">
+                            <i class="bi bi-play-circle"></i> Continue
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="voidHeldTransaction(${transaction.id}, '${reason.replace(/'/g, "&#39;")}')">
+                            <i class="bi bi-x-circle"></i> Void
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Continue held transaction
+        function continueHeldTransaction(heldTransactionId) {
+            if (window.cartData.length > 0) {
+                alert('Cart must be empty to continue with held transaction. Please clear the cart first.');
+                return;
+            }
+
+            if (!confirm('Continue with this held transaction? This will load the items into your cart.')) {
+                return;
+            }
+
+            fetch('continue_held_transaction.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    held_transaction_id: heldTransactionId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update cart display
+                    window.cartData = data.cart;
+                    window.paymentTotals = data.totals;
+                    updateCartDisplay(data.cart);
+                    
+                    // Close modal
+                    const modalElement = document.getElementById('heldTransactionsModal');
+                    if (modalElement) {
+                        const heldModal = bootstrap.Modal.getInstance(modalElement);
+                        if (heldModal) {
+                            heldModal.hide();
+                        }
+                    }
+                    
+                    alert('Held transaction loaded successfully!');
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error continuing held transaction. Please try again.');
+            });
+        }
+
+        // Void held transaction
+        function voidHeldTransaction(heldTransactionId, originalReason) {
+            const voidReason = prompt(`Void Held Transaction #${heldTransactionId}\n\nOriginal Reason: ${originalReason}\n\nEnter void reason (required):`);
+            if (!voidReason || voidReason.trim() === '') {
+                alert('Void reason is required.');
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to void this held transaction?\n\nTransaction ID: ${heldTransactionId}\nOriginal Reason: ${originalReason}\nVoid Reason: ${voidReason}\n\nThis action will be recorded in the audit trail.`)) {
+                return;
+            }
+
+            fetch('void_held_transaction.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    held_transaction_id: heldTransactionId,
+                    void_reason: voidReason
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Held transaction voided successfully!');
+                    // Reload held transactions
+                    loadHeldTransactionsData();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error voiding held transaction. Please try again.');
+            });
+        }
+
+        // Apply held transaction filters
+        function applyHeldTransactionFilters() {
+            const tillFilterElement = document.getElementById('tillFilter');
+            const cashierFilterElement = document.getElementById('cashierFilter');
+            
+            if (!tillFilterElement || !cashierFilterElement) {
+                console.error('Filter elements not found');
+                return;
+            }
+            
+            const tillFilter = tillFilterElement.value;
+            const cashierFilter = cashierFilterElement.value;
+            
+            let url = 'get_held_transactions.php?';
+            const params = [];
+            
+            if (tillFilter && tillFilter !== 'all') {
+                params.push(`filter_till=${tillFilter}`);
+            }
+            
+            if (cashierFilter && cashierFilter !== 'all') {
+                params.push(`filter_cashier=${cashierFilter}`);
+            }
+            
+            url += params.join('&');
+            
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        displayHeldTransactions(data.held_transactions, data.filters);
+                    } else {
+                        alert('Error loading held transactions: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error loading held transactions. Please try again.');
+                });
         }
 
         // Void product functionality
@@ -2770,9 +3374,7 @@ $total_amount = $subtotal + $tax_amount;
                 return;
             }
 
-            const voidNotes = prompt(`Additional notes (optional):`) || '';
-
-            if (!confirm(`Are you sure you want to void this product?\n\nProduct: ${product.name}\nQuantity: ${product.quantity}\nAmount: ${window.POSConfig.currencySymbol} ${(product.price * product.quantity).toFixed(2)}\n\nThis action will be recorded in the audit trail.`)) {
+            if (!confirm(`Are you sure you want to void this product?\n\nProduct: ${product.name}\nQuantity: ${product.quantity}\nAmount: ${window.POSConfig?.currencySymbol || 'KES'} ${(product.price * product.quantity).toFixed(2)}\n\nThis action will be recorded in the audit trail.`)) {
                 return;
             }
 
@@ -2784,8 +3386,7 @@ $total_amount = $subtotal + $tax_amount;
                 },
                 body: JSON.stringify({
                     cart_index: cartIndex,
-                    void_reason: voidReason.trim(),
-                    void_notes: voidNotes.trim()
+                    void_reason: voidReason.trim()
                 })
             })
             .then(response => {
@@ -2825,15 +3426,13 @@ $total_amount = $subtotal + $tax_amount;
                 return;
             }
 
-            const voidNotes = prompt(`Additional notes (optional):`) || '';
-
             // Calculate total amount
             let totalAmount = 0;
             window.cartData.forEach(item => {
                 totalAmount += item.price * item.quantity;
             });
 
-            if (!confirm(`Are you sure you want to void the entire cart?\n\nItems: ${window.cartData.length}\nTotal Amount: ${window.POSConfig.currencySymbol} ${totalAmount.toFixed(2)}\n\nThis action will be recorded in the audit trail.`)) {
+            if (!confirm(`Are you sure you want to void the entire cart?\n\nItems: ${window.cartData.length}\nTotal Amount: ${window.POSConfig?.currencySymbol || 'KES'} ${totalAmount.toFixed(2)}\n\nThis action will be recorded in the audit trail.`)) {
                 return;
             }
 
@@ -2844,8 +3443,7 @@ $total_amount = $subtotal + $tax_amount;
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    void_reason: voidReason.trim(),
-                    void_notes: voidNotes.trim()
+                    void_reason: voidReason.trim()
                 })
             })
             .then(response => {
@@ -2860,7 +3458,7 @@ $total_amount = $subtotal + $tax_amount;
                     window.cartData = data.cart;
                     window.paymentTotals = data.totals;
                     updateCartDisplay(data.cart);
-                    alert(`Cart voided successfully.\n\nVoided ${data.voided_items} items\nTotal Amount: ${window.POSConfig.currencySymbol} ${data.voided_amount.toFixed(2)}`);
+                    alert(`Cart voided successfully.\n\nVoided ${data.voided_items} items\nTotal Amount: ${window.POSConfig?.currencySymbol || 'KES'} ${data.voided_amount.toFixed(2)}`);
                 } else {
                     alert('Error voiding cart: ' + (data.error || 'Unknown error'));
                 }

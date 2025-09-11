@@ -256,7 +256,6 @@ $users = $users_stmt->fetchAll(PDO::FETCH_ASSOC);
                                         <th>User</th>
                                         <th>Till</th>
                                         <th>Reason</th>
-                                        <th>Notes</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -283,7 +282,6 @@ $users = $users_stmt->fetchAll(PDO::FETCH_ASSOC);
                                         <td><?php echo htmlspecialchars($void['username'] ?? 'Unknown'); ?></td>
                                         <td><?php echo htmlspecialchars($void['till_name'] ?? 'Unknown'); ?></td>
                                         <td><?php echo htmlspecialchars($void['void_reason']); ?></td>
-                                        <td><?php echo htmlspecialchars($void['void_notes'] ?: '-'); ?></td>
                                     </tr>
                                     <?php endforeach; ?>
                                 </tbody>

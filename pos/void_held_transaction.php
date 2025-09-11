@@ -19,7 +19,6 @@ header('Content-Type: application/json');
 
 // Get user information
 $user_id = $_SESSION['user_id'];
-$till_id = $_SESSION['selected_till_id'] ?? null;
 
 try {
     // Get void data from request
@@ -31,77 +30,80 @@ try {
     }
 
     // Validate required fields
-    $requiredFields = ['cart_index', 'void_reason'];
+    $requiredFields = ['held_transaction_id', 'void_reason'];
     foreach ($requiredFields as $field) {
         if (!isset($voidData[$field])) {
             throw new Exception("Missing required field: $field");
         }
     }
 
-    // Get cart data
-    $cart = $_SESSION['cart'] ?? [];
-    $cart_index = intval($voidData['cart_index']);
-    
-    if (!isset($cart[$cart_index])) {
-        throw new Exception('Invalid cart item index');
-    }
-
-    $cart_item = $cart[$cart_index];
+    $held_transaction_id = intval($voidData['held_transaction_id']);
     $void_reason = trim($voidData['void_reason']);
 
     if (empty($void_reason)) {
         throw new Exception('Void reason is required');
     }
 
+    // Get held transaction details
+    $stmt = $conn->prepare("
+        SELECT ht.*, u.username as cashier_name, rt.till_name
+        FROM held_transactions ht
+        LEFT JOIN users u ON ht.user_id = u.id
+        LEFT JOIN register_tills rt ON ht.till_id = rt.id
+        WHERE ht.id = ? AND ht.status = 'held'
+    ");
+    $stmt->execute([$held_transaction_id]);
+    $held_transaction = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$held_transaction) {
+        throw new Exception('Held transaction not found or already processed');
+    }
+
+    // Decode cart data to get totals
+    $cartData = json_decode($held_transaction['cart_data'], true);
+    $total_amount = $cartData['totals']['total'] ?? 0;
+
     // Start transaction
     $conn->beginTransaction();
 
     try {
-        // Record void transaction
+        // Update held transaction status to deleted
+        $stmt = $conn->prepare("
+            UPDATE held_transactions 
+            SET status = 'deleted', 
+                reason = CONCAT(COALESCE(reason, ''), ' | Voided: ', ?),
+                updated_at = NOW() 
+            WHERE id = ?
+        ");
+        $stmt->execute([$void_reason, $held_transaction_id]);
+
+        // Record void transaction for audit trail
         $stmt = $conn->prepare("
             INSERT INTO void_transactions (
                 user_id, till_id, void_type, product_id, product_name, 
                 quantity, unit_price, total_amount, void_reason
-            ) VALUES (?, ?, 'product', ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, 'held_transaction', NULL, ?, 0, 0, ?, ?)
         ");
 
-        $total_amount = $cart_item['price'] * $cart_item['quantity'];
-        
         $stmt->execute([
             $user_id,
-            $till_id,
-            $cart_item['id'],
-            $cart_item['name'],
-            $cart_item['quantity'],
-            $cart_item['price'],
+            $held_transaction['till_id'],
+            'Held Transaction #' . $held_transaction_id,
             $total_amount,
-            $void_reason
+            'Held transaction voided: ' . $void_reason
         ]);
-
-        // Remove item from cart
-        unset($cart[$cart_index]);
-        $cart = array_values($cart); // Re-index array
-        $_SESSION['cart'] = $cart;
 
         $conn->commit();
 
-        // Calculate new totals
-        $subtotal = 0;
-        foreach ($cart as $item) {
-            $subtotal += $item['price'] * $item['quantity'];
-        }
-        $tax_rate = 16; // Default tax rate
-        $tax_amount = $subtotal * ($tax_rate / 100);
-        $total_amount = $subtotal + $tax_amount;
-
         echo json_encode([
             'success' => true,
-            'message' => 'Product voided successfully',
-            'cart' => $cart,
-            'totals' => [
-                'subtotal' => $subtotal,
-                'tax' => $tax_amount,
-                'total' => $total_amount
+            'message' => 'Held transaction voided successfully',
+            'voided_amount' => $total_amount,
+            'held_transaction_info' => [
+                'id' => $held_transaction['id'],
+                'cashier_name' => $held_transaction['cashier_name'],
+                'till_name' => $held_transaction['till_name'],
+                'original_reason' => $held_transaction['reason']
             ]
         ]);
 

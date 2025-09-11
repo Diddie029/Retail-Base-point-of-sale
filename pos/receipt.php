@@ -240,6 +240,18 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
             font-size: 0.9rem;
         }
 
+        .item-sku {
+            font-size: 0.7rem;
+            color: #3b82f6;
+            font-weight: 600;
+            background: #eff6ff;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            display: inline-block;
+            margin-bottom: 3px;
+            border: 1px solid #dbeafe;
+        }
+
         .item-meta {
             font-size: 0.75rem;
             color: #6b7280;
@@ -468,11 +480,13 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
                                                         <span class="badge bg-info">Auto BOM</span>
                                                     <?php endif; ?>
                                                 </div>
+                                                <?php if (!empty($item['sku'])): ?>
+                                                    <div class="item-sku">
+                                                        SKU: <?php echo htmlspecialchars($item['sku']); ?>
+                                                    </div>
+                                                <?php endif; ?>
                                                 <div class="item-meta">
                                                     <?php echo $item['quantity']; ?> × <?php echo $settings['currency_symbol']; ?><?php echo number_format($item['unit_price'], 2); ?>
-                                                    <?php if (!empty($item['sku'])): ?>
-                                                        | SKU: <?php echo htmlspecialchars($item['sku']); ?>
-                                                    <?php endif; ?>
                                                 </div>
                                             </div>
                                             <div class="item-amount">

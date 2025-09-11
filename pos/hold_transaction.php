@@ -22,18 +22,18 @@ $user_id = $_SESSION['user_id'];
 $till_id = $_SESSION['selected_till_id'] ?? null;
 
 try {
-    // Get void data from request
+    // Get hold data from request
     $input = file_get_contents('php://input');
-    $voidData = json_decode($input, true);
+    $holdData = json_decode($input, true);
 
-    if (!$voidData) {
-        throw new Exception('Invalid void data');
+    if (!$holdData) {
+        throw new Exception('Invalid hold data');
     }
 
     // Validate required fields
-    $requiredFields = ['void_reason'];
+    $requiredFields = ['reason'];
     foreach ($requiredFields as $field) {
-        if (!isset($voidData[$field])) {
+        if (!isset($holdData[$field])) {
             throw new Exception("Missing required field: $field");
         }
     }
@@ -42,44 +42,59 @@ try {
     $cart = $_SESSION['cart'] ?? [];
     
     if (empty($cart)) {
-        throw new Exception('Cart is empty. Nothing to void.');
+        throw new Exception('Cart is empty. Nothing to hold.');
     }
 
-    $void_reason = trim($voidData['void_reason']);
+    $reason = trim($holdData['reason']);
+    $customer_reference = trim($holdData['customer_reference'] ?? '');
 
-    if (empty($void_reason)) {
-        throw new Exception('Void reason is required');
+    if (empty($reason)) {
+        throw new Exception('Hold reason is required');
     }
+
+    // Calculate totals
+    $subtotal = 0;
+    foreach ($cart as $item) {
+        $subtotal += $item['price'] * $item['quantity'];
+    }
+    
+    $tax_rate = 16; // Default tax rate - could be made configurable
+    $tax_amount = $subtotal * ($tax_rate / 100);
+    $total_amount = $subtotal + $tax_amount;
+
+    // Prepare cart data with totals
+    $cartData = [
+        'items' => $cart,
+        'totals' => [
+            'subtotal' => $subtotal,
+            'tax' => $tax_amount,
+            'total' => $total_amount
+        ],
+        'customer_reference' => $customer_reference,
+        'hold_reason' => $reason,
+        'held_at' => date('Y-m-d H:i:s')
+    ];
 
     // Start transaction
     $conn->beginTransaction();
 
     try {
-        // Record void transaction for each item in cart
+        // Insert held transaction
         $stmt = $conn->prepare("
-            INSERT INTO void_transactions (
-                user_id, till_id, void_type, product_id, product_name, 
-                quantity, unit_price, total_amount, void_reason
-            ) VALUES (?, ?, 'cart', ?, ?, ?, ?, ?, ?)
+            INSERT INTO held_transactions (
+                user_id, till_id, cart_data, reason, customer_reference, status
+            ) VALUES (?, ?, ?, ?, ?, 'held')
         ");
 
-        $total_voided_amount = 0;
-        
-        foreach ($cart as $item) {
-            $item_total = $item['price'] * $item['quantity'];
-            $total_voided_amount += $item_total;
-            
-            $stmt->execute([
-                $user_id,
-                $till_id,
-                $item['id'],
-                $item['name'],
-                $item['quantity'],
-                $item['price'],
-                $item_total,
-                $void_reason
-            ]);
-        }
+        $stmt->execute([
+            $user_id,
+            $till_id,
+            json_encode($cartData),
+            $reason,
+            $customer_reference
+        ]);
+
+        $held_transaction_id = $conn->lastInsertId();
 
         // Clear cart
         $_SESSION['cart'] = [];
@@ -88,9 +103,8 @@ try {
 
         echo json_encode([
             'success' => true,
-            'message' => 'Cart voided successfully',
-            'voided_items' => count($cart),
-            'voided_amount' => $total_voided_amount,
+            'message' => 'Transaction held successfully',
+            'held_transaction_id' => $held_transaction_id,
             'cart' => [],
             'totals' => [
                 'subtotal' => 0,
