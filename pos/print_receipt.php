@@ -331,10 +331,10 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         <div class="receipt-header">
             <div class="company-name"><?php 
                 // Follow memory specification: source company info from settings
-                echo htmlspecialchars($receiptData['company_name'] ?: ($settings['company_name'] ?? 'POS System')); 
+                echo htmlspecialchars(($receiptData['company_name'] ?? '') ?: ($settings['company_name'] ?? 'POS System')); 
             ?></div>
             <div class="company-address"><?php 
-                echo nl2br(htmlspecialchars($receiptData['company_address'] ?: ($settings['company_address'] ?? ''))); 
+                echo nl2br(htmlspecialchars(($receiptData['company_address'] ?? '') ?: ($settings['company_address'] ?? ''))); 
             ?></div>
         </div>
 
@@ -367,17 +367,32 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 <span><strong>Time:</strong></span>
                 <span><?php echo htmlspecialchars($receiptData['time'] ?? date('H:i:s')); ?></span>
             </div>
+            <?php if (isset($receiptData['is_split_payment']) && $receiptData['is_split_payment']): ?>
+            <div class="info-row">
+                <span><strong>Payment:</strong></span>
+                <span>Split Payment</span>
+            </div>
+            <?php else: ?>
             <div class="info-row">
                 <span><strong>Payment:</strong></span>
                 <span><?php echo htmlspecialchars($receiptData['method'] ?? $receiptData['payment_method'] ?? 'Cash'); ?></span>
             </div>
-            <?php if (!empty($receiptData['customer_name']) && $receiptData['customer_name'] !== 'Walk-in Customer'): ?>
+            <?php endif; ?>
+            <?php if (!empty($receiptData['customer_name']) && $receiptData['customer_name'] !== 'Walk-in Customer' && !empty($receiptData['loyalty'])): ?>
             <div class="info-row">
                 <span><strong>Customer:</strong></span>
-                <span><?php echo htmlspecialchars($receiptData['customer_name']); ?></span>
+                <span><?php 
+                    // Security: Show only first name for privacy protection
+                    // Only show customer name when they have loyalty activity (redeeming or earning points)
+                    $fullName = $receiptData['customer_name'];
+                    $nameParts = explode(' ', trim($fullName));
+                    $firstName = $nameParts[0] ?? $fullName;
+                    echo htmlspecialchars($firstName);
+                ?></span>
             </div>
             <?php endif; ?>
         </div>
+
 
         <!-- Receipt Barcode -->
         <div class="barcode-section text-center" style="margin: 15px 0; padding: 10px 0; border: 1px dashed #ccc; border-left: none; border-right: none;">
@@ -581,6 +596,52 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             </div>
             <?php endif; ?>
         </div>
+
+        <!-- Split Payment Details -->
+        <?php if (isset($receiptData['is_split_payment']) && $receiptData['is_split_payment'] && !empty($receiptData['payment_methods'])): ?>
+        <div class="split-payment-section" style="margin: 15px 0; padding: 10px; background-color: #f8f9fa; border-radius: 5px;">
+            <h6 style="margin-bottom: 10px; font-weight: bold; color: #495057;">Payment Methods Used:</h6>
+            <?php foreach ($receiptData['payment_methods'] as $payment): ?>
+            <div class="payment-method-row" style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px;">
+                <span>
+                    <?php
+                    $methodName = ucfirst(str_replace('_', ' ', $payment['method']));
+                    echo htmlspecialchars($methodName);
+
+                    // Show points used for loyalty payments
+                    if ($payment['method'] === 'loyalty_points' && !empty($payment['points_used'])) {
+                        echo ' (' . $payment['points_used'] . ' points)';
+                    }
+                    ?>
+                </span>
+                <span><?php echo $settings['currency_symbol'] ?? 'KES'; ?><?php echo number_format($payment['amount'], 2); ?></span>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
+        <!-- Loyalty Points Information -->
+        <?php if (!empty($receiptData['loyalty'])): ?>
+        <div class="loyalty-section" style="margin: 15px 0; padding: 10px; background-color: #fff3cd; border-radius: 5px;">
+            <h6 style="margin-bottom: 10px; font-weight: bold; color: #856404;">Loyalty Points:</h6>
+            <?php if ($receiptData['loyalty']['points_used'] > 0): ?>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px;">
+                <span>Points Redeemed:</span>
+                <span><?php echo number_format($receiptData['loyalty']['points_used']); ?> points</span>
+            </div>
+            <?php endif; ?>
+            <?php if ($receiptData['loyalty']['points_earned'] > 0): ?>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px;">
+                <span>Points Earned:</span>
+                <span><?php echo number_format($receiptData['loyalty']['points_earned']); ?> points</span>
+            </div>
+            <?php endif; ?>
+            <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: bold;">
+                <span>Current Balance:</span>
+                <span><?php echo number_format($receiptData['loyalty']['customer_balance']); ?> points</span>
+            </div>
+        </div>
+        <?php endif; ?>
 
         <!-- Thank You Message -->
         <div class="thank-you">

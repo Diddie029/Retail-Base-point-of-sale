@@ -88,6 +88,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
+// Function to check for held transactions
+function hasHeldTransactions($conn, $user_id) {
+    try {
+        $stmt = $conn->prepare("SELECT COUNT(*) as held_count FROM held_transactions WHERE user_id = ? AND status = 'held'");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result['held_count'] > 0;
+    } catch (PDOException $e) {
+        error_log("Error checking held transactions: " . $e->getMessage());
+        return false;
+    }
+}
+
 // Handle till switching
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'switch_till') {
     $switch_till_id = intval($_POST['switch_till_id'] ?? 0);
@@ -96,6 +109,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // Check if cart has active products
         if (!empty($cart)) {
             $_SESSION['error_message'] = "Cannot switch till with active products in cart. Please complete the current transaction or clear the cart first.";
+            header('Location: ' . $_SERVER['PHP_SELF']);
+            exit();
+        }
+        
+        // Check for held transactions
+        if (hasHeldTransactions($conn, $user_id)) {
+            $_SESSION['error_message'] = "Cannot switch till with held transactions. Please continue or void all held transactions first.";
             header('Location: ' . $_SERVER['PHP_SELF']);
             exit();
         }
@@ -155,6 +175,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     // Check if cart has active products
     if (!empty($cart)) {
         $_SESSION['error_message'] = "Cannot close till with active products in cart. Please complete the current transaction or clear the cart first.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    
+    // Check for held transactions
+    if (hasHeldTransactions($conn, $user_id)) {
+        $_SESSION['error_message'] = "Cannot close till with held transactions. Please continue or void all held transactions first.";
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit();
     }
@@ -316,6 +343,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'release_till') {
     // Check if cart has active products
     if (!empty($cart)) {
         $_SESSION['error_message'] = "Cannot release till with active products in cart. Please complete the current transaction or clear the cart first.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    
+    // Check for held transactions
+    if (hasHeldTransactions($conn, $user_id)) {
+        $_SESSION['error_message'] = "Cannot release till with held transactions. Please continue or void all held transactions first.";
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit();
     }
@@ -2010,10 +2044,17 @@ $total_amount = $subtotal + $tax_amount;
 
         // Process payment
         function processPayment() {
+            // Prevent double-clicking
+            const button = event.target;
+            if (button.disabled) return;
+            
             if (window.cartData.length === 0) {
                 alert('Cart is empty');
                 return;
             }
+            
+            // Set loading state
+            setButtonLoading(button, 'Processing...', true);
 
             // Check if till is selected
             <?php if (!$selected_till): ?>
@@ -2029,18 +2070,29 @@ $total_amount = $subtotal + $tax_amount;
             // Show payment modal
             const paymentModal = new bootstrap.Modal(document.getElementById('paymentModal'));
             paymentModal.show();
+            
+            // Reset button state after modal is shown
+            setButtonLoading(button, 'Processing...', false);
         }
 
         // Hold transaction
         function holdTransaction() {
+            // Prevent double-clicking
+            const button = event.target;
+            if (button.disabled) return;
+            
             if (window.cartData.length === 0) {
                 alert('Cart is empty');
-                    return;
-                }
+                return;
+            }
+            
+            // Set loading state
+            setButtonLoading(button, 'Holding...', true);
 
             // Show hold reason dialog
             const holdReason = prompt('Enter reason for holding this transaction (required):');
             if (!holdReason || holdReason.trim() === '') {
+                setButtonLoading(button, 'Holding...', false);
                 alert('Hold reason is required.');
                 return;
             }
@@ -2048,6 +2100,7 @@ $total_amount = $subtotal + $tax_amount;
             const customerReference = prompt('Enter customer reference (optional):') || '';
 
             if (!confirm(`Hold this transaction?\n\nReason: ${holdReason}\nCustomer: ${customerReference || 'N/A'}\n\nYou can retrieve it later from the "Held" button.`)) {
+                setButtonLoading(button, 'Holding...', false);
                 return;
             }
 
@@ -2064,6 +2117,9 @@ $total_amount = $subtotal + $tax_amount;
             })
             .then(response => response.json())
             .then(data => {
+                // Reset button state
+                setButtonLoading(button, 'Holding...', false);
+                
                 if (data.success) {
                     // Update cart display
                     window.cartData = data.cart;
@@ -2075,6 +2131,8 @@ $total_amount = $subtotal + $tax_amount;
                 }
             })
             .catch(error => {
+                // Reset button state on error
+                setButtonLoading(button, 'Holding...', false);
                 console.error('Error:', error);
                 alert('Error holding transaction. Please try again.');
             });
@@ -2300,8 +2358,101 @@ $total_amount = $subtotal + $tax_amount;
         }
         
         function releaseTill() {
-            if (confirm('Are you sure you want to release this till? Other cashiers will be able to use it.')) {
-                window.location.href = '?action=release_till';
+            // Prevent double-clicking
+            const button = event.target;
+            if (button.disabled) return;
+            
+            // Set loading state
+            setButtonLoading(button, 'Checking...', true);
+            
+            // Check for held transactions before allowing till release
+            checkHeldTransactionsBeforeTillOperation('release', button);
+        }
+
+        // Set button loading state
+        function setButtonLoading(button, text, isLoading) {
+            if (isLoading) {
+                button.disabled = true;
+                button.dataset.originalText = button.innerHTML;
+                button.innerHTML = `<i class="bi bi-hourglass-split me-1"></i>${text}`;
+                button.classList.add('disabled');
+            } else {
+                button.disabled = false;
+                button.innerHTML = button.dataset.originalText || button.innerHTML;
+                button.classList.remove('disabled');
+                delete button.dataset.originalText;
+            }
+        }
+
+        // Check for held transactions before till operations
+        function checkHeldTransactionsBeforeTillOperation(operation, button) {
+            fetch('get_held_transactions.php')
+                .then(response => response.json())
+                .then(data => {
+                    // Reset button state
+                    setButtonLoading(button, 'Checking...', false);
+                    
+                    if (data.success && data.held_transactions && data.held_transactions.length > 0) {
+                        const actionText = operation === 'switch' ? 'switch till' : operation === 'close' ? 'close till' : 'release till';
+                        const heldCount = data.held_transactions.length;
+                        
+                        alert(`Cannot ${actionText} with held transactions.\n\nYou have ${heldCount} held transaction${heldCount > 1 ? 's' : ''} that need to be processed first.\n\nPlease continue or void all held transactions before ${actionText}ing.`);
+                        return;
+                    }
+                    
+                    // No held transactions, proceed with the operation
+                    proceedWithTillOperation(operation);
+                })
+                .catch(error => {
+                    // Reset button state on error
+                    setButtonLoading(button, 'Checking...', false);
+                    console.error('Error checking held transactions:', error);
+                    alert('Error checking held transactions. Please try again.');
+                });
+        }
+
+        // Proceed with till operation after validation
+        function proceedWithTillOperation(operation) {
+            switch(operation) {
+                case 'switch':
+                    const modalElement = document.getElementById('switchTillModal');
+                    if (modalElement) {
+                        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                            const modal = new bootstrap.Modal(modalElement);
+                            modal.show();
+                        } else {
+                            // Fallback: show modal manually
+                            modalElement.style.display = 'block';
+                            modalElement.classList.add('show');
+                            document.body.classList.add('modal-open');
+                        }
+                    } else {
+                        console.error('Switch Till modal not found in DOM');
+                        alert('Switch Till modal not found. Please refresh the page.');
+                    }
+                    break;
+                case 'close':
+                    const closeModalElement = document.getElementById('closeTillModal');
+                    if (closeModalElement) {
+                        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                            const modal = new bootstrap.Modal(closeModalElement);
+                            modal.show();
+                        } else {
+                            // Fallback: show modal manually
+                            closeModalElement.style.display = 'block';
+                            closeModalElement.classList.add('show');
+                            document.body.classList.add('modal-open');
+                        }
+                    } else {
+                        console.error('Close Till modal not found in DOM');
+                        alert('Close Till modal not found. Please refresh the page.');
+                    }
+                    break;
+                case 'release':
+                    if (confirm('Are you sure you want to release this till? Other cashiers will be able to use it.')) {
+                        window.location.href = '?action=release_till';
+                    }
+                    break;
             }
         }
         
@@ -2322,19 +2473,27 @@ $total_amount = $subtotal + $tax_amount;
         }
         
         function showSwitchTill() {
-            const modalElement = document.getElementById('switchTillModal');
-            if (modalElement && typeof bootstrap !== 'undefined') {
-                const modal = new bootstrap.Modal(modalElement);
-                modal.show();
-            }
+            // Prevent double-clicking
+            const button = event.target;
+            if (button.disabled) return;
+            
+            // Set loading state
+            setButtonLoading(button, 'Checking...', true);
+            
+            // Check for held transactions before allowing till switch
+            checkHeldTransactionsBeforeTillOperation('switch', button);
         }
         
         function showCloseTill() {
-            const modalElement = document.getElementById('closeTillModal');
-            if (modalElement && typeof bootstrap !== 'undefined') {
-                const modal = new bootstrap.Modal(modalElement);
-                modal.show();
-            }
+            // Prevent double-clicking
+            const button = event.target;
+            if (button.disabled) return;
+            
+            // Set loading state
+            setButtonLoading(button, 'Checking...', true);
+            
+            // Check for held transactions before allowing till close
+            checkHeldTransactionsBeforeTillOperation('close', button);
         }
         
         function selectSwitchTill(tillId) {
@@ -3124,28 +3283,7 @@ $total_amount = $subtotal + $tax_amount;
             return true;
         }
 
-        // Override till action functions with cart verification
-        function showSwitchTill() {
-            if (!verifyCartEmpty('switch')) return;
-            // Original showSwitchTill logic would go here
-            // For now, we'll show an alert that this needs to be implemented
-            alert('Switch Till functionality needs to be implemented with proper modal');
-        }
-
-        function showCloseTill() {
-            if (!verifyCartEmpty('close')) return;
-            // Original showCloseTill logic would go here
-            // For now, we'll show an alert that this needs to be implemented
-            alert('Close Till functionality needs to be implemented with proper modal');
-        }
-
-        function releaseTill() {
-            if (!verifyCartEmpty('release')) return;
-            // Confirm release
-            if (confirm('Are you sure you want to release the till?')) {
-                window.location.href = '?action=release_till';
-            }
-        }
+        // These functions are now handled by the proper implementations above
 
         // Load held transactions data
         function loadHeldTransactionsData() {
@@ -3214,7 +3352,7 @@ $total_amount = $subtotal + $tax_amount;
                 row.innerHTML = `
                     <td>${transaction.id || 'N/A'}</td>
                     <td>${transaction.cashier_name || 'Unknown'}</td>
-                    <td>${transaction.till_name || 'N/A'}</td>
+                    <td>${transaction.till_name || '<span class="text-muted">No Till</span>'}</td>
                     <td>${transaction.item_count || 0} items</td>
                     <td>${currencySymbol} ${total.toFixed(2)}</td>
                     <td>${reason.replace(/'/g, "&#39;")}</td>

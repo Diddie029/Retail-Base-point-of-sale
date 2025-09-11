@@ -5396,4 +5396,23 @@ function savePaymentMethod($conn, $data) {
         return false;
     }
 }
+
+/**
+ * Get count of held transactions for a specific till
+ */
+function getHeldTransactionsCount($conn, $till_id) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT COUNT(*) as count 
+            FROM held_transactions 
+            WHERE till_id = ? AND status = 'held'
+        ");
+        $stmt->execute([$till_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result['count'] ?? 0;
+    } catch (PDOException $e) {
+        error_log("Error getting held transactions count: " . $e->getMessage());
+        return 0;
+    }
+}
 ?>

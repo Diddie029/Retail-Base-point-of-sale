@@ -2438,7 +2438,7 @@ function redeemLoyaltyPoints($conn, $customerId, $points, $description, $transac
  * @param string $membershipLevel Customer membership level
  * @return int Points to earn
  */
-function calculateLoyaltyPoints($conn, $amount, $membershipLevel = 'Basic') {
+function calculateLoyaltyPoints($conn, $amount, $membershipLevel = 'Basic', $taxAmount = 0) {
     // Get loyalty settings
     $settings = getLoyaltySettings($conn);
     
@@ -2447,19 +2447,64 @@ function calculateLoyaltyPoints($conn, $amount, $membershipLevel = 'Basic') {
         return 0;
     }
     
+    // Check if spending-based points are enabled
+    if (!$settings['enable_spending_points']) {
+        return 0;
+    }
+    
     // Check minimum purchase requirement
     if ($amount < $settings['minimum_purchase']) {
         return 0;
     }
     
-    // Get base points per currency unit
-    $basePointsPerCurrency = $settings['points_per_currency'];
+    // Determine calculation amount based on tax inclusion setting
+    $includeTax = $settings['include_tax_in_calculation'];
+    $calculationAmount = $includeTax ? $amount : ($amount - $taxAmount);
     
-    // Get membership level multiplier from database
+    // Ensure calculation amount is not negative
+    $calculationAmount = max(0, $calculationAmount);
+    
+    $points = 0;
+    $method = $settings['points_calculation_method'];
+    
+    // Calculate points based on the selected method
+    switch ($method) {
+        case 'threshold':
+            $threshold = $settings['spending_threshold'];
+            $pointsPerThreshold = $settings['points_per_threshold'];
+            
+            // Calculate threshold-based points
+            $thresholdsReached = floor($calculationAmount / $threshold);
+            $points += $thresholdsReached * $pointsPerThreshold;
+            break;
+            
+        case 'percentage':
+            $percentage = $settings['points_percentage'];
+            $points += ($calculationAmount * $percentage) / 100;
+            break;
+            
+        case 'fixed_rate':
+        default:
+            $fixedSpending = $settings['fixed_spending_amount'];
+            $fixedPoints = $settings['fixed_points_amount'];
+            
+            // Calculate fixed rate points
+            $cycles = floor($calculationAmount / $fixedSpending);
+            $points += $cycles * $fixedPoints;
+            break;
+    }
+    
+    // Add additional points per currency unit if enabled
+    $pointsPerCurrency = $settings['points_per_currency'];
+    if ($pointsPerCurrency > 0) {
+        $points += $calculationAmount * $pointsPerCurrency;
+    }
+    
+    // Apply membership level multiplier
     $multiplier = getMembershipLevelMultiplier($conn, $membershipLevel);
+    $points *= $multiplier;
     
-    $pointsPerCurrency = $basePointsPerCurrency * $multiplier;
-    return (int)floor($amount * $pointsPerCurrency);
+    return (int)floor($points);
 }
 
 /**
@@ -2470,43 +2515,92 @@ function calculateLoyaltyPoints($conn, $amount, $membershipLevel = 'Basic') {
  */
 function getLoyaltySettings($conn) {
     try {
-        $stmt = $conn->query("
-            SELECT setting_key, setting_value 
-            FROM pos_settings 
-            WHERE setting_key LIKE 'loyalty_%' AND is_active = 1
-        ");
+        // Get all settings from the settings table
+        $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
         $settings = [];
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $key = str_replace('loyalty_', '', $row['setting_key']);
-            $value = $row['setting_value'];
-            
-            // Convert to appropriate type
-            if (in_array($key, ['enable_loyalty_program', 'auto_level_upgrade'])) {
-                $settings[$key] = (bool)$value;
-            } elseif (in_array($key, ['points_expiry_days'])) {
-                $settings[$key] = (int)$value;
-            } else {
-                $settings[$key] = (float)$value;
-            }
+            $settings[$row['setting_key']] = $row['setting_value'];
         }
         
-        // Set defaults if settings don't exist
-        $defaults = [
-            'enable_loyalty_program' => true,
-            'points_per_currency' => 1.0,
-            'minimum_purchase' => 0.0,
-            'points_expiry_days' => 365,
-            'auto_level_upgrade' => true
+        // Define comprehensive loyalty settings with defaults
+        $loyaltySettings = [
+            // Core loyalty program settings
+            'enable_loyalty_program' => ($settings['loyalty_program_enabled'] ?? '1') === '1',
+            'enable_spending_points' => ($settings['enable_spending_points'] ?? '1') === '1',
+            'points_calculation_method' => $settings['points_calculation_method'] ?? 'fixed_rate',
+            'include_tax_in_calculation' => ($settings['include_tax_in_calculation'] ?? '1') === '1',
+            
+            // Points calculation settings
+            'points_per_currency' => (float)($settings['points_per_currency'] ?? '1'),
+            'minimum_purchase' => (float)($settings['minimum_purchase'] ?? '0'),
+            'minimum_redemption_points' => (int)($settings['minimum_redemption_points'] ?? '100'),
+            
+            // Threshold-based calculation
+            'spending_threshold' => (float)($settings['spending_threshold'] ?? '100'),
+            'points_per_threshold' => (int)($settings['points_per_threshold'] ?? '10'),
+            
+            // Percentage-based calculation
+            'points_percentage' => (float)($settings['points_percentage'] ?? '5'),
+            
+            // Fixed rate calculation
+            'fixed_points_amount' => (int)($settings['fixed_points_amount'] ?? '1'),
+            'fixed_spending_amount' => (float)($settings['fixed_spending_amount'] ?? '100'),
+            
+            // Points conversion and expiry
+            'points_to_currency_rate' => (float)($settings['points_to_currency_rate'] ?? '100'),
+            'points_expiry_days' => (int)($settings['points_expiry_days'] ?? '365'),
+            
+            // Welcome and bonus points
+            'welcome_points' => (int)($settings['welcome_points'] ?? '100'),
+            'enable_welcome_bonus' => ($settings['enable_welcome_bonus'] ?? '1') === '1',
+            'welcome_bonus_points' => (int)($settings['welcome_bonus_points'] ?? '100'),
+            
+            // Birthday and referral bonuses
+            'enable_birthday_bonus' => ($settings['enable_birthday_bonus'] ?? '0') === '1',
+            'birthday_bonus_points' => (int)($settings['birthday_bonus_points'] ?? '50'),
+            'enable_referral_bonus' => ($settings['enable_referral_bonus'] ?? '0') === '1',
+            'referral_bonus_points' => (int)($settings['referral_bonus_points'] ?? '200'),
+            
+            // Advanced settings
+            'tier_based_rewards' => ($settings['tier_based_rewards'] ?? '0') === '1',
+            'auto_apply_points' => ($settings['auto_apply_points'] ?? '1') === '1',
+            'points_redemption_limit' => (float)($settings['points_redemption_limit'] ?? '50'),
+            'enable_points_maximum' => ($settings['enable_points_maximum'] ?? '0') === '1',
+            'maximum_points_limit' => (int)($settings['maximum_points_limit'] ?? '10000'),
+            'auto_level_upgrade' => ($settings['auto_level_upgrade'] ?? '1') === '1'
         ];
         
-        return array_merge($defaults, $settings);
+        return $loyaltySettings;
     } catch (PDOException $e) {
         error_log("Error getting loyalty settings: " . $e->getMessage());
+        // Return safe defaults
         return [
             'enable_loyalty_program' => true,
+            'enable_spending_points' => true,
+            'points_calculation_method' => 'fixed_rate',
+            'include_tax_in_calculation' => true,
             'points_per_currency' => 1.0,
             'minimum_purchase' => 0.0,
+            'minimum_redemption_points' => 100,
+            'spending_threshold' => 100.0,
+            'points_per_threshold' => 10,
+            'points_percentage' => 5.0,
+            'fixed_points_amount' => 1,
+            'fixed_spending_amount' => 100.0,
+            'points_to_currency_rate' => 100.0,
             'points_expiry_days' => 365,
+            'welcome_points' => 100,
+            'enable_welcome_bonus' => true,
+            'welcome_bonus_points' => 100,
+            'enable_birthday_bonus' => false,
+            'birthday_bonus_points' => 50,
+            'enable_referral_bonus' => false,
+            'referral_bonus_points' => 200,
+            'tier_based_rewards' => false,
+            'auto_apply_points' => true,
+            'points_redemption_limit' => 50.0,
+            'enable_points_maximum' => false,
+            'maximum_points_limit' => 10000,
             'auto_level_upgrade' => true
         ];
     }

@@ -36,11 +36,41 @@ try {
         throw new Exception('Invalid payment data');
     }
 
-    // Validate required fields
-    $requiredFields = ['method', 'amount', 'subtotal', 'tax', 'items'];
+    // Validate required fields - support both single and split payments
+    $requiredFields = ['amount', 'subtotal', 'tax', 'items'];
     foreach ($requiredFields as $field) {
         if (!isset($paymentData[$field])) {
             throw new Exception("Missing required field: $field");
+        }
+    }
+
+    // Validate payment methods - support both single method and split payments
+    $isSplitPayment = isset($paymentData['split_payments']) && is_array($paymentData['split_payments']);
+    if ($isSplitPayment) {
+        if (empty($paymentData['split_payments'])) {
+            throw new Exception("Split payments array cannot be empty");
+        }
+
+        // Validate each split payment
+        $totalSplitAmount = 0;
+        foreach ($paymentData['split_payments'] as $index => $splitPayment) {
+            if (!isset($splitPayment['method']) || !isset($splitPayment['amount'])) {
+                throw new Exception("Split payment $index missing method or amount");
+            }
+            if ($splitPayment['amount'] <= 0) {
+                throw new Exception("Split payment $index amount must be greater than 0");
+            }
+            $totalSplitAmount += $splitPayment['amount'];
+        }
+
+        // Verify split payments total matches transaction total
+        if (abs($totalSplitAmount - $paymentData['amount']) > 0.01) {
+            throw new Exception("Split payments total (" . number_format($totalSplitAmount, 2) . ") does not match transaction total (" . number_format($paymentData['amount'], 2) . ")");
+        }
+    } else {
+        // Single payment - ensure method is provided
+        if (!isset($paymentData['method'])) {
+            throw new Exception("Missing required field: method");
         }
     }
 
@@ -54,10 +84,10 @@ try {
         // Create sale record
         $stmt = $conn->prepare("
             INSERT INTO sales (
-                user_id, till_id, customer_id, customer_name, customer_phone, customer_email, 
-                total_amount, discount, tax_amount, final_amount, 
-                payment_method, notes, sale_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                user_id, till_id, customer_id, customer_name, customer_phone, customer_email,
+                total_amount, discount, tax_amount, final_amount,
+                payment_method, split_payment, notes, sale_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         ");
 
         $customer_id = $paymentData['customer_id'] ?? null;
@@ -68,6 +98,9 @@ try {
         $tax_exempt = $paymentData['tax_exempt'] ?? false;
         $discount = $paymentData['discount'] ?? 0;
         $notes = $paymentData['notes'] ?? '';
+
+        // Determine payment method for sales record
+        $primaryPaymentMethod = $isSplitPayment ? 'split_payment' : $paymentData['method'];
 
         $stmt->execute([
             $user_id,
@@ -80,7 +113,8 @@ try {
             $discount,
             $paymentData['tax'],
             $paymentData['amount'],
-            $paymentData['method'],
+            $primaryPaymentMethod,
+            $isSplitPayment ? 1 : 0,
             $notes
         ]);
 
@@ -188,6 +222,12 @@ try {
             $loyaltyPointsToUse = $paymentData['loyalty_points_to_use'] ?? 0;
             
             if ($loyaltyPointsToUse > 0) {
+                // Check minimum redemption points requirement
+                $minimumRedemption = $loyaltySettings['minimum_redemption_points'] ?? 100;
+                if ($loyaltyPointsToUse < $minimumRedemption) {
+                    throw new Exception("Minimum redemption is {$minimumRedemption} points");
+                }
+                
                 // Check if customer has enough points
                 $currentBalance = getCustomerLoyaltyBalance($conn, $customer_id);
                 
@@ -214,40 +254,129 @@ try {
             }
         }
 
-        // Create payment record
+        // Create payment records - support both single and split payments
         $stmt = $conn->prepare("
             INSERT INTO sale_payments (
                 sale_id, payment_method, amount, reference, received_at
             ) VALUES (?, ?, ?, ?, NOW())
         ");
 
-        $payment_reference = null;
+        $paymentRecords = [];
 
-        // Set payment-specific data
-        if ($paymentData['method'] === 'mobile_money') {
-            $payment_reference = generatePaymentReference('mobile');
-        } elseif (in_array($paymentData['method'], ['credit_card', 'debit_card', 'pos_card'])) {
-            $payment_reference = generatePaymentReference('card');
-        } elseif ($paymentData['method'] === 'cash') {
-            $payment_reference = generatePaymentReference('cash');
-        } elseif ($paymentData['method'] === 'loyalty_points') {
-            $payment_reference = generatePaymentReference('loyalty');
+        if ($isSplitPayment) {
+            // Process multiple payments
+            $totalSplitAmount = 0;
+            $loyaltyPointsUsedInSplit = 0;
+
+            foreach ($paymentData['split_payments'] as $splitPayment) {
+                $splitMethod = $splitPayment['method'];
+                $splitAmount = floatval($splitPayment['amount']);
+
+                // Validate split payment amount
+                if ($splitAmount <= 0) {
+                    throw new Exception("Invalid split payment amount for method: $splitMethod");
+                }
+
+                $totalSplitAmount += $splitAmount;
+
+                // Handle loyalty points in split payment
+                if ($splitMethod === 'loyalty_points') {
+                    $splitCustomerId = $splitPayment['customer_id'] ?? null;
+                    $splitPointsToUse = $splitPayment['points_to_use'] ?? 0;
+
+                    if (!$splitCustomerId || !$splitPointsToUse) {
+                        throw new Exception("Invalid loyalty points data in split payment");
+                    }
+
+                    // Check minimum redemption points requirement
+                    $minimumRedemption = $loyaltySettings['minimum_redemption_points'] ?? 100;
+                    if ($splitPointsToUse < $minimumRedemption) {
+                        throw new Exception("Minimum redemption is {$minimumRedemption} points");
+                    }
+
+                    // Validate customer has enough points
+                    $currentBalance = getCustomerLoyaltyBalance($conn, $splitCustomerId);
+                    if ($currentBalance < $splitPointsToUse) {
+                        throw new Exception("Insufficient loyalty points for customer");
+                    }
+
+                    // Redeem loyalty points
+                    if (!redeemLoyaltyPoints($conn, $splitCustomerId, $splitPointsToUse,
+                        "Redeemed in split payment for purchase #$sale_id", $transaction_id)) {
+                        throw new Exception("Failed to redeem loyalty points in split payment");
+                    }
+
+                    $loyaltyPointsUsedInSplit += $splitPointsToUse;
+
+                    // Override customer_id for the sale if not already set
+                    if (!$customer_id) {
+                        $customer_id = $splitCustomerId;
+                    }
+                }
+
+                $payment_reference = generatePaymentReference(getPaymentReferenceType($splitMethod));
+
+                $stmt->execute([
+                    $sale_id,
+                    $splitMethod,
+                    $splitAmount,
+                    $payment_reference
+                ]);
+
+                $paymentRecords[] = [
+                    'method' => $splitMethod,
+                    'amount' => $splitAmount,
+                    'reference' => $payment_reference,
+                    'cash_received' => $splitPayment['cash_received'] ?? null,
+                    'change_due' => $splitPayment['change_due'] ?? null,
+                    'points_used' => $splitMethod === 'loyalty_points' ? $splitPayment['points_to_use'] : null
+                ];
+            }
+
+            // Validate total split amount matches expected amount
+            if (abs($totalSplitAmount - $paymentData['amount']) > 0.01) {
+                throw new Exception("Split payment total ($totalSplitAmount) does not match expected amount ({$paymentData['amount']})");
+            }
+
+            // Set loyalty points used for the transaction
+            $loyaltyPointsUsed = $loyaltyPointsUsedInSplit;
+        } else {
+            // Single payment
+            $payment_reference = generatePaymentReference(getPaymentReferenceType($paymentData['method']));
+
+            $stmt->execute([
+                $sale_id,
+                $paymentData['method'],
+                $finalAmount,
+                $payment_reference
+            ]);
+
+            $paymentRecords[] = [
+                'method' => $paymentData['method'],
+                'amount' => $finalAmount,
+                'reference' => $payment_reference,
+                'cash_received' => $paymentData['cash_received'] ?? null,
+                'change_due' => $paymentData['change_due'] ?? null
+            ];
         }
-
-        $stmt->execute([
-            $sale_id,
-            $paymentData['method'],
-            $finalAmount,
-            $payment_reference
-        ]);
 
         // Award loyalty points if customer is not walk-in and loyalty program is enabled
         $loyaltyPointsEarned = 0;
+        
+        // For split payments, ensure we have customer_id for earning points even if no loyalty redemption
+        if ($isSplitPayment && !$customer_id && isset($paymentData['customer_id'])) {
+            $customer_id = $paymentData['customer_id'];
+            $customer_type = $paymentData['customer_type'] ?? 'walk_in';
+        }
+        
         if ($customer_id && $customer_type !== 'walk_in') {
             if ($loyaltySettings['enable_loyalty_program']) {
                 $customer = getCustomerById($conn, $customer_id);
                 if ($customer) {
-                    $loyaltyPointsEarned = calculateLoyaltyPoints($conn, $finalAmount, $customer['membership_level']);
+                    // Use loyalty_eligible_amount if provided (for split payments), otherwise use finalAmount
+                    $loyaltyEligibleAmount = $paymentData['loyalty_eligible_amount'] ?? $finalAmount;
+                    $taxAmount = $paymentData['tax'] ?? 0;
+                    $loyaltyPointsEarned = calculateLoyaltyPoints($conn, $loyaltyEligibleAmount, $customer['membership_level'], $taxAmount);
                     
                     if ($loyaltyPointsEarned > 0) {
                         addLoyaltyPoints($conn, $customer_id, $loyaltyPointsEarned, 
@@ -278,9 +407,12 @@ try {
             'amount' => $paymentData['amount'],
             'final_amount' => $finalAmount,
             'items' => $paymentData['items'],
-            'method' => $paymentData['method'],
-            'cash_received' => $paymentData['cash_received'] ?? null,
-            'change_due' => $paymentData['change_due'] ?? null,
+            'is_split_payment' => $isSplitPayment,
+            'payment_records' => $paymentRecords,
+            // Legacy fields for backward compatibility
+            'method' => $primaryPaymentMethod,
+            'cash_received' => !$isSplitPayment ? ($paymentData['cash_received'] ?? null) : null,
+            'change_due' => !$isSplitPayment ? ($paymentData['change_due'] ?? null) : null,
             'loyalty' => [
                 'points_earned' => $loyaltyPointsEarned,
                 'points_used' => $loyaltyPointsUsed,
@@ -385,6 +517,23 @@ function generateTransactionId() {
 }
 
 /**
+ * Get payment reference type for generating reference
+ */
+function getPaymentReferenceType($paymentMethod) {
+    $typeMap = [
+        'mobile_money' => 'mobile',
+        'credit_card' => 'card',
+        'debit_card' => 'card',
+        'pos_card' => 'card',
+        'cash' => 'cash',
+        'loyalty_points' => 'loyalty',
+        'bank_transfer' => 'bank'
+    ];
+
+    return $typeMap[$paymentMethod] ?? 'pay';
+}
+
+/**
  * Generate payment reference
  */
 function generatePaymentReference($type) {
@@ -392,13 +541,14 @@ function generatePaymentReference($type) {
         'mobile' => 'MM',
         'card' => 'CARD',
         'cash' => 'CASH',
-        'bank' => 'BANK'
+        'bank' => 'BANK',
+        'loyalty' => 'LP'
     ];
-    
+
     $prefix = $prefixes[$type] ?? 'PAY';
     $timestamp = date('YmdHis');
     $random = str_pad(rand(0, 999), 3, '0', STR_PAD_LEFT);
-    
+
     return $prefix . $timestamp . $random;
 }
 

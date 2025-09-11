@@ -116,14 +116,42 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// Get all tills
+// Get all tills with held transaction details
 $stmt = $conn->query("
-    SELECT rt.*, u.username as assigned_user_name
+    SELECT rt.*, u.username as assigned_user_name,
+           COALESCE(ht.held_count, 0) as held_transactions_count
     FROM register_tills rt
     LEFT JOIN users u ON rt.assigned_user_id = u.id
+    LEFT JOIN (
+        SELECT till_id, COUNT(*) as held_count
+        FROM held_transactions 
+        WHERE status = 'held'
+        GROUP BY till_id
+    ) ht ON rt.id = ht.till_id
     ORDER BY rt.till_name
 ");
 $tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Add held transactions with NULL till_id to the currently selected till
+$selected_till_id = $_SESSION['selected_till_id'] ?? null;
+if ($selected_till_id) {
+    // Get count of held transactions with NULL till_id
+    $stmt = $conn->prepare("SELECT COUNT(*) as null_till_count FROM held_transactions WHERE status = 'held' AND till_id IS NULL");
+    $stmt->execute();
+    $null_till_result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $null_till_count = $null_till_result['null_till_count'];
+    
+    // Add this count to the selected till
+    foreach ($tills as &$till) {
+        if ($till['id'] == $selected_till_id) {
+            $till['held_transactions_count'] += $null_till_count;
+        }
+    }
+}
+
+
+// Get currently selected till from session
+$selected_till_id = $_SESSION['selected_till_id'] ?? null;
 
 // Get users for assignment
 $stmt = $conn->query("SELECT id, username FROM users ORDER BY username");
@@ -161,6 +189,7 @@ $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
 
+
             <!-- Alerts -->
             <?php if ($success): ?>
             <div class="alert alert-success alert-dismissible fade show">
@@ -176,52 +205,114 @@ $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
             <?php endif; ?>
 
+
             <!-- Tills Grid -->
-            <div class="row">
+            <div class="row g-3">
                 <?php foreach ($tills as $till): ?>
-                <div class="col-md-4 mb-4">
-                    <div class="card h-100">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h6 class="mb-0"><?php echo htmlspecialchars($till['till_name']); ?></h6>
-                            <div>
-                                <span class="till-status <?php echo $till['is_active'] ? 'till-active' : 'till-inactive'; ?>"></span>
-                                <span class="badge bg-<?php echo $till['is_active'] ? 'success' : 'secondary'; ?>">
-                                    <?php echo $till['is_active'] ? 'Active' : 'Inactive'; ?>
-                                </span>
+                <div class="col-lg-4 col-md-6">
+                    <div class="card h-100 till-card <?php echo ($selected_till_id && $till['id'] == $selected_till_id) ? 'selected-till' : ''; ?>">
+                        <!-- Compact Header -->
+                        <div class="card-header py-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0 fw-bold"><?php echo htmlspecialchars($till['till_name']); ?></h6>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="till-status <?php echo $till['is_active'] ? 'till-active' : 'till-inactive'; ?>"></span>
+                                    <span class="badge bg-<?php echo $till['is_active'] ? 'success' : 'secondary'; ?> badge-sm">
+                                        <?php echo $till['is_active'] ? 'Active' : 'Inactive'; ?>
+                                    </span>
+                                </div>
                             </div>
                         </div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <strong>Code:</strong> <?php echo htmlspecialchars($till['till_code']); ?><br>
-                                <strong>Location:</strong> <?php echo htmlspecialchars($till['location']); ?><br>
-                                <strong>Assigned to:</strong> 
-                                <?php if ($till['assigned_user_name']): ?>
-                                    <?php echo htmlspecialchars($till['assigned_user_name']); ?>
-                                <?php else: ?>
-                                    <span class="text-muted">Not assigned</span>
-                                <?php endif; ?>
-                            </div>
-                            
-                            <div class="row text-center">
-                                <div class="col-6">
-                                    <div class="border-end">
-                                        <h6 class="text-muted mb-1">Opening Balance</h6>
-                                        <h5 class="text-primary">KES <?php echo number_format($till['opening_balance'], 2); ?></h5>
+                        
+                        <div class="card-body p-3">
+                            <!-- Till Details - Compact -->
+                            <div class="till-details mb-3">
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <small class="text-muted">Code</small>
+                                        <div class="fw-bold"><?php echo htmlspecialchars($till['till_code']); ?></div>
+                                    </div>
+                                    <div class="col-6">
+                                        <small class="text-muted">Location</small>
+                                        <div class="fw-bold"><?php echo htmlspecialchars($till['location']); ?></div>
                                     </div>
                                 </div>
-                                <div class="col-6">
-                                    <h6 class="text-muted mb-1">Current Balance</h6>
-                                    <h5 class="text-success">KES <?php echo number_format($till['current_balance'], 2); ?></h5>
+                                <div class="mt-2">
+                                    <small class="text-muted">Assigned to</small>
+                                    <div class="fw-bold">
+                                        <?php if ($till['assigned_user_name']): ?>
+                                            <?php echo htmlspecialchars($till['assigned_user_name']); ?>
+                                        <?php else: ?>
+                                            <span class="text-muted">Not assigned</span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Till Status Info - Show for all tills -->
+                            <div class="till-status-info mb-3">
+                                <div class="row g-2">
+                                    <?php if ($selected_till_id && $till['id'] == $selected_till_id): ?>
+                                    <div class="col-6">
+                                        <div class="status-badge status-success">
+                                            <i class="bi bi-person-check-circle me-1"></i>
+                                            <div>
+                                                <small>Active Cashier</small>
+                                                <div class="fw-bold"><?php echo htmlspecialchars($username); ?></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <?php else: ?>
+                                    <div class="col-6">
+                                        <div class="status-badge status-secondary">
+                                            <i class="bi bi-cash-register me-1"></i>
+                                            <div>
+                                                <small>Status</small>
+                                                <div class="fw-bold"><?php echo $till['is_active'] ? 'Active' : 'Inactive'; ?></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <?php endif; ?>
+                                    <div class="col-6">
+                                        <div class="status-badge <?php echo $till['held_transactions_count'] > 0 ? 'status-warning' : 'status-info'; ?>">
+                                            <i class="bi bi-clock-history me-1"></i>
+                                            <div>
+                                                <small>On Hold</small>
+                                                <div class="fw-bold"><?php echo $till['held_transactions_count']; ?></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            
+                            <!-- Balance Info - Compact -->
+                            <div class="balance-info">
+                                <div class="row g-2 text-center">
+                                    <div class="col-6">
+                                        <div class="balance-item">
+                                            <small class="text-muted d-block">Opening</small>
+                                            <div class="fw-bold text-primary">KES <?php echo number_format($till['opening_balance'], 2); ?></div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="balance-item">
+                                            <small class="text-muted d-block">Current</small>
+                                            <div class="fw-bold text-success">KES <?php echo number_format($till['current_balance'], 2); ?></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="card-footer">
-                            <div class="btn-group w-100">
+                        
+                        <!-- Compact Footer -->
+                        <div class="card-footer py-2">
+                            <div class="btn-group w-100" role="group">
                                 <button class="btn btn-outline-primary btn-sm" onclick="editTill(<?php echo htmlspecialchars(json_encode($till)); ?>)">
-                                    <i class="bi bi-pencil"></i> Edit
+                                    <i class="bi bi-pencil"></i>
                                 </button>
                                 <button class="btn btn-outline-danger btn-sm" onclick="deleteTill(<?php echo $till['id']; ?>, '<?php echo htmlspecialchars($till['till_name']); ?>')">
-                                    <i class="bi bi-trash"></i> Delete
+                                    <i class="bi bi-trash"></i>
                                 </button>
                             </div>
                         </div>
@@ -388,15 +479,106 @@ $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
     </script>
     <style>
+        /* Till Status Indicators */
         .till-status {
-            width: 12px;
-            height: 12px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
             display: inline-block;
-            margin-right: 0.5rem;
         }
         .till-active { background-color: #28a745; }
         .till-inactive { background-color: #dc3545; }
+        
+        /* Badge Sizing */
+        .badge-sm {
+            font-size: 0.7rem;
+            padding: 0.25rem 0.5rem;
+        }
+        
+        /* Till Card Styling */
+        .till-card {
+            transition: all 0.3s ease;
+            border: 1px solid #e9ecef;
+        }
+        
+        .till-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .selected-till {
+            border-color: #0d6efd;
+            box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+        }
+        
+        /* Status Badge Styling */
+        .status-badge {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.8rem;
+        }
+        
+        .status-success {
+            background-color: #d1edff;
+            color: #0c5460;
+            border: 1px solid #b8daff;
+        }
+        
+        .status-warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .status-info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .status-secondary {
+            background-color: #e2e3e5;
+            color: #383d41;
+            border: 1px solid #d6d8db;
+        }
+        
+        /* Till Details */
+        .till-details {
+            font-size: 0.9rem;
+        }
+        
+        /* Balance Info */
+        .balance-item {
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            background-color: #f8f9fa;
+        }
+        
+        /* Compact Layout */
+        .card-header {
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .card-footer {
+            background-color: #f8f9fa;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        /* Responsive Grid */
+        @media (max-width: 768px) {
+            .col-lg-4 {
+                margin-bottom: 1rem;
+            }
+        }
+        
+        /* Button Group */
+        .btn-group .btn {
+            font-size: 0.8rem;
+        }
+        
     </style>
 </body>
 </html>

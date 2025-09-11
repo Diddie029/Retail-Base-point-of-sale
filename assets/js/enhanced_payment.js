@@ -289,22 +289,33 @@ class PaymentProcessor {
 
         // Update items display
         if (itemsEl && this.transactionData.length > 0) {
+            // Calculate total quantity of all products
+            const totalQuantity = this.transactionData.reduce((sum, item) => sum + item.quantity, 0);
+            const productCount = this.transactionData.length;
+            
             let itemsHtml = '';
-            this.transactionData.forEach(item => {
-                const itemTotal = item.price * item.quantity;
-                itemsHtml += `
-                    <div class="d-flex justify-content-between py-1">
+            
+            // Show product summary
+            itemsHtml += `
+                <div class="text-center py-3">
+                    <div class="d-flex align-items-center justify-content-center mb-2">
+                        <i class="bi bi-cart-check fs-2 text-success me-2"></i>
                         <div>
-                            <small class="fw-bold">${item.name}</small>
-                            <br>
-                            <small class="text-muted">${item.quantity} × ${this.currency}${this.formatAmount(item.price)}</small>
-                        </div>
-                        <div class="text-end">
-                            <small class="fw-bold">${this.currency}${this.formatAmount(itemTotal)}</small>
+                            <h6 class="mb-0 fw-bold">${productCount} Product${productCount !== 1 ? 's' : ''}</h6>
+                            <small class="text-muted">${totalQuantity} item${totalQuantity !== 1 ? 's' : ''} total</small>
                         </div>
                     </div>
-                `;
-            });
+                    <div class="border-top pt-2">
+                        <button class="btn btn-sm btn-outline-primary" onclick="togglePaymentItemsDetails()">
+                            <i class="bi bi-list-ul me-1"></i>View Details
+                        </button>
+                    </div>
+                </div>
+                <div id="paymentItemsDetails" style="display: none;">
+                    ${this.generateDetailedItemsHtml()}
+                </div>
+            `;
+            
             itemsEl.innerHTML = itemsHtml;
         } else if (itemsEl) {
             itemsEl.innerHTML = `
@@ -315,6 +326,33 @@ class PaymentProcessor {
                 </div>
             `;
         }
+    }
+
+    /**
+     * Generate detailed items HTML for payment modal
+     */
+    generateDetailedItemsHtml() {
+        if (!this.transactionData || this.transactionData.length === 0) {
+            return '<div class="text-center text-muted py-2">No items</div>';
+        }
+
+        let itemsHtml = '';
+        this.transactionData.forEach(item => {
+            const itemTotal = item.price * item.quantity;
+            itemsHtml += `
+                <div class="d-flex justify-content-between py-1 border-bottom">
+                    <div>
+                        <small class="fw-bold">${item.name}</small>
+                        <br>
+                        <small class="text-muted">${item.quantity} × ${this.currency}${this.formatAmount(item.price)}</small>
+                    </div>
+                    <div class="text-end">
+                        <small class="fw-bold">${this.currency}${this.formatAmount(itemTotal)}</small>
+                    </div>
+                </div>
+            `;
+        });
+        return itemsHtml;
     }
 
     selectPaymentMethod(methodElement) {
@@ -352,6 +390,15 @@ class PaymentProcessor {
     }
 
     showPaymentSection(method) {
+        // Check if split payment is selected
+        const splitPaymentRadio = document.getElementById('splitPayment');
+        const isSplitPayment = splitPaymentRadio && splitPaymentRadio.checked;
+        
+        // If split payment is selected, don't show single payment sections
+        if (isSplitPayment) {
+            return;
+        }
+
         // Hide all payment sections
         document.getElementById('cashPaymentSection').style.display = 'none';
         document.getElementById('mobileMoneySection').style.display = 'none';
@@ -378,7 +425,10 @@ class PaymentProcessor {
                 this.loadCustomerLoyaltyInfo();
                 document.getElementById('loyaltyPointsPaymentSection').style.display = 'block';
                 setTimeout(() => {
-                    document.getElementById('loyaltyPointsToUse').focus();
+                    const amountInput = document.getElementById('loyaltyAmountToUse');
+                    if (amountInput && !amountInput.disabled) {
+                        amountInput.focus();
+                    }
                 }, 100);
                 break;
         }
@@ -482,6 +532,45 @@ class PaymentProcessor {
     }
 
     async processPayment() {
+        // Check if this is a split payment
+        const splitPaymentRadio = document.getElementById('splitPayment');
+        const isSplitPayment = splitPaymentRadio && splitPaymentRadio.checked;
+
+        if (isSplitPayment) {
+            // Split payment validation is handled by the split payment manager
+            // This should not be called for split payments
+            throw new Error('Split payments should be processed through the split payment manager');
+        }
+
+        // Validate single payment method selection
+        if (!this.selectedPaymentMethod) {
+            throw new Error('Please select a payment method');
+        }
+
+        // Validate payment method specific requirements
+        if (this.selectedPaymentMethod === 'cash') {
+            const cashReceived = parseFloat(document.getElementById('cashReceived').value) || 0;
+            if (cashReceived < this.paymentAmount) {
+                throw new Error('Cash received is less than the total amount');
+            }
+        } else if (this.selectedPaymentMethod === 'mobile_money') {
+            const mobileNumber = document.getElementById('mobileNumber').value;
+            const mobileProvider = document.getElementById('mobileProvider').value;
+            if (!mobileNumber || !mobileProvider) {
+                throw new Error('Please provide mobile number and provider');
+            }
+        } else if (['credit_card', 'debit_card', 'pos_card'].includes(this.selectedPaymentMethod)) {
+            const cardNumber = document.getElementById('cardNumber').value;
+            if (!cardNumber || cardNumber.length < 4) {
+                throw new Error('Please provide valid card information');
+            }
+        } else if (this.selectedPaymentMethod === 'loyalty_points') {
+            const loyaltyValidation = this.validateLoyaltyPayment();
+            if (!loyaltyValidation.valid) {
+                throw new Error(loyaltyValidation.error);
+            }
+        }
+
         // Calculate totals from current cart data
         let subtotal = 0;
         if (this.transactionData && this.transactionData.length > 0) {
@@ -541,7 +630,7 @@ class PaymentProcessor {
                 throw new Error(loyaltyValidation.error);
             }
             paymentData.use_loyalty_points = true;
-            paymentData.loyalty_points_to_use = loyaltyValidation.pointsToUse;
+            paymentData.loyalty_points_to_use = loyaltyValidation.pointsRequired;
             paymentData.loyalty_discount = loyaltyValidation.pointsValue;
             paymentData.remaining_amount = loyaltyValidation.remainingAmount;
             
@@ -766,7 +855,6 @@ class PaymentProcessor {
                 // Reset payment processor state
                 this.resetPaymentModal();
                 
-                console.log('New transaction started - cart cleared');
             } else {
                 console.error('Error clearing cart:', data.error);
                 // Fallback to page reload if clearing fails
@@ -809,12 +897,16 @@ class PaymentProcessor {
     showLoyaltyCustomerSearch() {
         // Clear any previous selection
         this.loyaltySelectedCustomer = null;
-        document.getElementById('loyaltySelectedCustomer').style.display = 'none';
-        document.getElementById('loyaltyCustomerResults').style.display = 'none';
-        document.getElementById('loyaltyPointsToUse').disabled = true;
+        const selectedCustomerEl = document.getElementById('loyaltySelectedCustomer');
+        const resultsEl = document.getElementById('loyaltyCustomerResults');
+        
+        if (selectedCustomerEl) selectedCustomerEl.style.display = 'none';
+        if (resultsEl) resultsEl.style.display = 'none';
+        
+        document.getElementById('loyaltyAmountToUse').disabled = true;
         document.getElementById('loyaltyPointsAvailable').value = '0';
-        document.getElementById('loyaltyPointsValue').value = '0.00';
-        document.getElementById('remainingAmount').value = this.formatAmount(this.paymentAmount);
+        document.getElementById('loyaltyAmountToUse').value = '';
+        document.getElementById('loyaltyPointsRequired').value = '0';
     }
 
     // Cash Customer Search Methods
@@ -989,9 +1081,9 @@ class PaymentProcessor {
                     <div class="list-group-item list-group-item-action" onclick="window.paymentProcessor.selectLoyaltyCustomer(${customer.id}, '${customer.display_name}', ${customer.loyalty_points})">
                         <div class="d-flex w-100 justify-content-between">
                             <h6 class="mb-1">${customer.display_name}</h6>
-                            <small class="text-muted">${customer.loyalty_points} points</small>
+                            <small class="text-muted">${customer.membership_level}</small>
                         </div>
-                        <p class="mb-1 text-muted">${customer.customer_number} • ${customer.membership_level}</p>
+                        <p class="mb-1 text-muted">${customer.customer_number}</p>
                     </div>
                 `;
             });
@@ -1017,8 +1109,8 @@ class PaymentProcessor {
         document.getElementById('loyaltySelectedCustomerPoints').textContent = `${loyaltyPoints} points available`;
         document.getElementById('loyaltySelectedCustomer').style.display = 'block';
         
-        // Enable points input and load loyalty data
-        document.getElementById('loyaltyPointsToUse').disabled = false;
+        // Enable amount input and load loyalty data
+        document.getElementById('loyaltyAmountToUse').disabled = false;
         this.loadLoyaltyDataForCustomer(customerId);
     }
 
@@ -1040,39 +1132,133 @@ class PaymentProcessor {
 
     updateLoyaltyDisplay(loyaltyData) {
         const availablePoints = loyaltyData.balance;
-        const pointsValue = loyaltyData.points_value;
 
         document.getElementById('loyaltyPointsAvailable').value = availablePoints;
-        document.getElementById('loyaltyPointsToUse').max = availablePoints;
-        document.getElementById('loyaltyPointsToUse').value = 0;
-        document.getElementById('loyaltyPointsValue').value = '0.00';
-        document.getElementById('remainingAmount').value = this.formatAmount(this.paymentAmount);
+        document.getElementById('loyaltyAmountToUse').value = '';
+        document.getElementById('loyaltyPointsRequired').value = '0';
 
-        // Add event listener for points input
-        const pointsInput = document.getElementById('loyaltyPointsToUse');
-        pointsInput.removeEventListener('input', this.handleLoyaltyPointsInput);
-        pointsInput.addEventListener('input', this.handleLoyaltyPointsInput.bind(this));
+        // Add event listener for amount input
+        const amountInput = document.getElementById('loyaltyAmountToUse');
+        amountInput.removeEventListener('input', this.handleLoyaltyAmountInput);
+        amountInput.addEventListener('input', this.handleLoyaltyAmountInput.bind(this));
+
+        // Add event listeners for action buttons
+        this.addLoyaltyButtonListeners();
     }
 
-    handleLoyaltyPointsInput(event) {
-        const pointsToUse = parseInt(event.target.value) || 0;
+    handleLoyaltyAmountInput(event) {
+        const amountToUse = parseFloat(event.target.value) || 0;
         const availablePoints = parseInt(document.getElementById('loyaltyPointsAvailable').value) || 0;
         
-        // Validate points
-        if (pointsToUse > availablePoints) {
-            event.target.value = availablePoints;
-            pointsToUse = availablePoints;
+        // Calculate points required (100 points = 1 currency unit)
+        const pointsRequired = Math.floor(amountToUse * 100);
+        
+        // Check if points required exceeds available points
+        if (pointsRequired > availablePoints) {
+            const maxAmount = availablePoints / 100;
+            event.target.value = maxAmount.toFixed(2);
+            const adjustedPointsRequired = availablePoints;
+            document.getElementById('loyaltyPointsRequired').value = adjustedPointsRequired;
+        } else {
+            document.getElementById('loyaltyPointsRequired').value = pointsRequired;
         }
-
-        // Calculate points value (100 points = 1 currency unit)
-        const pointsValue = pointsToUse / 100;
-        const remainingAmount = Math.max(0, this.paymentAmount - pointsValue);
-
-        document.getElementById('loyaltyPointsValue').value = this.formatAmount(pointsValue);
-        document.getElementById('remainingAmount').value = this.formatAmount(remainingAmount);
-
+        
         // Update confirm button state
         this.updateConfirmButton();
+    }
+
+    addLoyaltyButtonListeners() {
+        // Add Loyalty Payment button
+        const addBtn = document.getElementById('addLoyaltyPaymentBtn');
+        if (addBtn) {
+            addBtn.removeEventListener('click', this.handleAddLoyaltyPayment);
+            addBtn.addEventListener('click', this.handleAddLoyaltyPayment.bind(this));
+        }
+
+        // Cancel button
+        const cancelBtn = document.getElementById('cancelLoyaltyBtn');
+        if (cancelBtn) {
+            cancelBtn.removeEventListener('click', this.handleCancelLoyalty);
+            cancelBtn.addEventListener('click', this.handleCancelLoyalty.bind(this));
+        }
+    }
+
+    handleAddLoyaltyPayment() {
+        try {
+            const validation = this.validateLoyaltyPayment();
+            if (!validation.valid) {
+                this.showLoyaltyError(validation.error);
+                return;
+            }
+
+            // Process the loyalty payment
+            this.processLoyaltyPayment(validation);
+        } catch (error) {
+            this.showLoyaltyError(error.message);
+        }
+    }
+
+    handleCancelLoyalty() {
+        // Reset loyalty payment section
+        this.showLoyaltyCustomerSearch();
+        // Switch back to cash payment
+        this.selectPaymentMethod(document.querySelector('input[name="paymentMethod"][value="cash"]'));
+    }
+
+    processLoyaltyPayment(validation) {
+        // Set the payment data for processing
+        this.paymentData = {
+            method: 'loyalty_points',
+            amount: validation.pointsValue,
+            customer_id: validation.customer.id,
+            customer_name: validation.customer.display_name,
+            customer_type: 'registered',
+            loyalty_points_to_use: validation.pointsRequired,
+            loyalty_discount: validation.pointsValue,
+            remaining_amount: validation.remainingAmount
+        };
+
+        // Show success message
+        this.showLoyaltySuccess('Loyalty payment processed successfully!');
+        
+        // Update the payment summary
+        this.updatePaymentSummary();
+    }
+
+    updatePaymentSummary() {
+        // Update the payment total display
+        const totalEl = document.getElementById('paymentTotal');
+        if (totalEl && this.paymentData) {
+            totalEl.textContent = this.formatAmount(this.paymentData.amount);
+        }
+        
+        // Update confirm button to show payment is ready
+        const confirmBtn = document.getElementById('confirmPaymentBtn');
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Complete Payment';
+        }
+    }
+
+    showLoyaltySuccess(message) {
+        const loyaltySection = document.getElementById('loyaltyPointsPaymentSection');
+        const successAlert = document.createElement('div');
+        successAlert.className = 'alert alert-success alert-dismissible fade show';
+        successAlert.innerHTML = `
+            <i class="bi bi-check-circle me-2"></i>${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        // Insert at the top of the card body
+        const cardBody = loyaltySection.querySelector('.card-body');
+        cardBody.insertBefore(successAlert, cardBody.firstChild);
+        
+        // Auto-remove after 3 seconds
+        setTimeout(() => {
+            if (successAlert.parentNode) {
+                successAlert.remove();
+            }
+        }, 3000);
     }
 
     showLoyaltyError(message) {
@@ -1091,18 +1277,19 @@ class PaymentProcessor {
             return { valid: false, error: 'Please select a customer for loyalty points payment' };
         }
 
-        const pointsToUse = parseInt(document.getElementById('loyaltyPointsToUse').value) || 0;
+        const amountToUse = parseFloat(document.getElementById('loyaltyAmountToUse').value) || 0;
         const availablePoints = parseInt(document.getElementById('loyaltyPointsAvailable').value) || 0;
+        const pointsRequired = parseInt(document.getElementById('loyaltyPointsRequired').value) || 0;
 
-        if (pointsToUse <= 0) {
-            return { valid: false, error: 'Please enter points to use' };
+        if (amountToUse <= 0) {
+            return { valid: false, error: 'Please enter amount to use' };
         }
 
-        if (pointsToUse > availablePoints) {
+        if (pointsRequired > availablePoints) {
             return { valid: false, error: 'Not enough loyalty points available' };
         }
 
-        const pointsValue = pointsToUse / 100;
+        const pointsValue = amountToUse;
         const remainingAmount = this.paymentAmount - pointsValue;
 
         if (remainingAmount < 0) {
@@ -1111,7 +1298,7 @@ class PaymentProcessor {
 
         return { 
             valid: true, 
-            pointsToUse: pointsToUse, 
+            pointsRequired: pointsRequired, 
             pointsValue: pointsValue, 
             remainingAmount: remainingAmount,
             customer: selectedCustomer
@@ -1214,6 +1401,24 @@ class PaymentProcessor {
             return '0.00';
         }
         return num.toFixed(2);
+    }
+}
+
+// Global function to toggle payment items details
+function togglePaymentItemsDetails() {
+    const detailsEl = document.getElementById('paymentItemsDetails');
+    const buttonEl = event.target;
+    
+    if (detailsEl) {
+        const isVisible = detailsEl.style.display !== 'none';
+        
+        if (isVisible) {
+            detailsEl.style.display = 'none';
+            buttonEl.innerHTML = '<i class="bi bi-list-ul me-1"></i>View Details';
+        } else {
+            detailsEl.style.display = 'block';
+            buttonEl.innerHTML = '<i class="bi bi-eye-slash me-1"></i>Hide Details';
+        }
     }
 }
 

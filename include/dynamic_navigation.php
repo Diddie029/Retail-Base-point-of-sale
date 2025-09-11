@@ -107,7 +107,7 @@ function generateNavSection($sectionKey, $sectionName, $sectionIcon, $isVisible,
         $bgColor = $isActive ? ($settings['theme_color'] ?? '#6366f1') : 'transparent';
         
         $html .= '<div class="nav-item">';
-        $html .= '<a href="/pointofsale' . $url . '" class="nav-link ' . $isActive . '" style="background-color: ' . $bgColor . '">';
+        $html .= '<a href="' . $url . '" class="nav-link ' . $isActive . '" style="background-color: ' . $bgColor . '">';
         $html .= '<i class="bi ' . $icon . '"></i>';
         $html .= $label;
         $html .= '</a>';

@@ -36,7 +36,8 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 }
 
 // Check if user has permission to view reports
-$hasAccess = hasPermission('view_analytics', $permissions) || 
+$hasAccess = isAdmin($role_name) || 
+             hasPermission('view_analytics', $permissions) || 
              hasPermission('manage_sales', $permissions) || 
              hasPermission('view_finance', $permissions);
 

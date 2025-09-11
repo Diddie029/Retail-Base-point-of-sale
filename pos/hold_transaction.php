@@ -17,26 +17,31 @@ if (!isset($_SESSION['user_id'])) {
 // Set content type to JSON
 header('Content-Type: application/json');
 
-// Get user information
-$user_id = $_SESSION['user_id'];
-$till_id = $_SESSION['selected_till_id'] ?? null;
+    // Get user information
+    $user_id = $_SESSION['user_id'];
+    $till_id = $_SESSION['selected_till_id'] ?? null;
 
-try {
-    // Get hold data from request
-    $input = file_get_contents('php://input');
-    $holdData = json_decode($input, true);
-
-    if (!$holdData) {
-        throw new Exception('Invalid hold data');
+    // Validate till selection
+    if (!$till_id) {
+        throw new Exception('No till selected. Please select a till before holding transactions.');
     }
 
-    // Validate required fields
-    $requiredFields = ['reason'];
-    foreach ($requiredFields as $field) {
-        if (!isset($holdData[$field])) {
-            throw new Exception("Missing required field: $field");
+    try {
+        // Get hold data from request
+        $input = file_get_contents('php://input');
+        $holdData = json_decode($input, true);
+
+        if (!$holdData) {
+            throw new Exception('Invalid hold data');
         }
-    }
+
+        // Validate required fields
+        $requiredFields = ['reason'];
+        foreach ($requiredFields as $field) {
+            if (!isset($holdData[$field])) {
+                throw new Exception("Missing required field: $field");
+            }
+        }
 
     // Get cart data
     $cart = $_SESSION['cart'] ?? [];

@@ -281,24 +281,9 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div>
                     <h2><i class="bi bi-cash-register"></i> POS Management Dashboard</h2>
                     <p class="text-muted">Comprehensive point of sale management including sales, tills, cash drops, and payment methods</p>
-                    <?php if ($selected_till): ?>
-                    <div class="alert alert-info d-inline-block mt-2">
-                        <i class="bi bi-check-circle"></i> 
-                        <strong>Selected Till:</strong> <?php echo htmlspecialchars($selected_till['till_name']); ?> 
-                        (<?php echo htmlspecialchars($selected_till['till_code']); ?>)
-                        <button type="button" class="btn btn-sm btn-outline-primary ms-2" onclick="showTillSelection()">
-                            <i class="bi bi-arrow-repeat"></i> Change Till
-                        </button>
-                    </div>
-                    <?php endif; ?>
                 </div>
                 <div class="d-flex align-items-center gap-3">
                     <span class="badge bg-primary fs-6"><?php echo date('M d, Y'); ?></span>
-                    <?php if (!$selected_till): ?>
-                    <button type="button" class="btn btn-warning" onclick="showTillSelection()">
-                        <i class="bi bi-cash-register"></i> Select Till
-                    </button>
-                    <?php endif; ?>
                     <a href="../auth/logout.php" class="btn btn-outline-danger" title="Logout">
                         <i class="bi bi-box-arrow-right"></i> Logout
                     </a>

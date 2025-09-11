@@ -36,7 +36,8 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 }
 
 // Check if user has permission to view reports
-$hasAccess = hasPermission('view_analytics', $permissions) || 
+$hasAccess = isAdmin($role_name) || 
+             hasPermission('view_analytics', $permissions) || 
              hasPermission('manage_sales', $permissions) || 
              hasPermission('manage_users', $permissions) ||
              hasPermission('view_finance', $permissions);
@@ -396,6 +397,84 @@ $stats['total_customers'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
                         </div>
                     </div>
 
+                </div>
+
+                 <!-- Cashier Reports Section -->
+                <div class="row mb-4">
+                    <div class="col-12 mb-3">
+                        <div class="report-category">
+                            <h4><i class="bi bi-person-badge"></i> Cashier Reports</h4>
+                            <p class="mb-0">Detailed cashier performance and transaction reports</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <!-- Cashier Performance Report -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='cashier_reports.php'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-person-check fs-1 text-primary"></i>
+                                </div>
+                                <h5 class="card-title">Cashier Performance</h5>
+                                <p class="card-text text-muted">Individual cashier performance metrics, void transactions, and productivity analysis</p>
+                                <div class="report-module-stats">
+                                    <small class="text-primary"><i class="bi bi-graph-up"></i> Performance Metrics</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-primary"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Void Transactions Report -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='void_transactions_report.php'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-x-circle fs-1 text-danger"></i>
+                                </div>
+                                <h5 class="card-title">Void Transactions</h5>
+                                <p class="card-text text-muted">Detailed report of all voided transactions, reasons, and cashier accountability</p>
+                                <div class="report-module-stats">
+                                    <small class="text-danger"><i class="bi bi-x-circle"></i> Void Analysis</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-danger"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Held Transactions Report -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='held_transactions_report.php'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-clock-history fs-1 text-warning"></i>
+                                </div>
+                                <h5 class="card-title">Held Transactions</h5>
+                                <p class="card-text text-muted">Report on held/suspended transactions and their resolution status</p>
+                                <div class="report-module-stats">
+                                    <small class="text-warning"><i class="bi bi-clock-history"></i> Hold Analysis</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-warning"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
             </div>
