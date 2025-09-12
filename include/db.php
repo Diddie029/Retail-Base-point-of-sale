@@ -604,6 +604,7 @@ try {
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(50) NOT NULL UNIQUE,
             description TEXT,
+            redirect_url VARCHAR(255) DEFAULT '../dashboard/dashboard.php' COMMENT 'Default page to redirect users after login',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
@@ -640,6 +641,20 @@ try {
         }
     } catch (PDOException $e) {
         error_log("Warning: Could not add category column to permissions table: " . $e->getMessage());
+    }
+    
+    // Add redirect_url column to roles table if it doesn't exist
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM roles LIKE 'redirect_url'");
+        $stmt->execute();
+        $result = $stmt->fetch();
+
+        if (!$result) {
+            $conn->exec("ALTER TABLE roles ADD COLUMN redirect_url VARCHAR(255) DEFAULT '../dashboard/dashboard.php' COMMENT 'Default page to redirect users after login' AFTER description");
+            error_log("Added redirect_url column to roles table");
+        }
+    } catch (PDOException $e) {
+        error_log("Warning: Could not add redirect_url column to roles table: " . $e->getMessage());
     }
     
     // Create role_permission table

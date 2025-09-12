@@ -70,11 +70,31 @@ $existing_permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
 $success_message = '';
 $error_message = '';
 
+// Handle AJAX requests
+if ($_POST && isset($_POST['action']) && $_POST['action'] === 'suggest_permissions') {
+    $menu_access = json_decode($_POST['menu_access'], true);
+    $suggested_permissions = getSuggestedPermissionsFromMenuAccess($menu_access);
+    
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success' => true,
+        'suggested_permissions' => $suggested_permissions
+    ]);
+    exit;
+}
+
 // Handle form submission
 if ($_POST) {
     $name = trim($_POST['name']);
     $description = trim($_POST['description']);
+    $redirect_url = trim($_POST['redirect_url']);
+    $custom_redirect_url = trim($_POST['custom_redirect_url'] ?? '');
     $selected_permissions = $_POST['permissions'] ?? [];
+    
+    // Handle custom redirect URL
+    if ($redirect_url === 'custom') {
+        $redirect_url = $custom_redirect_url;
+    }
 
     // Validation
     $errors = [];
@@ -96,6 +116,12 @@ if ($_POST) {
         if ($stmt->rowCount() > 0) {
             $errors[] = "A role with this name already exists";
         }
+    }
+
+    if (empty($redirect_url)) {
+        $errors[] = "Redirect URL is required";
+    } elseif (!preg_match('/^[a-zA-Z0-9\/\.\-_]+$/', $redirect_url)) {
+        $errors[] = "Redirect URL contains invalid characters";
     }
 
     if (empty($selected_permissions)) {
@@ -121,11 +147,13 @@ if ($_POST) {
                 UPDATE roles SET 
                     name = :name, 
                     description = :description, 
+                    redirect_url = :redirect_url,
                     updated_at = NOW() 
                 WHERE id = :role_id
             ");
             $stmt->bindParam(':name', $name);
             $stmt->bindParam(':description', $description);
+            $stmt->bindParam(':redirect_url', $redirect_url);
             $stmt->bindParam(':role_id', $edit_role_id);
             $stmt->execute();
 
@@ -181,6 +209,7 @@ if ($_POST) {
     // Pre-populate form with existing data
     $_POST['name'] = $existing_role['name'];
     $_POST['description'] = $existing_role['description'];
+    $_POST['redirect_url'] = $existing_role['redirect_url'] ?? '../dashboard/dashboard.php';
     $_POST['permissions'] = $existing_permissions;
 }
 
@@ -535,6 +564,36 @@ foreach ($all_permissions as $permission) {
                                               placeholder="Describe what this role is responsible for..."><?php echo htmlspecialchars($_POST['description'] ?? ''); ?></textarea>
                                     <div class="form-text">Optional description to help identify the role's purpose</div>
                                 </div>
+
+                                <div class="col-12 mb-3">
+                                    <label for="redirect_url" class="form-label fw-semibold">Redirect URL After Login <span class="text-danger">*</span></label>
+                                    <select class="form-select" id="redirect_url" name="redirect_url" required>
+                                        <option value="">Select redirect page...</option>
+                                        <option value="../dashboard/dashboard.php" <?php echo (($_POST['redirect_url'] ?? '') === '../dashboard/dashboard.php') ? 'selected' : ''; ?>>Main Dashboard</option>
+                                        <option value="../sales/salesdashboard.php" <?php echo (($_POST['redirect_url'] ?? '') === '../sales/salesdashboard.php') ? 'selected' : ''; ?>>Sales Dashboard</option>
+                                        <option value="../sales/pos.php" <?php echo (($_POST['redirect_url'] ?? '') === '../sales/pos.php') ? 'selected' : ''; ?>>Point of Sale</option>
+                                        <option value="../sales/tills.php" <?php echo (($_POST['redirect_url'] ?? '') === '../sales/tills.php') ? 'selected' : ''; ?>>Register Tills</option>
+                                        <option value="../products/products.php" <?php echo (($_POST['redirect_url'] ?? '') === '../products/products.php') ? 'selected' : ''; ?>>Products Management</option>
+                                        <option value="../categories/categories.php" <?php echo (($_POST['redirect_url'] ?? '') === '../categories/categories.php') ? 'selected' : ''; ?>>Categories Management</option>
+                                        <option value="../brands/brands.php" <?php echo (($_POST['redirect_url'] ?? '') === '../brands/brands.php') ? 'selected' : ''; ?>>Brands Management</option>
+                                        <option value="../suppliers/suppliers.php" <?php echo (($_POST['redirect_url'] ?? '') === '../suppliers/suppliers.php') ? 'selected' : ''; ?>>Suppliers Management</option>
+                                        <option value="../customers/customers.php" <?php echo (($_POST['redirect_url'] ?? '') === '../customers/customers.php') ? 'selected' : ''; ?>>Customers Management</option>
+                                        <option value="../inventory/inventory.php" <?php echo (($_POST['redirect_url'] ?? '') === '../inventory/inventory.php') ? 'selected' : ''; ?>>Inventory Management</option>
+                                        <option value="../reports/reports.php" <?php echo (($_POST['redirect_url'] ?? '') === '../reports/reports.php') ? 'selected' : ''; ?>>Reports</option>
+                                        <option value="../users/users.php" <?php echo (($_POST['redirect_url'] ?? '') === '../users/users.php') ? 'selected' : ''; ?>>User Management</option>
+                                        <option value="../settings/settings.php" <?php echo (($_POST['redirect_url'] ?? '') === '../settings/settings.php') ? 'selected' : ''; ?>>System Settings</option>
+                                        <option value="custom" <?php echo (($_POST['redirect_url'] ?? '') === 'custom') ? 'selected' : ''; ?>>Custom URL...</option>
+                                    </select>
+                                    <div class="form-text">Choose which page users with this role will be redirected to after login</div>
+                                    
+                                    <!-- Custom URL input (hidden by default) -->
+                                    <div id="custom_url_div" class="mt-2" style="display: none;">
+                                        <input type="text" class="form-control" id="custom_redirect_url" name="custom_redirect_url" 
+                                               placeholder="Enter custom redirect URL (e.g., ../custom/page.php)"
+                                               value="<?php echo htmlspecialchars($_POST['custom_redirect_url'] ?? ''); ?>">
+                                        <div class="form-text">Enter a relative path from the root directory</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -545,6 +604,9 @@ foreach ($all_permissions as $permission) {
                                     <i class="bi bi-key me-2"></i>Permissions <span class="text-danger">*</span>
                                 </h5>
                                 <div class="d-flex gap-2">
+                                    <button type="button" class="btn btn-sm btn-outline-warning" onclick="suggestPermissionsFromMenu()">
+                                        <i class="bi bi-magic me-1"></i>Suggest from Menu
+                                    </button>
                                     <button type="button" class="btn btn-sm btn-outline-primary" onclick="selectAllPermissions()">
                                         <i class="bi bi-check-all me-1"></i>Select All
                                     </button>
@@ -721,6 +783,75 @@ foreach ($all_permissions as $permission) {
             }
         });
 
+        // Handle redirect URL selection
+        function handleRedirectUrlChange() {
+            const redirectSelect = document.getElementById('redirect_url');
+            const customUrlDiv = document.getElementById('custom_url_div');
+            const customUrlInput = document.getElementById('custom_redirect_url');
+            
+            if (redirectSelect.value === 'custom') {
+                customUrlDiv.style.display = 'block';
+                customUrlInput.required = true;
+            } else {
+                customUrlDiv.style.display = 'none';
+                customUrlInput.required = false;
+            }
+        }
+
+        // Suggest permissions based on menu access
+        function suggestPermissionsFromMenu() {
+            const menuAccess = {};
+            
+            // Get selected menu sections
+            document.querySelectorAll('input[name*="[visible]"]:checked').forEach(checkbox => {
+                const sectionId = checkbox.name.match(/\[(\d+)\]/)[1];
+                menuAccess[sectionId] = { visible: true };
+            });
+            
+            if (Object.keys(menuAccess).length === 0) {
+                alert('Please select at least one menu section first.');
+                return;
+            }
+            
+            // Send AJAX request to get suggested permissions
+            fetch('', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'action=suggest_permissions&menu_access=' + encodeURIComponent(JSON.stringify(menuAccess))
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Clear existing selections
+                    document.querySelectorAll('input[name="permissions[]"]').forEach(checkbox => {
+                        checkbox.checked = false;
+                    });
+                    
+                    // Select suggested permissions
+                    data.suggested_permissions.forEach(permissionName => {
+                        const checkbox = document.querySelector(`input[name="permissions[]"][value="${permissionName}"]`);
+                        if (checkbox) {
+                            checkbox.checked = true;
+                        }
+                    });
+                    
+                    updateSelectedCount();
+                    
+                    // Show detailed information
+                    const permissionList = data.suggested_permissions.join(', ');
+                    alert(`Suggested ${data.suggested_permissions.length} permissions based on selected menu access:\n\n${permissionList}`);
+                } else {
+                    alert('Error getting permission suggestions: ' + (data.message || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error getting permission suggestions. Please try again.');
+            });
+        }
+
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             updateSelectedCount();
@@ -732,6 +863,12 @@ foreach ($all_permissions as $permission) {
                     setTimeout(updateSelectedCount, 10);
                 });
             });
+            
+            // Handle redirect URL change
+            document.getElementById('redirect_url').addEventListener('change', handleRedirectUrlChange);
+            
+            // Initialize redirect URL handler
+            handleRedirectUrlChange();
         });
     </script>
 </body>

@@ -5,7 +5,26 @@ session_start();
 // pos_guard_redirect_if_not_installed();
 
 if(isset($_SESSION['user_id'])) {
-    header("Location: ../dashboard/dashboard.php");
+    // Get user's role redirect URL
+    $user_id = $_SESSION['user_id'];
+    $stmt = $conn->prepare("
+        SELECT r.redirect_url 
+        FROM users u 
+        LEFT JOIN roles r ON u.role_id = r.id 
+        WHERE u.id = :user_id
+    ");
+    $stmt->bindParam(':user_id', $user_id);
+    $stmt->execute();
+    $user_data = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    $redirect_url = $user_data['redirect_url'] ?? '../dashboard/dashboard.php';
+    
+    // Ensure the redirect URL is safe
+    if (empty($redirect_url) || !preg_match('/^[a-zA-Z0-9\/\.\-_]+$/', $redirect_url)) {
+        $redirect_url = '../dashboard/dashboard.php';
+    }
+    
+    header("Location: " . $redirect_url);
     exit();
 }
 
@@ -74,7 +93,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
             if($is_email) {
                 $attempt_type = 'email';
                 $stmt = $conn->prepare("
-                    SELECT u.*, r.name as role_name
+                    SELECT u.*, r.name as role_name, r.redirect_url
                     FROM users u
                     LEFT JOIN roles r ON u.role_id = r.id
                     WHERE u.email = :identifier
@@ -82,7 +101,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
             } elseif($is_user_id) {
                 $attempt_type = 'user_id';
                 $stmt = $conn->prepare("
-                    SELECT u.*, r.name as role_name
+                    SELECT u.*, r.name as role_name, r.redirect_url
                     FROM users u
                     LEFT JOIN roles r ON u.role_id = r.id
                     WHERE u.user_id = :identifier
@@ -90,7 +109,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
             } else {
                 $attempt_type = 'username';
                 $stmt = $conn->prepare("
-                    SELECT u.*, r.name as role_name
+                    SELECT u.*, r.name as role_name, r.redirect_url
                     FROM users u
                     LEFT JOIN roles r ON u.role_id = r.id
                     WHERE u.username = :identifier
@@ -159,8 +178,16 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
                         // Log successful login attempt
                         logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_type, true);
 
-                        // Redirect to dashboard
-                        header("Location: ../dashboard/dashboard.php");
+                        // Determine redirect URL based on role
+                        $redirect_url = $user['redirect_url'] ?? '../dashboard/dashboard.php';
+                        
+                        // Ensure the redirect URL is safe and exists
+                        if (empty($redirect_url) || !preg_match('/^[a-zA-Z0-9\/\.\-_]+$/', $redirect_url)) {
+                            $redirect_url = '../dashboard/dashboard.php';
+                        }
+                        
+                        // Redirect to role-specific page
+                        header("Location: " . $redirect_url);
                         exit();
                     } else {
                         // Failed login - password incorrect

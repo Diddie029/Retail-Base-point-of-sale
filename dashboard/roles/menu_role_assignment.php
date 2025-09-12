@@ -56,7 +56,30 @@ $error_message = '';
 if ($_POST) {
     $action = $_POST['action'] ?? '';
     
-    if ($action === 'assign_menu') {
+    if ($action === 'sync_permissions') {
+        $target_role_id = intval($_POST['role_id']);
+        
+        try {
+            $conn->beginTransaction();
+            
+            // Sync permissions based on current menu access
+            $sync_result = syncRolePermissionsFromMenuAccess($conn, $target_role_id, false);
+            
+            $conn->commit();
+            $success_message = "Permissions synchronized successfully!";
+            
+            if (!empty($sync_result['added'])) {
+                $permission_list = implode(', ', $sync_result['added']);
+                $success_message .= " " . count($sync_result['added']) . " permissions have been assigned based on current menu access: " . $permission_list;
+            } else {
+                $success_message .= " No permissions were assigned. Please check if the selected menu sections have corresponding permissions in the system.";
+            }
+            
+        } catch (PDOException $e) {
+            $conn->rollBack();
+            $error_message = "Error synchronizing permissions: " . $e->getMessage();
+        }
+    } elseif ($action === 'assign_menu') {
         $target_role_id = intval($_POST['role_id']);
         $menu_assignments = $_POST['menu_assignments'] ?? [];
         
@@ -85,8 +108,18 @@ if ($_POST) {
                 $stmt->execute();
             }
             
+            // Sync permissions based on menu access
+            $sync_result = syncRolePermissionsFromMenuAccess($conn, $target_role_id, false);
+            
             $conn->commit();
             $success_message = "Menu assignments updated successfully!";
+            
+            if (!empty($sync_result['added'])) {
+                $permission_list = implode(', ', $sync_result['added']);
+                $success_message .= " " . count($sync_result['added']) . " permissions have been automatically assigned: " . $permission_list;
+            } else {
+                $success_message .= " No permissions were assigned. Please check if the selected menu sections have corresponding permissions in the system.";
+            }
             
         } catch (PDOException $e) {
             $conn->rollBack();
@@ -320,9 +353,14 @@ if ($selected_role_id) {
                                         <i class="bi bi-info-circle me-1"></i>
                                         <strong>Admin Note:</strong> Admins automatically have access to all menu sections regardless of role assignment.
                                     </div>
-                                    <button type="submit" class="btn btn-primary">
-                                        <i class="bi bi-check-circle me-1"></i>Save Menu Assignments
-                                    </button>
+                                    <div class="d-flex gap-2">
+                                        <button type="button" class="btn btn-outline-warning" onclick="syncPermissions()">
+                                            <i class="bi bi-arrow-clockwise me-1"></i>Sync Permissions
+                                        </button>
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="bi bi-check-circle me-1"></i>Save Menu Assignments
+                                        </button>
+                                    </div>
                                 </div>
                             </form>
                         </div>
@@ -358,6 +396,19 @@ if ($selected_role_id) {
                 updateSectionSelection(sectionId);
             });
         });
+        
+        function syncPermissions() {
+            if (confirm('This will synchronize role permissions based on current menu access. This action will replace existing permissions. Continue?')) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.innerHTML = `
+                    <input type="hidden" name="action" value="sync_permissions">
+                    <input type="hidden" name="role_id" value="<?php echo $selected_role_id; ?>">
+                `;
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
     </script>
 </body>
 </html>

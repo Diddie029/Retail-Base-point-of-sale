@@ -14,6 +14,358 @@ function hasPermission($permission, $userPermissions) {
     return in_array($permission, $userPermissions);
 }
 
+/**
+ * Get menu section to permissions mapping
+ * 
+ * @return array Mapping of menu section keys to their related permissions
+ */
+function getMenuPermissionMapping() {
+    return [
+        // Dashboard
+        'dashboard' => [
+            'view_dashboard',
+            'view_statistics'
+        ],
+        
+        // Sales Management - General
+        'sales' => [
+            'view_sales',
+            'manage_sales',
+            'create_sales',
+            'edit_sales',
+            'delete_sales'
+        ],
+        
+        // Point of Sale (POS) - Specific
+        'pos' => [
+            'view_pos',
+            'manage_pos',
+            'create_sales',
+            'process_payments',
+            'handle_refunds',
+            'view_pos_reports'
+        ],
+        
+        // Register Tills - Specific
+        'tills' => [
+            'view_tills',
+            'manage_tills',
+            'open_till',
+            'close_till',
+            'till_reports'
+        ],
+        
+        // Sales Dashboard - Specific
+        'sales_dashboard' => [
+            'view_sales',
+            'view_sales_reports',
+            'view_sales_statistics'
+        ],
+        
+        // Products Management - General
+        'products' => [
+            'view_products',
+            'create_products',
+            'edit_products',
+            'delete_products',
+            'manage_products'
+        ],
+        
+        // Categories Management - Specific
+        'categories' => [
+            'view_categories',
+            'manage_categories',
+            'create_categories',
+            'edit_categories',
+            'delete_categories'
+        ],
+        
+        // Brands Management - Specific
+        'brands' => [
+            'view_brands',
+            'manage_brands',
+            'create_brands',
+            'edit_brands',
+            'delete_brands'
+        ],
+        
+        // Suppliers Management - Specific
+        'suppliers' => [
+            'view_suppliers',
+            'manage_suppliers',
+            'create_suppliers',
+            'edit_suppliers',
+            'delete_suppliers'
+        ],
+        
+        // Inventory Management - General
+        'inventory' => [
+            'view_inventory',
+            'manage_inventory',
+            'adjust_inventory',
+            'view_stock',
+            'manage_stock',
+            'view_low_stock',
+            'manage_low_stock'
+        ],
+        
+        // Customers Management - General
+        'customers' => [
+            'view_customers',
+            'create_customers',
+            'edit_customers',
+            'delete_customers',
+            'manage_customers'
+        ],
+        
+        // Reports - General
+        'reports' => [
+            'view_reports',
+            'generate_reports',
+            'export_reports'
+        ],
+        
+        // Sales Reports - Specific
+        'sales_reports' => [
+            'view_sales_reports',
+            'generate_sales_reports',
+            'export_sales_reports'
+        ],
+        
+        // Inventory Reports - Specific
+        'inventory_reports' => [
+            'view_inventory_reports',
+            'generate_inventory_reports',
+            'export_inventory_reports'
+        ],
+        
+        // User Management - General
+        'users' => [
+            'view_users',
+            'create_users',
+            'edit_users',
+            'delete_users',
+            'manage_users'
+        ],
+        
+        // Role Management - Specific
+        'roles' => [
+            'view_roles',
+            'manage_roles',
+            'create_roles',
+            'edit_roles',
+            'delete_roles',
+            'assign_roles'
+        ],
+        
+        // Settings - General
+        'settings' => [
+            'view_settings',
+            'manage_settings',
+            'system_settings'
+        ],
+        
+        // System Settings - Specific
+        'system_settings' => [
+            'view_settings',
+            'manage_settings',
+            'backup_system',
+            'restore_system',
+            'system_configuration'
+        ]
+    ];
+}
+
+/**
+ * Get permissions suggested based on menu access
+ * 
+ * @param array $menu_access Array of menu access assignments
+ * @return array Array of suggested permission names
+ */
+function getSuggestedPermissionsFromMenuAccess($menu_access) {
+    $mapping = getMenuPermissionMapping();
+    $suggested_permissions = [];
+    
+    foreach ($menu_access as $section_id => $access) {
+        if (isset($access['visible']) && $access['visible']) {
+            // Get menu section key from database
+            global $conn;
+            $stmt = $conn->prepare("SELECT section_key, section_name FROM menu_sections WHERE id = ?");
+            $stmt->execute([$section_id]);
+            $section = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($section) {
+                $section_key = $section['section_key'];
+                $section_name = strtolower($section['section_name']);
+                
+                // Try exact match first
+                if (isset($mapping[$section_key])) {
+                    $suggested_permissions = array_merge($suggested_permissions, $mapping[$section_key]);
+                } else {
+                    // Try to match by section name patterns
+                    $matched_permissions = [];
+                    
+                    // Check for specific patterns in section name
+                    if (strpos($section_name, 'pos') !== false || strpos($section_name, 'point of sale') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['pos'] ?? []);
+                    }
+                    if (strpos($section_name, 'till') !== false || strpos($section_name, 'register') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['tills'] ?? []);
+                    }
+                    if (strpos($section_name, 'sales') !== false && strpos($section_name, 'dashboard') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['sales_dashboard'] ?? []);
+                    }
+                    if (strpos($section_name, 'product') !== false && strpos($section_name, 'category') === false && strpos($section_name, 'brand') === false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['products'] ?? []);
+                    }
+                    if (strpos($section_name, 'categor') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['categories'] ?? []);
+                    }
+                    if (strpos($section_name, 'brand') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['brands'] ?? []);
+                    }
+                    if (strpos($section_name, 'supplier') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['suppliers'] ?? []);
+                    }
+                    if (strpos($section_name, 'inventor') !== false || strpos($section_name, 'stock') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['inventory'] ?? []);
+                    }
+                    if (strpos($section_name, 'customer') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['customers'] ?? []);
+                    }
+                    if (strpos($section_name, 'report') !== false) {
+                        if (strpos($section_name, 'sales') !== false) {
+                            $matched_permissions = array_merge($matched_permissions, $mapping['sales_reports'] ?? []);
+                        } elseif (strpos($section_name, 'inventor') !== false) {
+                            $matched_permissions = array_merge($matched_permissions, $mapping['inventory_reports'] ?? []);
+                        } else {
+                            $matched_permissions = array_merge($matched_permissions, $mapping['reports'] ?? []);
+                        }
+                    }
+                    if (strpos($section_name, 'user') !== false && strpos($section_name, 'role') === false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['users'] ?? []);
+                    }
+                    if (strpos($section_name, 'role') !== false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['roles'] ?? []);
+                    }
+                    if (strpos($section_name, 'setting') !== false) {
+                        if (strpos($section_name, 'system') !== false) {
+                            $matched_permissions = array_merge($matched_permissions, $mapping['system_settings'] ?? []);
+                        } else {
+                            $matched_permissions = array_merge($matched_permissions, $mapping['settings'] ?? []);
+                        }
+                    }
+                    if (strpos($section_name, 'dashboard') !== false && strpos($section_name, 'sales') === false) {
+                        $matched_permissions = array_merge($matched_permissions, $mapping['dashboard'] ?? []);
+                    }
+                    
+                    $suggested_permissions = array_merge($suggested_permissions, $matched_permissions);
+                }
+            }
+        }
+    }
+    
+    return array_unique($suggested_permissions);
+}
+
+/**
+ * Sync role permissions based on menu access
+ * 
+ * @param PDO $conn Database connection
+ * @param int $role_id Role ID to sync
+ * @param bool $add_only If true, only add permissions, don't remove existing ones
+ * @return array Array of added/removed permissions
+ */
+function syncRolePermissionsFromMenuAccess($conn, $role_id, $add_only = false) {
+    // Get current menu access for the role
+    $stmt = $conn->prepare("
+        SELECT ms.id, ms.section_key, ms.section_name, rma.is_visible 
+        FROM role_menu_access rma 
+        JOIN menu_sections ms ON rma.menu_section_id = ms.id 
+        WHERE rma.role_id = :role_id AND rma.is_visible = 1
+    ");
+    $stmt->bindParam(':role_id', $role_id);
+    $stmt->execute();
+    $menu_access_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Convert to the format expected by getSuggestedPermissionsFromMenuAccess
+    $menu_access = [];
+    foreach ($menu_access_data as $access) {
+        $menu_access[$access['id']] = ['visible' => $access['is_visible']];
+    }
+    
+    // Get suggested permissions using the improved function
+    $suggested_permissions = getSuggestedPermissionsFromMenuAccess($menu_access);
+    
+    // Get permission IDs
+    if (!empty($suggested_permissions)) {
+        $placeholders = str_repeat('?,', count($suggested_permissions) - 1) . '?';
+        $stmt = $conn->prepare("SELECT id FROM permissions WHERE name IN ($placeholders)");
+        $stmt->execute($suggested_permissions);
+        $permission_ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        if (!$add_only) {
+            // Remove all existing permissions for this role
+            $stmt = $conn->prepare("DELETE FROM role_permissions WHERE role_id = :role_id");
+            $stmt->bindParam(':role_id', $role_id);
+            $stmt->execute();
+        }
+        
+        // Add new permissions
+        $stmt = $conn->prepare("
+            INSERT IGNORE INTO role_permissions (role_id, permission_id) 
+            VALUES (:role_id, :permission_id)
+        ");
+        
+        foreach ($permission_ids as $permission_id) {
+            $stmt->bindParam(':role_id', $role_id);
+            $stmt->bindParam(':permission_id', $permission_id);
+            $stmt->execute();
+        }
+        
+        return [
+            'added' => $suggested_permissions,
+            'permission_ids' => $permission_ids
+        ];
+    }
+    
+    return ['added' => [], 'permission_ids' => []];
+}
+
+/**
+ * Debug function to test menu-permission mapping
+ * 
+ * @param PDO $conn Database connection
+ * @param int $role_id Role ID to test
+ * @return array Debug information
+ */
+function debugMenuPermissionMapping($conn, $role_id) {
+    // Get current menu access for the role
+    $stmt = $conn->prepare("
+        SELECT ms.id, ms.section_key, ms.section_name, rma.is_visible 
+        FROM role_menu_access rma 
+        JOIN menu_sections ms ON rma.menu_section_id = ms.id 
+        WHERE rma.role_id = :role_id AND rma.is_visible = 1
+    ");
+    $stmt->bindParam(':role_id', $role_id);
+    $stmt->execute();
+    $menu_access_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Convert to the format expected by getSuggestedPermissionsFromMenuAccess
+    $menu_access = [];
+    foreach ($menu_access_data as $access) {
+        $menu_access[$access['id']] = ['visible' => $access['is_visible']];
+    }
+    
+    // Get suggested permissions
+    $suggested_permissions = getSuggestedPermissionsFromMenuAccess($menu_access);
+    
+    return [
+        'menu_sections' => $menu_access_data,
+        'suggested_permissions' => $suggested_permissions,
+        'mapping' => getMenuPermissionMapping()
+    ];
+}
 
 /**
  * Generate a unique 4-digit user ID (auto-generation only)

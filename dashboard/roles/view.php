@@ -465,6 +465,69 @@ if (isset($_GET['updated']) && $_GET['updated'] == '1') {
                         <p class="mb-3 opacity-75"><?php echo htmlspecialchars($role['description']); ?></p>
                         <?php endif; ?>
                         
+                        <!-- Redirect URL Information -->
+                        <div class="mb-3">
+                            <div class="d-flex align-items-center">
+                                <i class="bi bi-arrow-right-circle me-2"></i>
+                                <span class="fw-semibold me-2">Redirect After Login:</span>
+                                <span class="badge bg-light text-dark">
+                                    <?php 
+                                    $redirect_url = $role['redirect_url'] ?? '../dashboard/dashboard.php';
+                                    $redirect_display = '';
+                                    
+                                    // Convert URL to display name
+                                    switch($redirect_url) {
+                                        case '../dashboard/dashboard.php':
+                                            $redirect_display = 'Main Dashboard';
+                                            break;
+                                        case '../sales/salesdashboard.php':
+                                            $redirect_display = 'Sales Dashboard';
+                                            break;
+                                        case '../sales/pos.php':
+                                            $redirect_display = 'Point of Sale';
+                                            break;
+                                        case '../sales/tills.php':
+                                            $redirect_display = 'Register Tills';
+                                            break;
+                                        case '../products/products.php':
+                                            $redirect_display = 'Products Management';
+                                            break;
+                                        case '../inventory/inventory.php':
+                                            $redirect_display = 'Inventory Management';
+                                            break;
+                                        case '../reports/reports.php':
+                                            $redirect_display = 'Reports';
+                                            break;
+                                        case '../users/users.php':
+                                            $redirect_display = 'User Management';
+                                            break;
+                                        case '../categories/categories.php':
+                                            $redirect_display = 'Categories Management';
+                                            break;
+                                        case '../brands/brands.php':
+                                            $redirect_display = 'Brands Management';
+                                            break;
+                                        case '../suppliers/suppliers.php':
+                                            $redirect_display = 'Suppliers Management';
+                                            break;
+                                        case '../customers/customers.php':
+                                            $redirect_display = 'Customers Management';
+                                            break;
+                                        case '../settings/settings.php':
+                                            $redirect_display = 'System Settings';
+                                            break;
+                                        default:
+                                            // Extract page name from path and convert to readable format
+                                            $filename = basename($redirect_url, '.php');
+                                            $redirect_display = ucwords(str_replace(['_', '-'], ' ', $filename));
+                                            break;
+                                    }
+                                    echo htmlspecialchars($redirect_display);
+                                    ?>
+                                </span>
+                            </div>
+                        </div>
+                        
                         <div class="row">
                             <div class="col-auto">
                                 <div class="stat-box" style="background: rgba(255, 255, 255, 0.15); border: 1px solid rgba(255, 255, 255, 0.2);">
@@ -626,6 +689,38 @@ if (isset($_GET['updated']) && $_GET['updated'] == '1') {
                                 </a>
                             </div>
                             <?php endif; ?>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Redirect URL Details -->
+                    <div class="info-card">
+                        <h6><i class="bi bi-arrow-right-circle me-2"></i>Login Redirect</h6>
+                        <div class="mb-3">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-link-45deg me-2 text-primary"></i>
+                                <span class="fw-semibold">Redirect URL:</span>
+                            </div>
+                            <div class="bg-light p-2 rounded">
+                                <code class="text-primary"><?php echo htmlspecialchars($role['redirect_url'] ?? '../dashboard/dashboard.php'); ?></code>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-info-circle me-2 text-info"></i>
+                                <span class="fw-semibold">Description:</span>
+                            </div>
+                            <p class="text-muted small mb-0">
+                                Users with this role will be automatically redirected to this page after successful login.
+                            </p>
+                        </div>
+                        
+                        <?php if (hasPermission('manage_roles', $permissions)): ?>
+                        <div class="d-grid">
+                            <a href="edit.php?id=<?php echo $role['id']; ?>" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-pencil me-1"></i>Change Redirect URL
+                            </a>
+                        </div>
                         <?php endif; ?>
                     </div>
 
