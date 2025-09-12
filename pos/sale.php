@@ -21,10 +21,25 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
+// Load role-based permissions for current user into $permissions to use with hasPermission()
+$permissions = [];
+$role_id = $_SESSION['role_id'] ?? 0;
+if ($role_id) {
+    try {
+        $perm_stmt = $conn->prepare("SELECT p.name FROM permissions p JOIN role_permissions rp ON p.id = rp.permission_id WHERE rp.role_id = :role_id");
+        $perm_stmt->execute([':role_id' => $role_id]);
+        $permissions = $perm_stmt->fetchAll(PDO::FETCH_COLUMN);
+    } catch (Exception $e) {
+        // If permissions can't be loaded, leave $permissions as empty array
+        error_log('Could not load permissions for role_id ' . $role_id . ': ' . $e->getMessage());
+        $permissions = [];
+    }
+}
+
 // Get register tills
 $stmt = $conn->query("
-    SELECT * FROM register_tills 
-    WHERE is_active = 1 
+    SELECT * FROM register_tills
+    WHERE is_active = 1
     ORDER BY till_name
 ");
 $register_tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -52,17 +67,17 @@ if ($selected_till) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'select_till') {
     $till_id = $_POST['till_id'] ?? null;
     $opening_amount = floatval($_POST['opening_amount'] ?? 0);
-    
+
     if ($till_id) {
         $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
         $stmt->execute([$till_id]);
         $till = $stmt->fetch(PDO::FETCH_ASSOC);
-        
+
         if ($till) {
             // Update till with opening amount, set status to opened, and assign to current user
             $stmt = $conn->prepare("UPDATE register_tills SET current_balance = ?, till_status = 'opened', current_user_id = ? WHERE id = ?");
             $stmt->execute([$opening_amount, $user_id, $till_id]);
-            
+
             $_SESSION['selected_till_id'] = $till_id;
             $_SESSION['selected_till_name'] = $till['till_name'];
             $_SESSION['selected_till_code'] = $till['till_code'];
@@ -70,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $selected_till = $till;
             $selected_till['current_balance'] = $opening_amount;
             $selected_till['current_user_id'] = $user_id;
-            
+
             // Show warning if till was previously used by another user
             if ($till['current_user_id'] && $till['current_user_id'] != $user_id) {
                 $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
@@ -82,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             }
         }
     }
-    
+
     // Redirect to prevent form resubmission
     header('Location: ' . $_SERVER['PHP_SELF']);
     exit();
@@ -104,7 +119,7 @@ function hasHeldTransactions($conn, $user_id) {
 // Handle till switching
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'switch_till') {
     $switch_till_id = intval($_POST['switch_till_id'] ?? 0);
-    
+
     if ($switch_till_id > 0) {
         // Check if cart has active products
         if (!empty($cart)) {
@@ -112,43 +127,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             header('Location: ' . $_SERVER['PHP_SELF']);
             exit();
         }
-        
+
         // Check for held transactions
         if (hasHeldTransactions($conn, $user_id)) {
             $_SESSION['error_message'] = "Cannot switch till with held transactions. Please continue or void all held transactions first.";
             header('Location: ' . $_SERVER['PHP_SELF']);
             exit();
         }
-        
+
         // Prevent switching to the same till
         if ($selected_till && $switch_till_id == $selected_till['id']) {
             $_SESSION['error_message'] = "You cannot switch to the same till you are currently using.";
             header('Location: ' . $_SERVER['PHP_SELF']);
             exit();
         }
-        
+
         // Get the till to switch to
         $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
         $stmt->execute([$switch_till_id]);
         $switch_till = $stmt->fetch(PDO::FETCH_ASSOC);
-        
+
         if ($switch_till) {
             // Release current till first
             if ($selected_till) {
                 $stmt = $conn->prepare("UPDATE register_tills SET current_user_id = NULL WHERE id = ?");
                 $stmt->execute([$selected_till['id']]);
             }
-            
+
             // Set new till status to opened and assign to current user
             $stmt = $conn->prepare("UPDATE register_tills SET till_status = 'opened', current_user_id = ? WHERE id = ?");
             $stmt->execute([$user_id, $switch_till['id']]);
-            
+
             // Update session with new till
             $_SESSION['selected_till_id'] = $switch_till['id'];
             $_SESSION['selected_till_name'] = $switch_till['till_name'];
             $_SESSION['selected_till_code'] = $switch_till['till_code'];
             $_SESSION['till_opening_amount'] = $switch_till['current_balance'];
-            
+
             // Show warning if till was previously used by another user
             if ($switch_till['current_user_id'] && $switch_till['current_user_id'] != $user_id) {
                 $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
@@ -164,7 +179,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         $_SESSION['error_message'] = "Please select a till to switch to.";
     }
-    
+
     // Redirect to prevent form resubmission
     header('Location: ' . $_SERVER['PHP_SELF']);
     exit();
@@ -178,14 +193,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit();
     }
-    
+
     // Check for held transactions
     if (hasHeldTransactions($conn, $user_id)) {
         $_SESSION['error_message'] = "Cannot close till with held transactions. Please continue or void all held transactions first.";
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit();
     }
-    
+
     $cash_amount = floatval($_POST['cash_amount'] ?? 0);
     $voucher_amount = floatval($_POST['voucher_amount'] ?? 0);
     $loyalty_points = floatval($_POST['loyalty_points'] ?? 0);
@@ -193,48 +208,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $other_description = $_POST['other_description'] ?? '';
     $closing_notes = $_POST['closing_notes'] ?? '';
     $allow_exceed = isset($_POST['allow_exceed']) ? 1 : 0;
-    
+
     if ($selected_till) {
         // Calculate total closing amount
         $total_closing = $cash_amount + $voucher_amount + $loyalty_points + $other_amount;
-        
+
         // Check if closing exceeds balance (unless allowed)
         if (!$allow_exceed && $total_closing > $selected_till['current_balance']) {
             $_SESSION['error_message'] = "Closing amount exceeds till balance. Please check amounts or enable 'Allow Exceed' option.";
         } else {
             // Create till closing record
             $stmt = $conn->prepare("
-                INSERT INTO till_closings (till_id, user_id, cash_amount, voucher_amount, loyalty_points, other_amount, other_description, total_amount, closing_notes, allow_exceed, closed_at) 
+                INSERT INTO till_closings (till_id, user_id, cash_amount, voucher_amount, loyalty_points, other_amount, other_description, total_amount, closing_notes, allow_exceed, closed_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ");
             $stmt->execute([
-                $selected_till['id'], 
-                $user_id, 
-                $cash_amount, 
-                $voucher_amount, 
-                $loyalty_points, 
-                $other_amount, 
-                $other_description, 
-                $total_closing, 
-                $closing_notes, 
+                $selected_till['id'],
+                $user_id,
+                $cash_amount,
+                $voucher_amount,
+                $loyalty_points,
+                $other_amount,
+                $other_description,
+                $total_closing,
+                $closing_notes,
                 $allow_exceed
             ]);
-            
+
             // Reset till balance to 0, set status to closed, and release user assignment
             $stmt = $conn->prepare("UPDATE register_tills SET current_balance = 0, till_status = 'closed', current_user_id = NULL WHERE id = ?");
             $stmt->execute([$selected_till['id']]);
-            
+
             // Clear till selection
             unset($_SESSION['selected_till_id']);
             unset($_SESSION['selected_till_name']);
             unset($_SESSION['selected_till_code']);
             unset($_SESSION['till_opening_amount']);
             $selected_till = null;
-            
+
             $_SESSION['success_message'] = "Till closed successfully. You can now select a new till.";
         }
     }
-    
+
     // Redirect to prevent form resubmission
     header('Location: ' . $_SERVER['PHP_SELF']);
     exit();
@@ -244,13 +259,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cash_drop_auth') {
     $auth_user_id = $_POST['user_id'] ?? '';
     $auth_password = $_POST['password'] ?? '';
-    
+
     if ($auth_user_id && $auth_password) {
         // Verify user credentials
         $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE id = ? AND status = 'active'");
         $stmt->execute([$auth_user_id]);
         $auth_user = $stmt->fetch(PDO::FETCH_ASSOC);
-        
+
         if ($auth_user && password_verify($auth_password, $auth_user['password'])) {
             // Check if user has cash drop permission
             if ($auth_user['role'] === 'admin' || hasPermission('cash_drop', $permissions)) {
@@ -267,7 +282,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     } else {
         $_SESSION['error_message'] = "Please enter both user ID and password.";
     }
-    
+
     // Redirect to prevent form resubmission
     header('Location: ' . $_SERVER['PHP_SELF']);
     exit();
@@ -276,44 +291,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Handle cash drop
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cash_drop') {
     $notes = $_POST['notes'] ?? '';
-    
+
     // Check if user is authenticated for cash drop
     if (!isset($_SESSION['cash_drop_authenticated']) || !$_SESSION['cash_drop_authenticated']) {
         $_SESSION['error_message'] = "You must authenticate before performing cash drop operations.";
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit();
     }
-    
+
     if ($selected_till) {
         // Get total sales amount for this till today
         $today = date('Y-m-d');
         $stmt = $conn->prepare("
             SELECT COALESCE(SUM(final_amount), 0) as total_sales
-            FROM sales 
+            FROM sales
             WHERE DATE(sale_date) = ? AND till_id = ?
         ");
         $stmt->execute([$today, $selected_till['id']]);
         $sales_data = $stmt->fetch(PDO::FETCH_ASSOC);
         $total_sales = floatval($sales_data['total_sales']);
-        
+
         if ($total_sales > 0) {
             // Drop the total sales amount
             $stmt = $conn->prepare("
-                INSERT INTO cash_drops (till_id, user_id, drop_amount, notes, status) 
+                INSERT INTO cash_drops (till_id, user_id, drop_amount, notes, status)
                 VALUES (?, ?, ?, ?, 'pending')
             ");
             $stmt->execute([$selected_till['id'], $user_id, $total_sales, $notes]);
-            
+
             // Update till balance
             $new_balance = $selected_till['current_balance'] - $total_sales;
             $stmt = $conn->prepare("UPDATE register_tills SET current_balance = ? WHERE id = ?");
             $stmt->execute([$new_balance, $selected_till['id']]);
-            
+
             // Update session
             $selected_till['current_balance'] = $new_balance;
             $_SESSION['till_opening_amount'] = $new_balance;
             $_SESSION['success_message'] = "Cash drop processed successfully by " . $_SESSION['cash_drop_username'] . ". Dropped " . formatCurrency($total_sales, $settings) . " (total sales amount).";
-            
+
             // Clear authentication after successful drop
             unset($_SESSION['cash_drop_authenticated']);
             unset($_SESSION['cash_drop_user_id']);
@@ -322,7 +337,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $_SESSION['error_message'] = "No sales found for today. Nothing to drop.";
         }
     }
-    
+
     // Redirect to prevent form resubmission
     header('Location: ' . $_SERVER['PHP_SELF']);
     exit();
@@ -346,14 +361,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'release_till') {
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit();
     }
-    
+
     // Check for held transactions
     if (hasHeldTransactions($conn, $user_id)) {
         $_SESSION['error_message'] = "Cannot release till with held transactions. Please continue or void all held transactions first.";
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit();
     }
-    
+
     if ($selected_till) {
         $stmt = $conn->prepare("UPDATE register_tills SET current_user_id = NULL WHERE id = ?");
         $stmt->execute([$selected_till['id']]);
@@ -365,7 +380,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'release_till') {
 
 // Get products for the POS interface
 $stmt = $conn->query("
-    SELECT p.*, c.name as category_name 
+    SELECT p.*, c.name as category_name
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
     WHERE p.status = 'active'
@@ -399,6 +414,30 @@ foreach ($cart as $item) {
 }
 $tax_amount = $subtotal * ($tax_rate / 100);
 $total_amount = $subtotal + $tax_amount;
+?>
+
+<?php
+// Determine if Dashboard button should be visible on Sales page based on menu assignment + permissions
+$canSeeDashboard = false;
+try {
+    $roleId = $_SESSION['role_id'] ?? 0;
+    if ($roleId) {
+        $stmt = $conn->prepare("SELECT rma.is_visible
+                                 FROM menu_sections ms
+                                 LEFT JOIN role_menu_access rma ON ms.id = rma.menu_section_id AND rma.role_id = :role_id
+                                 WHERE ms.section_key = 'dashboard' AND ms.is_active = 1
+                                 LIMIT 1");
+        $stmt->execute([':role_id' => $roleId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $permOk = hasPermission('view_dashboard', $permissions)
+               || hasPermission('view_reports', $permissions)
+               || hasPermission('view_analytics', $permissions);
+        $canSeeDashboard = $permOk && (!empty($row) && (int)($row['is_visible'] ?? 0) === 1);
+    }
+} catch (Exception $e) {
+    // Fail closed (button hidden) on any error
+    error_log('Dashboard visibility check failed: ' . $e->getMessage());
+}
 ?>
 
 <!DOCTYPE html>
@@ -861,7 +900,7 @@ $total_amount = $subtotal + $tax_amount;
             font-family: 'Courier New', monospace;
             font-size: 0.8rem;
         }
-        
+
         /* Network Status Indicator */
         .network-status {
             display: flex;
@@ -873,7 +912,7 @@ $total_amount = $subtotal + $tax_amount;
             border: 1px solid rgba(255, 255, 255, 0.2);
             transition: all 0.3s ease;
         }
-        
+
         .network-indicator {
             position: relative;
             width: 20px;
@@ -882,28 +921,28 @@ $total_amount = $subtotal + $tax_amount;
             align-items: center;
             justify-content: center;
         }
-        
+
         .network-indicator i {
             font-size: 1rem;
             color: #28a745;
             animation: networkBlink 2s infinite;
         }
-        
+
         .network-status.offline .network-indicator i {
             color: #ffffff;
             animation: none;
         }
-        
+
         .network-text {
             font-size: 0.75rem;
             font-weight: 500;
             color: #ffffff;
         }
-        
+
         .network-status.offline .network-text {
             color: #ffffff;
         }
-        
+
         @keyframes networkBlink {
             0%, 50% { opacity: 1; }
             51%, 100% { opacity: 0.3; }
@@ -914,7 +953,7 @@ $total_amount = $subtotal + $tax_amount;
             align-items: center;
             gap: 0.5rem;
         }
-        
+
         /* Logout Button Styling */
         .logout-btn {
             border: 1px solid rgba(255, 255, 255, 0.3);
@@ -923,7 +962,7 @@ $total_amount = $subtotal + $tax_amount;
             transition: all 0.2s ease;
             font-weight: 500;
         }
-        
+
         .logout-btn:hover {
             background: rgba(255, 255, 255, 0.2);
             border-color: rgba(255, 255, 255, 0.5);
@@ -931,7 +970,7 @@ $total_amount = $subtotal + $tax_amount;
             transform: translateY(-1px);
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         }
-        
+
         .logout-btn:active {
             transform: translateY(0);
             background: rgba(255, 255, 255, 0.15);
@@ -1118,6 +1157,7 @@ $total_amount = $subtotal + $tax_amount;
                     <i class="bi bi-exclamation-triangle me-2"></i>
                     <span class="me-3">Please select a till to continue</span>
                     <?php if ($no_tills_available): ?>
+
                     <button type="button" class="btn btn-warning btn-sm" onclick="showNoTillsModal()">
                         <i class="bi bi-exclamation-triangle"></i> No Tills Available
                     </button>
@@ -1138,26 +1178,33 @@ $total_amount = $subtotal + $tax_amount;
                 </div>
                 <span class="network-text">Online</span>
             </div>
-            
+
             <!-- Time Display -->
             <div class="time-display" id="currentTime"></div>
-            
+
+            <?php if (!empty($canSeeDashboard) && $canSeeDashboard): ?>
+            <a href="../dashboard/dashboard.php" class="btn btn-outline-light btn-sm" title="Dashboard" aria-label="Open Dashboard">
+                <i class="bi bi-speedometer2"></i> Dashboard
+            </a>
+            <?php endif; ?>
+
             <!-- User Info -->
             <div class="user-info">
                 <div class="avatar"><?php echo strtoupper(substr($username, 0, 1)); ?></div>
                 <div>
                     <div class="fw-bold"><?php echo htmlspecialchars($username); ?></div>
+
                     <small class="opacity-75">Cashier</small>
                 </div>
             </div>
-            
+
             <!-- Logout Button -->
             <button type="button" class="btn btn-outline-light btn-sm logout-btn" onclick="logout()" title="Logout">
                 <i class="bi bi-box-arrow-right"></i> Logout
             </button>
         </div>
     </div>
-                        
+
     <?php if (isset($_SESSION['success_message'])): ?>
     <div class="alert alert-success alert-dismissible fade show" role="alert">
         <i class="bi bi-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
@@ -1165,7 +1212,7 @@ $total_amount = $subtotal + $tax_amount;
     </div>
     <?php unset($_SESSION['success_message']); ?>
     <?php endif; ?>
-    
+
     <?php if (isset($_SESSION['error_message'])): ?>
     <div class="alert alert-danger alert-dismissible fade show" role="alert">
         <i class="bi bi-exclamation-triangle"></i> <?php echo $_SESSION['error_message']; ?>
@@ -1189,7 +1236,7 @@ $total_amount = $subtotal + $tax_amount;
                                     <input type="text" class="form-control" id="productSearch" placeholder="Search products...">
                                 </div>
                             </div>
-                            
+
                             <!-- Categories Column (40%) -->
                             <div class="col-md-5">
                                 <div class="d-flex align-items-center">
@@ -1220,11 +1267,11 @@ $total_amount = $subtotal + $tax_amount;
                             <div class="text-center">
                                 <div class="mb-2">
                                     <?php if ($product['image_url']): ?>
-                                        <img src="<?php echo htmlspecialchars($product['image_url']); ?>" 
-                                             alt="<?php echo htmlspecialchars($product['name']); ?>" 
+                                        <img src="<?php echo htmlspecialchars($product['image_url']); ?>"
+                                             alt="<?php echo htmlspecialchars($product['name']); ?>"
                                              class="img-fluid rounded" style="max-height: 80px;">
                         <?php else: ?>
-                                        <div class="bg-light rounded d-flex align-items-center justify-content-center" 
+                                        <div class="bg-light rounded d-flex align-items-center justify-content-center"
                                              style="height: 80px;">
                                             <i class="bi bi-box text-muted fs-1"></i>
                             </div>
@@ -1235,7 +1282,7 @@ $total_amount = $subtotal + $tax_amount;
                                 <div class="fw-bold text-success">
                                     <?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($product['price'], 2); ?>
                                 </div>
-                                
+
                                 <?php if ($product['quantity'] <= 0): ?>
                                 <div class="badge bg-danger mt-1">Out of Stock</div>
                                 <?php else: ?>
@@ -1309,7 +1356,7 @@ $total_amount = $subtotal + $tax_amount;
                 </div>
             </div>
                                         <div class="quantity-controls">
-                                            <input type="number" class="quantity-display" value="<?php echo $item['quantity']; ?>" 
+                                            <input type="number" class="quantity-display" value="<?php echo $item['quantity']; ?>"
                                                    min="1" max="999" data-index="<?php echo $index; ?>"
                                                    onchange="debouncedUpdateQuantityDirect(<?php echo $index; ?>, this.value)"
                                                    onkeypress="handleQuantityKeypress(event, <?php echo $index; ?>, this)"
@@ -1340,7 +1387,7 @@ $total_amount = $subtotal + $tax_amount;
                                 <span id="cartTotal"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($total_amount, 2); ?></span>
                         </div>
                     </div>
-                    
+
                         <!-- Cart Actions -->
                         <div class="cart-actions">
                             <div class="row g-2 mb-2">
@@ -1389,7 +1436,7 @@ $total_amount = $subtotal + $tax_amount;
                             <input type="text" class="form-control" id="customerSearch" placeholder="Search by name, phone number, or email address...">
                         </div>
                     </div>
-                    
+
                     <!-- Customer List -->
                     <div class="customer-list-container">
                         <div class="customer-list" id="customerList">
@@ -1459,7 +1506,7 @@ $total_amount = $subtotal + $tax_amount;
             if (!window.productCache) {
                 window.productCache = {};
             }
-            
+
             const productCards = document.querySelectorAll('.product-card[data-product-id]');
             productCards.forEach(card => {
                 const productId = card.dataset.productId;
@@ -1470,7 +1517,7 @@ $total_amount = $subtotal + $tax_amount;
                     const categoryEl = card.querySelector('p');
                     const imgEl = card.querySelector('img');
                     const stockEl = card.querySelector('.badge.bg-danger');
-                    
+
                     if (nameEl && priceEl && categoryEl) {
                         window.productCache[productId] = {
                             name: nameEl.textContent,
@@ -1495,18 +1542,18 @@ $total_amount = $subtotal + $tax_amount;
             if (searchTimeout) {
                 clearTimeout(searchTimeout);
             }
-            
+
             // Debounce search to improve performance
             searchTimeout = setTimeout(() => {
                 const searchTerm = this.value.toLowerCase();
                 const productCards = document.querySelectorAll('.product-card');
-                
+
                 // Use requestAnimationFrame for smooth UI updates
                 requestAnimationFrame(() => {
                     productCards.forEach(card => {
                         const productName = card.querySelector('h6').textContent.toLowerCase();
                         const categoryName = card.querySelector('p').textContent.toLowerCase();
-                        
+
                         if (productName.includes(searchTerm) || categoryName.includes(searchTerm)) {
                             card.style.display = 'block';
                         } else {
@@ -1524,26 +1571,26 @@ $total_amount = $subtotal + $tax_amount;
             productGrid.addEventListener('click', function(event) {
                 // Prevent event bubbling for better performance
                 event.stopPropagation();
-                
+
                 const productCard = event.target.closest('.product-card');
                 if (!productCard || !productCard.dataset.productId) {
                     return;
                 }
-                
+
                 const productId = productCard.dataset.productId;
-                
+
                 // Check if it's a quick add button (quantity buttons)
                 if (event.target.classList.contains('quick-add-btn')) {
                     const quantity = parseInt(event.target.dataset.quantity) || 1;
                     addToCart(productId, quantity);
                     return;
                 }
-                
+
                 // Only handle clicks on the product card itself, not on buttons
                 if (event.target.closest('.quick-add-buttons')) {
                     return; // Don't handle clicks on quick add buttons here
                 }
-                
+
                 // Default: instant add to cart (only for product card clicks)
                 if (productCard.contains(event.target)) {
                     addToCart(productId, 1); // Add 1 quantity instantly
@@ -1558,15 +1605,15 @@ $total_amount = $subtotal + $tax_amount;
         async function addToCartAsync(productId, quantity, fallbackCart) {
             // Create unique key for this API call
             const callKey = `${productId}-${quantity}-${Date.now()}`;
-            
+
             // Prevent duplicate calls for the same product and quantity
             if (pendingApiCalls.has(`${productId}-${quantity}`)) {
                 console.log('Duplicate API call prevented');
                 return;
             }
-            
+
             pendingApiCalls.add(`${productId}-${quantity}`);
-            
+
             try {
                 const response = await fetch('add_to_cart.php', {
                     method: 'POST',
@@ -1581,7 +1628,7 @@ $total_amount = $subtotal + $tax_amount;
                 }
 
                 const data = await response.json();
-                
+
                 if (data.success) {
                     // Server response successful, only update if cart data is different
                     if (JSON.stringify(data.cart) !== JSON.stringify(window.cartData)) {
@@ -1624,7 +1671,7 @@ $total_amount = $subtotal + $tax_amount;
                 }
 
                 const data = await response.json();
-                
+
                 if (data.success) {
                     // Server response successful, update with server data
                     updateCartDisplay(data.cart);
@@ -1655,7 +1702,7 @@ $total_amount = $subtotal + $tax_amount;
                 }
 
                 const data = await response.json();
-                
+
                 if (data.success) {
                     updateCartDisplay([]);
                 } else {
@@ -1670,17 +1717,17 @@ $total_amount = $subtotal + $tax_amount;
         // Async function to search customers
         async function searchCustomersAsync(search) {
             const customerList = document.getElementById('customerList');
-            
+
             try {
                 const response = await fetch(`../api/get_customers.php?search=${encodeURIComponent(search)}`);
-                
+
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
                 const data = await response.json();
                 console.log('Customer API response:', data);
-                
+
                 if (data.success) {
                     displayCustomers(data.customers);
                 } else {
@@ -1707,7 +1754,7 @@ $total_amount = $subtotal + $tax_amount;
         function addToCart(productId, quantityToAdd = 1) {
             // Use cached product data if available, otherwise query DOM
             let productData = window.productCache?.[productId];
-            
+
             if (!productData) {
                 // Find the clicked product card to get product data
                 const productCard = document.querySelector(`[data-product-id="${productId}"]`);
@@ -1725,7 +1772,7 @@ $total_amount = $subtotal + $tax_amount;
                     imageUrl: productCard.querySelector('img')?.src || '',
                     isOutOfStock: !!productCard.querySelector('.badge.bg-danger')
                 };
-                
+
                 // Cache the product data
                 if (!window.productCache) {
                     window.productCache = {};
@@ -1753,7 +1800,7 @@ $total_amount = $subtotal + $tax_amount;
             // Update cart instantly with temporary item
             const currentCart = window.cartData || [];
             const existingItemIndex = currentCart.findIndex(item => item.id == productId);
-            
+
             let updatedCart;
             if (existingItemIndex >= 0) {
                 // Item exists, increase quantity by the amount being added
@@ -1780,7 +1827,7 @@ $total_amount = $subtotal + $tax_amount;
 
         // Cache DOM elements for better performance
         let cartElements = null;
-        
+
         function getCartElements() {
             if (!cartElements) {
                 cartElements = {
@@ -1799,7 +1846,7 @@ $total_amount = $subtotal + $tax_amount;
         // Debounce function to prevent excessive calls
         let updateCartTimeout = null;
         let updateCartFrame = null;
-        
+
         function debouncedUpdateCartDisplay(cart) {
             if (updateCartTimeout) {
                 clearTimeout(updateCartTimeout);
@@ -1807,7 +1854,7 @@ $total_amount = $subtotal + $tax_amount;
             if (updateCartFrame) {
                 cancelAnimationFrame(updateCartFrame);
             }
-            
+
             updateCartTimeout = setTimeout(() => {
                 updateCartFrame = requestAnimationFrame(() => {
                     updateCartDisplay(cart);
@@ -1818,7 +1865,7 @@ $total_amount = $subtotal + $tax_amount;
         // Update cart display - optimized version
         function updateCartDisplay(cart) {
             const elements = getCartElements();
-            
+
             // Check if required elements exist
             if (!elements.cartItems || !elements.cartCount || !elements.cartSubtotal || !elements.cartTax || !elements.cartTotal) {
                 console.error('Required cart display elements not found');
@@ -1833,11 +1880,11 @@ $total_amount = $subtotal + $tax_amount;
             cart.forEach(item => {
                 subtotal += item.price * item.quantity;
             });
-            
+
             // Ensure POSConfig exists
             const taxRate = window.POSConfig?.taxRate || 16;
             const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
-            
+
             const tax = subtotal * (taxRate / 100);
             const total = subtotal + tax;
 
@@ -1845,7 +1892,7 @@ $total_amount = $subtotal + $tax_amount;
             elements.cartSubtotal.textContent = `${currencySymbol} ${subtotal.toFixed(2)}`;
             elements.cartTax.textContent = `${currencySymbol} ${tax.toFixed(2)}`;
             elements.cartTotal.textContent = `${currencySymbol} ${total.toFixed(2)}`;
-            
+
             // Ensure proper styling
             elements.cartSubtotal.className = 'fw-bold small';
             elements.cartTax.className = 'fw-bold small';
@@ -1859,7 +1906,7 @@ $total_amount = $subtotal + $tax_amount;
             if (elements.paymentBtn) {
                 elements.paymentBtn.disabled = cart.length === 0;
             }
-            
+
             if (elements.voidCartBtn) {
                 elements.voidCartBtn.disabled = cart.length === 0;
             }
@@ -1883,14 +1930,14 @@ $total_amount = $subtotal + $tax_amount;
 
             // Use DocumentFragment for better performance
             const fragment = document.createDocumentFragment();
-            
+
             cart.forEach((item, index) => {
                 const cartItemDiv = document.createElement('div');
                 cartItemDiv.className = 'cart-item';
                 cartItemDiv.setAttribute('data-index', index);
-                
+
                 const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
-                
+
                 cartItemDiv.innerHTML = `
                     <div class="flex-grow-1 d-flex align-items-center">
                         <span class="product-number">${index + 1}.</span>
@@ -1907,7 +1954,7 @@ $total_amount = $subtotal + $tax_amount;
                         </div>
                     </div>
                     <div class="quantity-controls">
-                        <input type="number" class="quantity-display" value="${item.quantity}" 
+                        <input type="number" class="quantity-display" value="${item.quantity}"
                                min="1" max="999" data-index="${index}"
                                onchange="debouncedUpdateQuantityDirect(${index}, this.value)"
                                onkeypress="handleQuantityKeypress(event, ${index}, this)"
@@ -1918,10 +1965,10 @@ $total_amount = $subtotal + $tax_amount;
                         </button>
                     </div>
                 `;
-                
+
                 fragment.appendChild(cartItemDiv);
             });
-            
+
             // Single DOM update
             cartItemsElement.innerHTML = '';
             cartItemsElement.appendChild(fragment);
@@ -1943,7 +1990,7 @@ $total_amount = $subtotal + $tax_amount;
         function updateQuantityDirect(index, newQuantity) {
             // Sanitize input
             const sanitizedInput = sanitizeQuantityInput(newQuantity);
-            
+
             if (sanitizedInput === null) {
                 // Reset to current quantity if invalid
                 const currentQuantity = window.cartData[index] ? window.cartData[index].quantity : 1;
@@ -1956,14 +2003,14 @@ $total_amount = $subtotal + $tax_amount;
             if (currentCart[index]) {
                 const updatedCart = [...currentCart];
                 const newQuantityValue = sanitizedInput;
-                
+
                 if (newQuantityValue <= 0) {
                     // Remove item if quantity becomes 0 or negative
                     updatedCart.splice(index, 1);
                 } else {
                     updatedCart[index].quantity = newQuantityValue;
                 }
-                
+
                 // Update UI instantly
                 updateCartDisplay(updatedCart);
             }
@@ -1971,7 +2018,7 @@ $total_amount = $subtotal + $tax_amount;
             // Calculate the change needed for server sync
             const currentQuantity = currentCart[index] ? currentCart[index].quantity : 1;
             const change = sanitizedInput - currentQuantity;
-            
+
             if (change !== 0) {
                 // Send request to server in background
                 updateCartItemAsync(index, change, currentCart);
@@ -1982,23 +2029,23 @@ $total_amount = $subtotal + $tax_amount;
         function sanitizeQuantityInput(input) {
             // Remove any non-numeric characters except minus sign
             let cleaned = String(input).replace(/[^0-9-]/g, '');
-            
+
             // Remove leading zeros
             cleaned = cleaned.replace(/^0+/, '');
-            
+
             // Handle empty string
             if (cleaned === '' || cleaned === '-') {
                 return null;
             }
-            
+
             // Convert to integer
             const quantity = parseInt(cleaned, 10);
-            
+
             // Validate range
             if (isNaN(quantity) || quantity < 1 || quantity > 999) {
                 return null;
             }
-            
+
             return quantity;
         }
 
@@ -2007,12 +2054,12 @@ $total_amount = $subtotal + $tax_amount;
             // Allow only numeric characters, backspace, delete, arrow keys, and Enter
             const allowedKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Enter', 'Tab'];
             const isNumeric = /^[0-9]$/.test(event.key);
-            
+
             if (!isNumeric && !allowedKeys.includes(event.key)) {
                 event.preventDefault();
                 return false;
             }
-            
+
             if (event.key === 'Enter') {
                 event.preventDefault();
                 inputElement.blur(); // This will trigger onchange
@@ -2023,10 +2070,10 @@ $total_amount = $subtotal + $tax_amount;
         function filterQuantityInput(inputElement) {
             const originalValue = inputElement.value;
             const sanitized = sanitizeQuantityInput(originalValue);
-            
+
             if (sanitized === null && originalValue !== '') {
                 // If input is invalid, revert to previous valid value
-                const currentQuantity = window.cartData[inputElement.dataset.index] ? 
+                const currentQuantity = window.cartData[inputElement.dataset.index] ?
                     window.cartData[inputElement.dataset.index].quantity : 1;
                 inputElement.value = currentQuantity;
             } else if (sanitized !== null) {
@@ -2047,12 +2094,12 @@ $total_amount = $subtotal + $tax_amount;
             // Prevent double-clicking
             const button = event.target;
             if (button.disabled) return;
-            
+
             if (window.cartData.length === 0) {
                 alert('Cart is empty');
                 return;
             }
-            
+
             // Set loading state
             setButtonLoading(button, 'Processing...', true);
 
@@ -2070,7 +2117,7 @@ $total_amount = $subtotal + $tax_amount;
             // Show payment modal
             const paymentModal = new bootstrap.Modal(document.getElementById('paymentModal'));
             paymentModal.show();
-            
+
             // Reset button state after modal is shown
             setButtonLoading(button, 'Processing...', false);
         }
@@ -2080,12 +2127,12 @@ $total_amount = $subtotal + $tax_amount;
             // Prevent double-clicking
             const button = event.target;
             if (button.disabled) return;
-            
+
             if (window.cartData.length === 0) {
                 alert('Cart is empty');
                 return;
             }
-            
+
             // Set loading state
             setButtonLoading(button, 'Holding...', true);
 
@@ -2119,7 +2166,7 @@ $total_amount = $subtotal + $tax_amount;
             .then(data => {
                 // Reset button state
                 setButtonLoading(button, 'Holding...', false);
-                
+
                 if (data.success) {
                     // Update cart display
                     window.cartData = data.cart;
@@ -2150,7 +2197,7 @@ $total_amount = $subtotal + $tax_amount;
             // Show held transactions modal
             const heldModal = new bootstrap.Modal(modalElement);
             heldModal.show();
-            
+
             // Load held transactions data after modal is shown
             setTimeout(() => {
                 loadHeldTransactionsData();
@@ -2164,16 +2211,16 @@ $total_amount = $subtotal + $tax_amount;
         function openCustomerModal() {
             const customerModal = new bootstrap.Modal(document.getElementById('customerModal'));
             customerModal.show();
-            
+
             // Clear search and reset selection
             document.getElementById('customerSearch').value = '';
             selectedCustomerId = null;
             selectedCustomerData = null;
             document.getElementById('selectCustomerBtn').disabled = true;
-            
+
             // Reset customer count badge
             document.getElementById('customerCountBadge').textContent = '0 customers';
-            
+
             loadCustomers();
         }
 
@@ -2196,12 +2243,12 @@ $total_amount = $subtotal + $tax_amount;
             const customerList = document.getElementById('customerList');
             const customerCountBadge = document.getElementById('customerCountBadge');
             const searchTerm = document.getElementById('customerSearch').value.trim();
-            
+
             // Update customer count badge
             const customerCount = customers.length;
             const countText = customerCount === 1 ? '1 customer' : `${customerCount} customers`;
             customerCountBadge.textContent = countText;
-            
+
             if (customers.length === 0) {
                 if (searchTerm) {
                     customerList.innerHTML = `
@@ -2224,7 +2271,7 @@ $total_amount = $subtotal + $tax_amount;
             }
 
             let customersHtml = '';
-            
+
             // Add results count header for search results
             if (searchTerm) {
                 customersHtml += `
@@ -2234,15 +2281,15 @@ $total_amount = $subtotal + $tax_amount;
                     </div>
                 `;
             }
-            
+
             customers.forEach(customer => {
                 const isSelected = selectedCustomerId === customer.id;
-                const customerTypeClass = customer.customer_type === 'walk_in' ? 'text-muted' : 
-                                        customer.customer_type === 'vip' ? 'text-warning' : 
+                const customerTypeClass = customer.customer_type === 'walk_in' ? 'text-muted' :
+                                        customer.customer_type === 'vip' ? 'text-warning' :
                                         customer.customer_type === 'business' ? 'text-info' : 'text-dark';
-                
+
                 customersHtml += `
-                    <div class="customer-item ${isSelected ? 'border-primary' : ''}" 
+                    <div class="customer-item ${isSelected ? 'border-primary' : ''}"
                          onclick="selectCustomer(${customer.id}, '${customer.display_name}', ${JSON.stringify(customer).replace(/"/g, '&quot;')})">
                         <div class="customer-name ${customerTypeClass}">
                             ${customer.display_name}
@@ -2257,18 +2304,18 @@ $total_amount = $subtotal + $tax_amount;
                     </div>
                 `;
             });
-            
+
             customerList.innerHTML = customersHtml;
         }
 
         function selectCustomer(customerId, customerName, customerData) {
             selectedCustomerId = customerId;
             selectedCustomerData = customerData;
-            
+
             // Update UI
             document.getElementById('selectedCustomerName').textContent = customerName;
             document.getElementById('selectCustomerBtn').disabled = false;
-            
+
             // Update visual selection
             document.querySelectorAll('.customer-item').forEach(item => {
                 item.classList.remove('border-primary');
@@ -2282,26 +2329,26 @@ $total_amount = $subtotal + $tax_amount;
                 const customerName = selectedCustomerData.display_name;
                 const customerType = selectedCustomerData.customer_type;
                 const customerNumber = selectedCustomerData.customer_number;
-                
+
                 const confirmMessage = `Are you sure you want to select this customer?\n\n` +
                                     `Name: ${customerName}\n` +
                                     `Type: ${customerType}\n` +
                                     `Number: ${customerNumber}`;
-                
+
                 if (confirm(confirmMessage)) {
                     // Update global customer data
                     window.selectedCustomer = selectedCustomerData;
-                    
+
                     // Close modal
                     const customerModal = bootstrap.Modal.getInstance(document.getElementById('customerModal'));
                     customerModal.hide();
-                    
+
                     // Update customer display
                     document.getElementById('selectedCustomerName').textContent = selectedCustomerData.display_name;
-                    
+
                     // Show success message
                     showCustomerSelectionSuccess(selectedCustomerData);
-                    
+
                     console.log('Customer selected:', selectedCustomerData);
                 }
             }
@@ -2317,9 +2364,9 @@ $total_amount = $subtotal + $tax_amount;
                 <strong>Customer Selected:</strong> ${customerData.display_name}
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             `;
-            
+
             document.body.appendChild(successDiv);
-            
+
             // Auto-remove after 3 seconds
             setTimeout(() => {
                 if (successDiv.parentNode) {
@@ -2339,7 +2386,7 @@ $total_amount = $subtotal + $tax_amount;
 
         // Event listeners
         document.getElementById('selectCustomerBtn').addEventListener('click', confirmCustomerSelection);
-        
+
         // Till management functions
         function showTillSelection() {
             const modalElement = document.getElementById('tillSelectionModal');
@@ -2348,7 +2395,7 @@ $total_amount = $subtotal + $tax_amount;
                 modal.show();
             }
         }
-        
+
         function showNoTillsModal() {
             const modalElement = document.getElementById('noTillsModal');
             if (modalElement && typeof bootstrap !== 'undefined') {
@@ -2356,15 +2403,15 @@ $total_amount = $subtotal + $tax_amount;
                 modal.show();
             }
         }
-        
+
         function releaseTill() {
             // Prevent double-clicking
             const button = event.target;
             if (button.disabled) return;
-            
+
             // Set loading state
             setButtonLoading(button, 'Checking...', true);
-            
+
             // Check for held transactions before allowing till release
             checkHeldTransactionsBeforeTillOperation('release', button);
         }
@@ -2391,15 +2438,15 @@ $total_amount = $subtotal + $tax_amount;
                 .then(data => {
                     // Reset button state
                     setButtonLoading(button, 'Checking...', false);
-                    
+
                     if (data.success && data.held_transactions && data.held_transactions.length > 0) {
                         const actionText = operation === 'switch' ? 'switch till' : operation === 'close' ? 'close till' : 'release till';
                         const heldCount = data.held_transactions.length;
-                        
+
                         alert(`Cannot ${actionText} with held transactions.\n\nYou have ${heldCount} held transaction${heldCount > 1 ? 's' : ''} that need to be processed first.\n\nPlease continue or void all held transactions before ${actionText}ing.`);
                         return;
                     }
-                    
+
                     // No held transactions, proceed with the operation
                     proceedWithTillOperation(operation);
                 })
@@ -2455,7 +2502,7 @@ $total_amount = $subtotal + $tax_amount;
                     break;
             }
         }
-        
+
         function showCashDropAuth() {
             const modalElement = document.getElementById('cashDropAuthModal');
             if (modalElement && typeof bootstrap !== 'undefined') {
@@ -2463,7 +2510,7 @@ $total_amount = $subtotal + $tax_amount;
                 modal.show();
             }
         }
-        
+
         function showCashDrop() {
             const modalElement = document.getElementById('cashDropModal');
             if (modalElement && typeof bootstrap !== 'undefined') {
@@ -2471,96 +2518,96 @@ $total_amount = $subtotal + $tax_amount;
                 modal.show();
             }
         }
-        
+
         function showSwitchTill() {
             // Prevent double-clicking
             const button = event.target;
             if (button.disabled) return;
-            
+
             // Set loading state
             setButtonLoading(button, 'Checking...', true);
-            
+
             // Check for held transactions before allowing till switch
             checkHeldTransactionsBeforeTillOperation('switch', button);
         }
-        
+
         function showCloseTill() {
             // Prevent double-clicking
             const button = event.target;
             if (button.disabled) return;
-            
+
             // Set loading state
             setButtonLoading(button, 'Checking...', true);
-            
+
             // Check for held transactions before allowing till close
             checkHeldTransactionsBeforeTillOperation('close', button);
         }
-        
+
         function selectSwitchTill(tillId) {
             // Uncheck all radio buttons
             document.querySelectorAll('input[name="switch_till_id"]').forEach(radio => {
                 radio.checked = false;
             });
-            
+
             // Check the selected till
             document.getElementById('switch_till_' + tillId).checked = true;
-            
+
             // Enable confirm button
             document.getElementById('confirmSwitchTill').disabled = false;
-            
+
             // Add visual feedback
             document.querySelectorAll('.till-card').forEach(card => {
                 card.classList.remove('border-primary', 'bg-light');
             });
             event.currentTarget.classList.add('border-primary', 'bg-light');
         }
-        
+
         function selectTill(tillId) {
             // Uncheck all radio buttons
             document.querySelectorAll('input[name="till_id"]').forEach(radio => {
                 radio.checked = false;
             });
-            
+
             // Check the selected till
             document.getElementById('till_' + tillId).checked = true;
-            
+
             // Enable confirm button
             document.getElementById('confirmTillSelection').disabled = false;
-            
+
             // Add visual feedback
             document.querySelectorAll('.till-card').forEach(card => {
                 card.classList.remove('border-primary', 'bg-light');
             });
             event.currentTarget.classList.add('border-primary', 'bg-light');
         }
-        
+
         function validateTillSelection() {
             const tillSelected = document.querySelector('input[name="till_id"]:checked');
             const openingAmount = document.getElementById('opening_amount').value;
             const confirmBtn = document.getElementById('confirmTillSelection');
-            
+
             confirmBtn.disabled = !(tillSelected && openingAmount && parseFloat(openingAmount) >= 0);
         }
-        
+
         function updateCloseTillTotals() {
             const cashAmount = parseFloat(document.getElementById('cash_amount').value) || 0;
             const voucherAmount = parseFloat(document.getElementById('voucher_amount').value) || 0;
             const loyaltyAmount = parseFloat(document.getElementById('loyalty_points').value) || 0;
             const otherAmount = parseFloat(document.getElementById('other_amount').value) || 0;
             const tillBalance = <?php echo $selected_till['current_balance'] ?? 0; ?>;
-            
+
             const totalClosing = cashAmount + voucherAmount + loyaltyAmount + otherAmount;
             const difference = totalClosing - tillBalance;
-            
+
             document.getElementById('cash_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + cashAmount.toFixed(2);
             document.getElementById('voucher_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + voucherAmount.toFixed(2);
             document.getElementById('loyalty_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + loyaltyAmount.toFixed(2);
             document.getElementById('other_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + otherAmount.toFixed(2);
             document.getElementById('total_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + totalClosing.toFixed(2);
-            
+
             const differenceElement = document.getElementById('difference_display');
             differenceElement.textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + difference.toFixed(2);
-            
+
             if (difference > 0) {
                 differenceElement.className = 'text-danger fw-bold';
             } else if (difference < 0) {
@@ -2569,41 +2616,41 @@ $total_amount = $subtotal + $tax_amount;
                 differenceElement.className = 'text-success fw-bold';
             }
         }
-        
+
         // Category dropdown functionality
         function initializeCategoryDropdown() {
             const categoryDropdown = document.getElementById('categoryDropdown');
             const productCards = document.querySelectorAll('.product-card');
-            
+
             if (!categoryDropdown) return;
-            
+
             // Handle category selection
             categoryDropdown.addEventListener('change', function() {
                 const selectedCategory = this.value;
-                
+
                 productCards.forEach(card => {
                     const categoryId = card.getAttribute('data-category-id');
-                    
+
                     if (selectedCategory === 'all' || categoryId === selectedCategory) {
                         card.style.display = 'block';
                     } else {
                         card.style.display = 'none';
                     }
                 });
-                
+
                 // Update product count display
                 const visibleProducts = document.querySelectorAll('.product-card[style*="block"], .product-card:not([style*="none"])').length;
                 console.log(`Showing ${visibleProducts} products for category: ${selectedCategory}`);
             });
         }
-        
+
         // Network status functionality
         function initializeNetworkStatus() {
             const networkStatus = document.getElementById('networkStatus');
             const networkText = networkStatus.querySelector('.network-text');
-            
+
             if (!networkStatus) return;
-            
+
             function updateNetworkStatus() {
                 if (navigator.onLine) {
                     networkStatus.classList.remove('offline');
@@ -2615,24 +2662,24 @@ $total_amount = $subtotal + $tax_amount;
                     networkStatus.title = 'Network Disconnected';
                 }
             }
-            
+
             // Initial check
             updateNetworkStatus();
-            
+
             // Listen for online/offline events
             window.addEventListener('online', updateNetworkStatus);
             window.addEventListener('offline', updateNetworkStatus);
-            
+
             // Note: Periodic connectivity check disabled to avoid 404 errors
             // The browser's built-in online/offline events are sufficient for most use cases
         }
-        
+
         // Logout functionality
         function initializeLogout() {
             // Logout function is already defined globally
             // This is just for consistency with other initializations
         }
-        
+
         // Global logout function
         function logout() {
             if (confirm('Are you sure you want to logout? Any unsaved changes will be lost.')) {
@@ -2640,7 +2687,7 @@ $total_amount = $subtotal + $tax_amount;
                 if (typeof releaseTill === 'function') {
                     releaseTill();
                 }
-                
+
                 // Redirect to logout
                 window.location.href = '../logout.php';
             }
@@ -2662,7 +2709,7 @@ $total_amount = $subtotal + $tax_amount;
                     </div>
                     <h4 class="text-muted mb-3">No Tills Have Been Created</h4>
                     <p class="text-muted mb-4">
-                        You need to create at least one till before you can start processing sales. 
+                        You need to create at least one till before you can start processing sales.
                         Please contact your administrator to set up tills for your POS system.
                     </p>
                     <div class="alert alert-info">
@@ -2701,7 +2748,7 @@ $total_amount = $subtotal + $tax_amount;
                             <i class="bi bi-info-circle"></i>
                             Please select a till and enter the opening amount to continue with sales operations. You can change this selection at any time.
                         </div>
-                        
+
                         <div class="row">
                             <?php foreach ($register_tills as $till): ?>
                             <div class="col-md-6 mb-3">
@@ -2714,10 +2761,10 @@ $total_amount = $subtotal + $tax_amount;
                                         <p class="card-text">
                                             <strong>Code:</strong> <?php echo htmlspecialchars($till['till_code']); ?><br>
                                             <strong>Location:</strong> <?php echo htmlspecialchars($till['location'] ?? 'N/A'); ?><br>
-                                            <strong>Status:</strong> 
+                                            <strong>Status:</strong>
                                             <?php if (($till['till_status'] ?? 'closed') === 'opened'): ?>
                                                 <?php if ($till['current_user_id']): ?>
-                                                    <?php 
+                                                    <?php
                                                     // Get username of current user
                                                     $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
                                                     $user_stmt->execute([$till['current_user_id']]);
@@ -2754,7 +2801,7 @@ $total_amount = $subtotal + $tax_amount;
                             </div>
                             <?php endforeach; ?>
                         </div>
-                        
+
                         <div class="row mt-4">
                             <div class="col-md-6">
                                 <div class="card">
@@ -2764,7 +2811,7 @@ $total_amount = $subtotal + $tax_amount;
                                         </h6>
                                         <div class="input-group">
                                             <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
-                                            <input type="number" class="form-control" name="opening_amount" id="opening_amount" 
+                                            <input type="number" class="form-control" name="opening_amount" id="opening_amount"
                                                    step="0.01" min="0" placeholder="0.00" required>
                                         </div>
                                         <small class="text-muted">Enter the cash amount you're starting with in this till</small>
@@ -2772,7 +2819,7 @@ $total_amount = $subtotal + $tax_amount;
                                 </div>
                             </div>
                         </div>
-                        
+
                         <?php if (empty($register_tills)): ?>
                         <div class="text-center py-4">
                             <i class="bi bi-exclamation-triangle text-warning" style="font-size: 3rem;"></i>
@@ -2809,16 +2856,16 @@ $total_amount = $subtotal + $tax_amount;
                             <i class="bi bi-info-circle"></i>
                             Please enter your credentials to proceed with cash drop operation.
                         </div>
-                        
+
                         <div class="mb-3">
                             <label for="auth_user_id" class="form-label">User ID</label>
-                            <input type="text" class="form-control" name="user_id" id="auth_user_id" 
+                            <input type="text" class="form-control" name="user_id" id="auth_user_id"
                                    placeholder="Enter your user ID" autocomplete="username" required>
                         </div>
-                        
+
                         <div class="mb-3">
                             <label for="auth_password" class="form-label">Password</label>
-                            <input type="password" class="form-control" name="password" id="auth_password" 
+                            <input type="password" class="form-control" name="password" id="auth_password"
                                    placeholder="Enter your password" autocomplete="current-password" required>
                         </div>
                     </div>
@@ -2860,25 +2907,25 @@ $total_amount = $subtotal + $tax_amount;
                             You must authenticate before proceeding with cash drop operations.
                         </div>
                         <?php endif; ?>
-                        
+
                         <div class="alert alert-info">
                             <i class="bi bi-info-circle"></i>
                             This will drop the total amount of sales made today from the till. The amount is automatically calculated based on today's sales.
                         </div>
-                        
+
                         <?php
                         // Get total sales for today
                         $today = date('Y-m-d');
                         $stmt = $conn->prepare("
                             SELECT COALESCE(SUM(final_amount), 0) as total_sales
-                            FROM sales 
+                            FROM sales
                             WHERE DATE(sale_date) = ? AND till_id = ?
                         ");
                         $stmt->execute([$today, $selected_till['id'] ?? 0]);
                         $sales_data = $stmt->fetch(PDO::FETCH_ASSOC);
                         $total_sales = floatval($sales_data['total_sales']);
                         ?>
-                        
+
                         <div class="card mb-3">
                             <div class="card-body text-center">
                                 <h6 class="card-title">
@@ -2902,11 +2949,11 @@ $total_amount = $subtotal + $tax_amount;
                                 </div>
                             </div>
                         </div>
-                        
+
                         <?php if ($total_sales > 0): ?>
                         <div class="alert alert-warning">
                             <i class="bi bi-exclamation-triangle"></i>
-                            <strong>Drop Amount:</strong> <?php echo formatCurrency($total_sales, $settings); ?> 
+                            <strong>Drop Amount:</strong> <?php echo formatCurrency($total_sales, $settings); ?>
                             (Total sales for today)
                         </div>
                         <?php else: ?>
@@ -2915,10 +2962,10 @@ $total_amount = $subtotal + $tax_amount;
                             No sales found for today. Nothing to drop.
                         </div>
                         <?php endif; ?>
-                        
+
                         <div class="mb-3">
                             <label for="notes" class="form-label">Notes (Optional)</label>
-                            <textarea class="form-control" name="notes" id="notes" rows="3" 
+                            <textarea class="form-control" name="notes" id="notes" rows="3"
                                       placeholder="Enter any notes about this cash drop..."></textarea>
                         </div>
                     </div>
@@ -2962,7 +3009,7 @@ $total_amount = $subtotal + $tax_amount;
                             <i class="bi bi-info-circle"></i>
                             <strong>Switch Till:</strong> Select a different till to switch to. Your current till will remain open.
                         </div>
-                        
+
                         <?php if (empty($switch_tills)): ?>
                         <div class="alert alert-warning text-center">
                             <i class="bi bi-exclamation-triangle"></i>
@@ -2982,10 +3029,10 @@ $total_amount = $subtotal + $tax_amount;
                                         <p class="card-text">
                                             <strong>Code:</strong> <?php echo htmlspecialchars($till['till_code']); ?><br>
                                             <strong>Location:</strong> <?php echo htmlspecialchars($till['location'] ?? 'N/A'); ?><br>
-                                            <strong>Status:</strong> 
+                                            <strong>Status:</strong>
                                             <?php if (($till['till_status'] ?? 'closed') === 'opened'): ?>
                                                 <?php if ($till['current_user_id']): ?>
-                                                    <?php 
+                                                    <?php
                                                     // Get username of current user
                                                     $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
                                                     $user_stmt->execute([$till['current_user_id']]);
@@ -3052,57 +3099,57 @@ $total_amount = $subtotal + $tax_amount;
                             <i class="bi bi-exclamation-triangle"></i>
                             <strong>Close Till:</strong> This will permanently close the current till and reset its balance to zero. This action cannot be undone.
                         </div>
-                        
+
                         <div class="row">
                             <div class="col-md-6">
                                 <h6 class="mb-3">
                                     <i class="bi bi-cash-coin"></i> Payment Breakdown
                                 </h6>
-                                
+
                                 <div class="mb-3">
                                     <label for="cash_amount" class="form-label">Cash Amount</label>
                                     <div class="input-group">
                                         <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
-                                        <input type="number" class="form-control" name="cash_amount" id="cash_amount" 
+                                        <input type="number" class="form-control" name="cash_amount" id="cash_amount"
                                                step="0.01" min="0" placeholder="0.00" required>
                                     </div>
                                 </div>
-                                
+
                                 <div class="mb-3">
                                     <label for="voucher_amount" class="form-label">Voucher Amount</label>
                                     <div class="input-group">
                                         <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
-                                        <input type="number" class="form-control" name="voucher_amount" id="voucher_amount" 
+                                        <input type="number" class="form-control" name="voucher_amount" id="voucher_amount"
                                                step="0.01" min="0" placeholder="0.00">
                                     </div>
                                 </div>
-                                
+
                                 <div class="mb-3">
                                     <label for="loyalty_points" class="form-label">Loyalty Points (Value)</label>
                                     <div class="input-group">
                                         <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
-                                        <input type="number" class="form-control" name="loyalty_points" id="loyalty_points" 
+                                        <input type="number" class="form-control" name="loyalty_points" id="loyalty_points"
                                                step="0.01" min="0" placeholder="0.00">
                                     </div>
                                 </div>
-                                
+
                                 <div class="mb-3">
                                     <label for="other_amount" class="form-label">Other Amount</label>
                                     <div class="input-group">
                                         <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
-                                        <input type="number" class="form-control" name="other_amount" id="other_amount" 
+                                        <input type="number" class="form-control" name="other_amount" id="other_amount"
                                                step="0.01" min="0" placeholder="0.00">
                                     </div>
-                                    <input type="text" class="form-control mt-2" name="other_description" id="other_description" 
+                                    <input type="text" class="form-control mt-2" name="other_description" id="other_description"
                                            placeholder="Description of other payment type">
                                 </div>
                             </div>
-                            
+
                             <div class="col-md-6">
                                 <h6 class="mb-3">
                                     <i class="bi bi-calculator"></i> Summary
                                 </h6>
-                                
+
                                 <div class="card">
                                     <div class="card-body">
                                         <div class="d-flex justify-content-between mb-2">
@@ -3137,17 +3184,17 @@ $total_amount = $subtotal + $tax_amount;
                                         </div>
                                     </div>
                                 </div>
-                                
+
                                 <div class="form-check mt-3">
                                     <input class="form-check-input" type="checkbox" name="allow_exceed" id="allow_exceed" checked>
                                     <label class="form-check-label" for="allow_exceed">
                                         Allow closing amount to exceed till balance
                                     </label>
                                 </div>
-                                
+
                                 <div class="mb-3 mt-3">
                                     <label for="closing_notes" class="form-label">Closing Notes (Optional)</label>
-                                    <textarea class="form-control" name="closing_notes" id="closing_notes" rows="3" 
+                                    <textarea class="form-control" name="closing_notes" id="closing_notes" rows="3"
                                               placeholder="Enter any notes about this till closing..."></textarea>
                                 </div>
                             </div>
@@ -3190,7 +3237,7 @@ $total_amount = $subtotal + $tax_amount;
                             </select>
                         </div>
                     </div>
-                    
+
                     <!-- Held Transactions Table -->
                     <div class="table-responsive">
                         <table class="table table-striped table-hover">
@@ -3230,39 +3277,39 @@ $total_amount = $subtotal + $tax_amount;
             document.querySelectorAll('input[name="till_id"]').forEach(radio => {
                 radio.addEventListener('change', validateTillSelection);
             });
-            
+
             // Switch till event listeners
             document.querySelectorAll('input[name="switch_till_id"]').forEach(radio => {
                 radio.addEventListener('change', function() {
                     document.getElementById('confirmSwitchTill').disabled = false;
                 });
             });
-            
+
             const openingAmountInput = document.getElementById('opening_amount');
             if (openingAmountInput) {
                 openingAmountInput.addEventListener('input', validateTillSelection);
             }
-            
+
             // Close till calculations event listeners
             const cashAmountInput = document.getElementById('cash_amount');
             const voucherAmountInput = document.getElementById('voucher_amount');
             const loyaltyAmountInput = document.getElementById('loyalty_points');
             const otherAmountInput = document.getElementById('other_amount');
-            
+
             if (cashAmountInput) cashAmountInput.addEventListener('input', updateCloseTillTotals);
             if (voucherAmountInput) voucherAmountInput.addEventListener('input', updateCloseTillTotals);
             if (loyaltyAmountInput) loyaltyAmountInput.addEventListener('input', updateCloseTillTotals);
             if (otherAmountInput) otherAmountInput.addEventListener('input', updateCloseTillTotals);
-            
+
             // Category dropdown functionality
             initializeCategoryDropdown();
-            
+
             // Network status functionality
             initializeNetworkStatus();
-            
+
             // Logout functionality
             initializeLogout();
-            
+
             // Show appropriate modal on page load if no till is selected
             <?php if (!$selected_till): ?>
                 <?php if ($no_tills_available): ?>
@@ -3314,7 +3361,7 @@ $total_amount = $subtotal + $tax_amount;
             const tbody = document.getElementById('heldTransactionsTableBody');
             const tillFilter = document.getElementById('tillFilter');
             const cashierFilter = document.getElementById('cashierFilter');
-            
+
             // Check if required elements exist
             if (!tbody || !tillFilter || !cashierFilter) {
                 console.error('Required DOM elements not found for held transactions display');
@@ -3328,27 +3375,27 @@ $total_amount = $subtotal + $tax_amount;
                     tillFilter.innerHTML += `<option value="${till.id}">${till.till_name}</option>`;
                 });
             }
-            
+
             if (filters && filters.cashiers) {
                 cashierFilter.innerHTML = '<option value="all">All Cashiers</option>';
                 filters.cashiers.forEach(cashier => {
                     cashierFilter.innerHTML += `<option value="${cashier.id}">${cashier.username}</option>`;
                 });
             }
-            
+
             // Display transactions
             if (!transactions || transactions.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No held transactions found</td></tr>';
                 return;
             }
-            
+
             tbody.innerHTML = '';
             transactions.forEach(transaction => {
                 const row = document.createElement('tr');
                 const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
                 const total = transaction.totals?.total || 0;
                 const reason = transaction.reason || 'No reason provided';
-                
+
                 row.innerHTML = `
                     <td>${transaction.id || 'N/A'}</td>
                     <td>${transaction.cashier_name || 'Unknown'}</td>
@@ -3396,7 +3443,7 @@ $total_amount = $subtotal + $tax_amount;
                     window.cartData = data.cart;
                     window.paymentTotals = data.totals;
                     updateCartDisplay(data.cart);
-                    
+
                     // Close modal
                     const modalElement = document.getElementById('heldTransactionsModal');
                     if (modalElement) {
@@ -3405,7 +3452,7 @@ $total_amount = $subtotal + $tax_amount;
                             heldModal.hide();
                         }
                     }
-                    
+
                     alert('Held transaction loaded successfully!');
                 } else {
                     alert('Error: ' + data.error);
@@ -3459,28 +3506,28 @@ $total_amount = $subtotal + $tax_amount;
         function applyHeldTransactionFilters() {
             const tillFilterElement = document.getElementById('tillFilter');
             const cashierFilterElement = document.getElementById('cashierFilter');
-            
+
             if (!tillFilterElement || !cashierFilterElement) {
                 console.error('Filter elements not found');
                 return;
             }
-            
+
             const tillFilter = tillFilterElement.value;
             const cashierFilter = cashierFilterElement.value;
-            
+
             let url = 'get_held_transactions.php?';
             const params = [];
-            
+
             if (tillFilter && tillFilter !== 'all') {
                 params.push(`filter_till=${tillFilter}`);
             }
-            
+
             if (cashierFilter && cashierFilter !== 'all') {
                 params.push(`filter_cashier=${cashierFilter}`);
             }
-            
+
             url += params.join('&');
-            
+
             fetch(url)
                 .then(response => response.json())
                 .then(data => {
@@ -3504,7 +3551,7 @@ $total_amount = $subtotal + $tax_amount;
             }
 
             const product = window.cartData[cartIndex];
-            
+
             // Show void reason dialog
             const voidReason = prompt(`Void Product: ${product.name}\n\nEnter void reason (required):`);
             if (!voidReason || voidReason.trim() === '') {
@@ -3607,37 +3654,37 @@ $total_amount = $subtotal + $tax_amount;
             });
         }
     </script>
-    
+
     <style>
         .till-card {
             cursor: pointer;
             transition: all 0.3s ease;
             border: 2px solid transparent;
         }
-        
+
         .till-card:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
             border-color: #667eea;
         }
-        
+
         .till-card.border-primary {
             border-color: #667eea !important;
             background-color: #f8f9ff !important;
         }
-        
-        
+
+
         .product-card.disabled {
             opacity: 0.5;
             pointer-events: none;
             cursor: not-allowed;
         }
-        
+
         /* Category Dropdown Styles */
         .category-dropdown-container {
             flex: 1;
         }
-        
+
         .category-dropdown {
             border: 1px solid #dee2e6;
             border-radius: 8px;
@@ -3647,23 +3694,23 @@ $total_amount = $subtotal + $tax_amount;
             cursor: pointer;
             position: relative;
         }
-        
+
         .category-dropdown:focus {
             border-color: #007bff;
             box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25);
             outline: none;
         }
-        
+
         .category-dropdown:hover {
             border-color: #007bff;
             box-shadow: 0 2px 8px rgba(0,123,255,0.15);
             transform: translateY(-1px);
         }
-        
+
         .category-dropdown:active {
             transform: translateY(0);
         }
-        
+
         /* Custom dropdown arrow styling */
         .category-dropdown {
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m1 6 7 7 7-7'/%3e%3c/svg%3e");
@@ -3672,25 +3719,25 @@ $total_amount = $subtotal + $tax_amount;
             background-size: 16px 12px;
             padding-right: 2.5rem;
         }
-        
-        
+
+
         /* Responsive adjustments */
         @media (max-width: 768px) {
             .category-dropdown {
                 font-size: 0.9rem;
             }
-            
+
             /* Stack columns vertically on mobile */
             .col-md-7, .col-md-5 {
                 margin-bottom: 8px;
             }
         }
-        
+
         .product-card.disabled:hover {
             transform: none;
             box-shadow: none;
         }
-        
+
         /* Till Action Buttons Styling */
         .till-action-btn {
             font-weight: 600;
@@ -3699,60 +3746,60 @@ $total_amount = $subtotal + $tax_amount;
             transition: all 0.2s ease;
             min-width: 120px;
         }
-        
+
         .till-action-btn:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.2);
             border-color: rgba(255,255,255,0.3);
         }
-        
+
         .till-action-btn:active {
             transform: translateY(0);
             box-shadow: 0 2px 4px rgba(0,0,0,0.15);
         }
-        
+
         .till-action-btn.btn-primary {
             background: linear-gradient(135deg, #007bff, #0056b3);
             border-color: #007bff;
         }
-        
+
         .till-action-btn.btn-primary:hover {
             background: linear-gradient(135deg, #0056b3, #004085);
             border-color: #0056b3;
         }
-        
+
         .till-action-btn.btn-danger {
             background: linear-gradient(135deg, #dc3545, #c82333);
             border-color: #dc3545;
         }
-        
+
         .till-action-btn.btn-danger:hover {
             background: linear-gradient(135deg, #c82333, #bd2130);
             border-color: #c82333;
         }
-        
+
         .till-action-btn.btn-secondary {
             background: linear-gradient(135deg, #6c757d, #5a6268);
             border-color: #6c757d;
         }
-        
+
         .till-action-btn.btn-secondary:hover {
             background: linear-gradient(135deg, #5a6268, #495057);
             border-color: #5a6268;
         }
-        
+
         .till-action-btn.btn-warning {
             background: linear-gradient(135deg, #ffc107, #e0a800);
             border-color: #ffc107;
             color: #212529;
         }
-        
+
         .till-action-btn.btn-warning:hover {
             background: linear-gradient(135deg, #e0a800, #d39e00);
             border-color: #e0a800;
             color: #212529;
         }
-        
+
         .till-icon {
             width: 60px;
             height: 60px;

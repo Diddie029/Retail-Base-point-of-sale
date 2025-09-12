@@ -559,14 +559,34 @@ try {
                             </div>
                             <div class="card-body">
                                 <?php foreach ($analytics['payment_methods'] as $method): ?>
-                                <div class="d-flex justify-content-between align-items-center mb-2">
-                                    <span class="text-capitalize"><?php echo htmlspecialchars($method['payment_method']); ?></span>
-                                    <div class="text-end">
-                                        <div class="fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($method['total_amount'], 0); ?></div>
-                                        <small class="text-muted"><?php echo $method['transaction_count']; ?> transactions</small>
-                                    </div>
-                                </div>
-                                <?php endforeach; ?>
+                                        <?php
+                                            // Ensure payment_method is a string and map loyalty-like methods to a friendly label
+                                            $rawMethod = $method['payment_method'] ?? '';
+                                            $pm = is_null($rawMethod) ? '' : (string)$rawMethod;
+                                            $pmLower = strtolower(trim($pm));
+
+                                            $loyaltyKeys = [
+                                                'loyalty', 'loyalty_points', 'loyalty points', 'points', 'points_payment', 'loyalty_point'
+                                            ];
+
+                                            if (in_array($pmLower, $loyaltyKeys, true)) {
+                                                $displayMethod = 'Loyalty Points';
+                                            } elseif ($pmLower === '') {
+                                                // Payment method empty — treat as loyalty point redemption
+                                                $displayMethod = 'Loyalty Point';
+                                            } else {
+                                                // Make a readable label from the raw method
+                                                $displayMethod = ucwords(str_replace(['_', '-'], ' ', $pmLower));
+                                            }
+                                        ?>
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span class="text-capitalize"><?php echo htmlspecialchars($displayMethod, ENT_QUOTES, 'UTF-8'); ?></span>
+                                            <div class="text-end">
+                                                <div class="fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES', ENT_QUOTES, 'UTF-8'); ?> <?php echo number_format($method['total_amount'], 0); ?></div>
+                                                <small class="text-muted"><?php echo (int)$method['transaction_count']; ?> transactions</small>
+                                            </div>
+                                        </div>
+                                        <?php endforeach; ?>
                             </div>
                         </div>
                         

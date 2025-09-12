@@ -62,17 +62,62 @@ if ($isAdmin) {
     $stmt->bindParam(':role_id', $role_id);
     $stmt->execute();
     $menuAccess = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
+    // Require BOTH: role_menu_access visibility AND appropriate permission(s)
+    $requires = [
+        'dashboard' => function($perms){
+            return hasPermission('view_dashboard', $perms) || hasPermission('view_reports', $perms) || hasPermission('view_analytics', $perms);
+        },
+        'customer_crm' => function($perms){
+            return hasPermission('view_customers', $perms) || hasPermission('manage_customers', $perms) || hasPermission('manage_loyalty', $perms);
+        },
+        'inventory' => function($perms){
+            return hasPermission('manage_inventory', $perms) || hasPermission('manage_categories', $perms) || hasPermission('manage_product_brands', $perms) || hasPermission('manage_product_suppliers', $perms);
+        },
+        'expiry' => function($perms){
+            return hasPermission('view_expiry_alerts', $perms) || hasPermission('manage_expiry_tracker', $perms);
+        },
+        'bom' => function($perms){
+            return hasPermission('view_boms', $perms) || hasPermission('create_boms', $perms) || hasPermission('edit_boms', $perms) || hasPermission('delete_boms', $perms);
+        },
+        'finance' => function($perms){
+            return hasPermission('view_finance', $perms);
+        },
+        'expenses' => function($perms){
+            return hasPermission('view_expense_reports', $perms) || hasPermission('create_expenses', $perms);
+        },
+        'analytics' => function($perms){
+            return hasPermission('view_analytics', $perms);
+        },
+        'reports' => function($perms){
+            return hasPermission('view_reports', $perms) || hasPermission('view_sales', $perms) || hasPermission('view_finance', $perms) || hasPermission('view_analytics', $perms) || hasPermission('manage_sales', $perms);
+        },
+        'shelf_labels' => function($perms){
+            return hasPermission('manage_shelf_labels', $perms) || hasPermission('print_labels', $perms);
+        },
+        'admin' => function($perms){
+            return hasPermission('manage_users', $perms) || hasPermission('manage_settings', $perms) || hasPermission('manage_backup', $perms) || hasPermission('view_security_logs', $perms);
+        }
+    ];
+
     foreach ($menuAccess as $access) {
         $sectionKey = $access['section_key'];
-        $isVisible = $access['is_visible'] ?? 0;
-        $isPriority = $access['is_priority'] ?? 0;
-        
-        $showSections[$sectionKey] = (bool)$isVisible;
-        if ($isPriority) {
+        $isVisible = (int)($access['is_visible'] ?? 0);
+        $isPriority = (int)($access['is_priority'] ?? 0);
+
+        $permOk = true;
+        if (isset($requires[$sectionKey]) && is_callable($requires[$sectionKey])) {
+            $permOk = $requires[$sectionKey]($permissions);
+        }
+        $showSections[$sectionKey] = (bool)($isVisible && $permOk);
+        if ($isPriority && $showSections[$sectionKey]) {
             $prioritySections[] = $sectionKey;
         }
     }
+
+    // Special sections not in menu_sections: currently only POS
+    $showSections['pos'] = hasPermission('process_sales', $permissions);
+
 } else {
     // Fallback for users without roles - show basic sections based on permissions
     // Check if user has admin-like permissions and give them full access

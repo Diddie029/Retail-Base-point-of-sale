@@ -191,17 +191,20 @@ $stmt = $conn->prepare("
 $stmt->execute([$today]);
 $top_products = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get recent customers
-$stmt = $conn->query("
-    SELECT c.*, COUNT(s.id) as total_purchases, SUM(s.final_amount) as total_spent,
-           CONCAT(c.first_name, ' ', c.last_name) as full_name
-    FROM customers c
-    LEFT JOIN sales s ON c.id = s.customer_id
-    WHERE c.membership_status = 'active'
-    GROUP BY c.id
-    ORDER BY total_spent DESC
-    LIMIT 10
-");
+// Get recent customers (exclude walk-in/default/internal customers)
+$recentCustomersSql = "SELECT c.*, COUNT(s.id) as total_purchases, SUM(s.final_amount) as total_spent,"
+    . " CONCAT(c.first_name, ' ', c.last_name) as full_name"
+    . " FROM customers c"
+    . " LEFT JOIN sales s ON c.id = s.customer_id"
+    . " WHERE c.membership_status = 'active'"
+    . " AND (COALESCE(c.customer_type, '') != 'walk_in')"
+    . " AND (COALESCE(c.customer_number, '') NOT LIKE 'WALK-IN%')"
+    . " AND (CONCAT(c.first_name, ' ', c.last_name) NOT LIKE '%Walk-in%')"
+    . " GROUP BY c.id"
+    . " ORDER BY total_spent DESC"
+    . " LIMIT 10";
+
+$stmt = $conn->query($recentCustomersSql);
 $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
@@ -799,6 +802,14 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
             border-radius: 50%;
             color: white;
         }
+        /* Extra space at page bottom to prevent content/footer overlap */
+        .page-bottom-space {
+            height: 80px;
+            width: 100%;
+            display: block;
+        }
     </style>
+    <!-- bottom spacing so content doesn't sit flush to the viewport bottom -->
+    <div class="page-bottom-space" aria-hidden="true"></div>
 </body>
 </html>

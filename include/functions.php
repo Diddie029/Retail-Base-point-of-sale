@@ -11,6 +11,10 @@
  * @return bool True if user has permission, false otherwise
  */
 function hasPermission($permission, $userPermissions) {
+    // Be defensive: if $userPermissions is not an array, return false
+    if (!is_array($userPermissions)) {
+        return false;
+    }
     return in_array($permission, $userPermissions);
 }
 
@@ -266,6 +270,36 @@ function getSuggestedPermissionsFromMenuAccess($menu_access) {
     }
     
     return array_unique($suggested_permissions);
+}
+
+/**
+ * Format a payment method key into a human-friendly label.
+ * Empty or unknown methods are treated as Loyalty Points.
+ *
+ * @param string|null $method
+ * @return string
+ */
+function format_payment_method_label($method) {
+    $raw = $method ?? '';
+    $pm = strtolower(trim((string)$raw));
+
+    if ($pm === '' || $pm === 'unknown') {
+        return 'Loyalty Points';
+    }
+
+    // common alias mapping
+    $aliases = [
+        'loyalty' => 'Loyalty Points',
+        'loyalty_points' => 'Loyalty Points',
+        'points' => 'Loyalty Points',
+        'points_payment' => 'Loyalty Points'
+    ];
+
+    if (isset($aliases[$pm])) {
+        return $aliases[$pm];
+    }
+
+    return ucwords(str_replace(['_', '-'], ' ', $pm));
 }
 
 /**

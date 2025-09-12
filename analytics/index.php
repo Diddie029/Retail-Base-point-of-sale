@@ -352,7 +352,7 @@ if (hasPermission('manage_sales', $permissions) || hasPermission('process_sales'
 
                     <!-- Reports & Insights -->
                     <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
-                        <div class="card module-card h-100" onclick="location.href='reports.php'" style="cursor: pointer;">
+                        <div class="card module-card h-100" onclick="location.href='../reports/index.php'" style="cursor: pointer;">
                             <div class="card-body text-center p-4">
                                 <div class="module-icon mb-3">
                                     <i class="bi bi-file-earmark-bar-graph fs-1 text-secondary"></i>

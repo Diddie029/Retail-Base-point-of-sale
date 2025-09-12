@@ -794,7 +794,7 @@ $analytics['growth_rates']['month_over_month'] = $previous_month > 0 ?
                                                     <span class="badge bg-info"><?php echo $sale['item_count']; ?> items</span>
                                                 </td>
                                                 <td>
-                                                    <span class="badge bg-secondary"><?php echo htmlspecialchars($sale['payment_method'] ?? 'Unknown'); ?></span>
+                                                    <span class="badge bg-secondary"><?php echo htmlspecialchars(format_payment_method_label($sale['payment_method'] ?? null), ENT_QUOTES, 'UTF-8'); ?></span>
                                                 </td>
                                                 <td>
                                                     <span class="fw-bold text-success"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($sale['final_amount'], 2); ?></span>

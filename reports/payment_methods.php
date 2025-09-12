@@ -307,7 +307,7 @@ $total_revenue = array_sum(array_column($payment_methods, 'total_revenue'));
                                         <?php foreach ($payment_methods as $method): ?>
                                         <tr>
                                             <td>
-                                                <strong><?php echo htmlspecialchars($method['payment_method'] ?? 'Unknown'); ?></strong>
+                                                <strong><?php echo htmlspecialchars(format_payment_method_label($method['payment_method'] ?? null), ENT_QUOTES, 'UTF-8'); ?></strong>
                                             </td>
                                             <td>
                                                 <strong><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($method['total_revenue'], 2); ?></strong>

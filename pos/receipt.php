@@ -517,7 +517,7 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
 
                                     <div class="total-row" style="margin-top: 10px;">
                                         <span>Payment Method:</span>
-                                        <span><?php echo ucfirst(str_replace('_', ' ', $sale['payment_method'])); ?></span>
+                                        <span><?php echo htmlspecialchars(format_payment_method_label($sale['payment_method'] ?? null), ENT_QUOTES, 'UTF-8'); ?></span>
                                     </div>
                                 </div>
                             </div>

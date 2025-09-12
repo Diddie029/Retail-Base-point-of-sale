@@ -432,19 +432,29 @@ $payment_stats = $stmt->fetchAll();
                         </div>
                         <div class="card-body">
                             <?php foreach ($payment_stats as $stat): ?>
+                            <?php
+                                $pmLabel = format_payment_method_label($stat['payment_method'] ?? null);
+                                $pmKey = strtolower(trim((string)($stat['payment_method'] ?? '')));
+                                if ($pmKey === '' || $pmKey === 'unknown' || in_array($pmKey, ['loyalty', 'loyalty_points', 'points', 'points_payment'], true)) {
+                                    $icon = 'star-fill';
+                                    $badge = 'secondary';
+                                } elseif ($pmKey === 'cash') {
+                                    $icon = 'cash';
+                                    $badge = 'success';
+                                } elseif ($pmKey === 'card') {
+                                    $icon = 'credit-card';
+                                    $badge = 'primary';
+                                } else {
+                                    $icon = 'wallet';
+                                    $badge = 'warning';
+                                }
+                            ?>
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <div>
-                                    <?php if ($stat['payment_method'] === 'loyalty_points'): ?>
-                                        <div class="loyalty-points-display">
-                                            <i class="bi bi-star-fill"></i>
-                                            Loyalty Points
-                                        </div>
-                                    <?php else: ?>
-                                        <span class="payment-icon bg-<?= $stat['payment_method'] === 'cash' ? 'success' : ($stat['payment_method'] === 'card' ? 'primary' : 'warning') ?>">
-                                            <i class="bi bi-<?= $stat['payment_method'] === 'cash' ? 'cash' : ($stat['payment_method'] === 'card' ? 'credit-card' : 'phone') ?>"></i>
-                                        </span>
-                                        <?= ucfirst(str_replace('_', ' ', $stat['payment_method'] ?? 'unknown')) ?>
-                                    <?php endif; ?>
+                                    <span class="payment-icon bg-<?= htmlspecialchars($badge, ENT_QUOTES, 'UTF-8') ?>">
+                                        <i class="bi bi-<?= htmlspecialchars($icon, ENT_QUOTES, 'UTF-8') ?>"></i>
+                                    </span>
+                                    <?php echo htmlspecialchars($pmLabel, ENT_QUOTES, 'UTF-8'); ?>
                                 </div>
                                 <div class="text-end">
                                     <div class="fw-bold">KES <?= number_format($stat['total'], 2) ?></div>
@@ -510,9 +520,30 @@ $payment_stats = $stmt->fetchAll();
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <span class="badge bg-<?= $sale['payment_method'] === 'cash' ? 'success' : ($sale['payment_method'] === 'card' ? 'primary' : 'warning') ?>">
-                                        <i class="bi bi-<?= $sale['payment_method'] === 'cash' ? 'cash' : ($sale['payment_method'] === 'card' ? 'credit-card' : 'phone') ?>"></i>
-                                        <?= ucfirst(str_replace('_', ' ', $sale['payment_method'] ?? 'loyalty points')) ?>
+                                    <?php
+                                        $pmRaw = $sale['payment_method'] ?? '';
+                                        $pm = strtolower(trim((string)$pmRaw));
+                                        if ($pm === '' || $pm === 'unknown') {
+                                            $displayPm = 'Loyalty Points';
+                                            $badgeClass = 'secondary';
+                                            $icon = 'gift';
+                                        } elseif ($pm === 'cash') {
+                                            $displayPm = 'Cash';
+                                            $badgeClass = 'success';
+                                            $icon = 'cash';
+                                        } elseif ($pm === 'card') {
+                                            $displayPm = 'Card';
+                                            $badgeClass = 'primary';
+                                            $icon = 'credit-card';
+                                        } else {
+                                            $displayPm = ucwords(str_replace(['_', '-'], ' ', $pm));
+                                            $badgeClass = 'warning';
+                                            $icon = 'wallet';
+                                        }
+                                    ?>
+                                    <span class="badge bg-<?= htmlspecialchars($badgeClass, ENT_QUOTES, 'UTF-8') ?>">
+                                        <i class="bi bi-<?= htmlspecialchars($icon, ENT_QUOTES, 'UTF-8') ?>"></i>
+                                        <?= htmlspecialchars($displayPm, ENT_QUOTES, 'UTF-8') ?>
                                     </span>
                                 </td>
                                 <td>
@@ -530,11 +561,6 @@ $payment_stats = $stmt->fetchAll();
                                                 onclick="viewSaleDetails(<?= $sale['id'] ?>)"
                                                 title="View Details">
                                             <i class="bi bi-eye"></i>
-                                        </button>
-                                        <button class="btn btn-sm view-details-btn" 
-                                                onclick="printReceipt(<?= $sale['id'] ?>)"
-                                                title="Print Receipt">
-                                            <i class="bi bi-printer"></i>
                                         </button>
                                         <?php if ($role === 'Admin'): ?>
                                         <button class="btn btn-sm view-details-btn text-danger" 
@@ -614,9 +640,6 @@ $payment_stats = $stmt->fetchAll();
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <button type="button" class="btn btn-primary" onclick="printCurrentSale()">
-                        <i class="bi bi-printer"></i> Print Receipt
-                    </button>
                 </div>
             </div>
         </div>
@@ -634,15 +657,9 @@ $payment_stats = $stmt->fetchAll();
         new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: [<?= implode(',', array_map(function($stat) { 
-                    $method = $stat['payment_method'] ?? 'unknown';
-                    if ($method === 'loyalty_points') {
-                        return '"Loyalty Points"';
-                    }
-                    return '"' . ucfirst(str_replace('_', ' ', $method)) . '"';
-                }, $payment_stats)) ?>],
+                labels: <?php echo json_encode(array_map(function($stat) { return format_payment_method_label($stat['payment_method'] ?? null); }, $payment_stats)); ?>,
                 datasets: [{
-                    data: [<?= implode(',', array_column($payment_stats, 'total')) ?>],
+                    data: <?php echo json_encode(array_column($payment_stats, 'total')); ?>,
                     backgroundColor: [
                         '#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4'
                     ],

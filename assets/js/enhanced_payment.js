@@ -425,10 +425,7 @@ class PaymentProcessor {
                 this.loadCustomerLoyaltyInfo();
                 document.getElementById('loyaltyPointsPaymentSection').style.display = 'block';
                 setTimeout(() => {
-                    const amountInput = document.getElementById('loyaltyAmountToUse');
-                    if (amountInput && !amountInput.disabled) {
-                        amountInput.focus();
-                    }
+                    document.getElementById('loyaltyPointsToUse').focus();
                 }, 100);
                 break;
         }
@@ -630,7 +627,7 @@ class PaymentProcessor {
                 throw new Error(loyaltyValidation.error);
             }
             paymentData.use_loyalty_points = true;
-            paymentData.loyalty_points_to_use = loyaltyValidation.pointsRequired;
+            paymentData.loyalty_points_to_use = loyaltyValidation.pointsToUse;
             paymentData.loyalty_discount = loyaltyValidation.pointsValue;
             paymentData.remaining_amount = loyaltyValidation.remainingAmount;
             
@@ -855,6 +852,7 @@ class PaymentProcessor {
                 // Reset payment processor state
                 this.resetPaymentModal();
                 
+                console.log('New transaction started - cart cleared');
             } else {
                 console.error('Error clearing cart:', data.error);
                 // Fallback to page reload if clearing fails
@@ -897,16 +895,12 @@ class PaymentProcessor {
     showLoyaltyCustomerSearch() {
         // Clear any previous selection
         this.loyaltySelectedCustomer = null;
-        const selectedCustomerEl = document.getElementById('loyaltySelectedCustomer');
-        const resultsEl = document.getElementById('loyaltyCustomerResults');
-        
-        if (selectedCustomerEl) selectedCustomerEl.style.display = 'none';
-        if (resultsEl) resultsEl.style.display = 'none';
-        
-        document.getElementById('loyaltyAmountToUse').disabled = true;
+        document.getElementById('loyaltySelectedCustomer').style.display = 'none';
+        document.getElementById('loyaltyCustomerResults').style.display = 'none';
+        document.getElementById('loyaltyPointsToUse').disabled = true;
         document.getElementById('loyaltyPointsAvailable').value = '0';
-        document.getElementById('loyaltyAmountToUse').value = '';
-        document.getElementById('loyaltyPointsRequired').value = '0';
+        document.getElementById('loyaltyPointsValue').value = '0.00';
+        document.getElementById('remainingAmount').value = this.formatAmount(this.paymentAmount);
     }
 
     // Cash Customer Search Methods
@@ -1081,9 +1075,9 @@ class PaymentProcessor {
                     <div class="list-group-item list-group-item-action" onclick="window.paymentProcessor.selectLoyaltyCustomer(${customer.id}, '${customer.display_name}', ${customer.loyalty_points})">
                         <div class="d-flex w-100 justify-content-between">
                             <h6 class="mb-1">${customer.display_name}</h6>
-                            <small class="text-muted">${customer.membership_level}</small>
+                            <small class="text-muted">${customer.loyalty_points} points available</small>
                         </div>
-                        <p class="mb-1 text-muted">${customer.customer_number}</p>
+                        <p class="mb-1 text-muted">${customer.customer_number} • ${customer.membership_level}</p>
                     </div>
                 `;
             });
@@ -1109,8 +1103,8 @@ class PaymentProcessor {
         document.getElementById('loyaltySelectedCustomerPoints').textContent = `${loyaltyPoints} points available`;
         document.getElementById('loyaltySelectedCustomer').style.display = 'block';
         
-        // Enable amount input and load loyalty data
-        document.getElementById('loyaltyAmountToUse').disabled = false;
+        // Enable points input and load loyalty data
+        document.getElementById('loyaltyPointsToUse').disabled = false;
         this.loadLoyaltyDataForCustomer(customerId);
     }
 
@@ -1132,133 +1126,39 @@ class PaymentProcessor {
 
     updateLoyaltyDisplay(loyaltyData) {
         const availablePoints = loyaltyData.balance;
+        const pointsValue = loyaltyData.points_value;
 
         document.getElementById('loyaltyPointsAvailable').value = availablePoints;
-        document.getElementById('loyaltyAmountToUse').value = '';
-        document.getElementById('loyaltyPointsRequired').value = '0';
+        document.getElementById('loyaltyPointsToUse').max = availablePoints;
+        document.getElementById('loyaltyPointsToUse').value = 0;
+        document.getElementById('loyaltyPointsValue').value = '0.00';
+        document.getElementById('remainingAmount').value = this.formatAmount(this.paymentAmount);
 
-        // Add event listener for amount input
-        const amountInput = document.getElementById('loyaltyAmountToUse');
-        amountInput.removeEventListener('input', this.handleLoyaltyAmountInput);
-        amountInput.addEventListener('input', this.handleLoyaltyAmountInput.bind(this));
-
-        // Add event listeners for action buttons
-        this.addLoyaltyButtonListeners();
+        // Add event listener for points input
+        const pointsInput = document.getElementById('loyaltyPointsToUse');
+        pointsInput.removeEventListener('input', this.handleLoyaltyPointsInput);
+        pointsInput.addEventListener('input', this.handleLoyaltyPointsInput.bind(this));
     }
 
-    handleLoyaltyAmountInput(event) {
-        const amountToUse = parseFloat(event.target.value) || 0;
+    handleLoyaltyPointsInput(event) {
+        const pointsToUse = parseInt(event.target.value) || 0;
         const availablePoints = parseInt(document.getElementById('loyaltyPointsAvailable').value) || 0;
         
-        // Calculate points required (100 points = 1 currency unit)
-        const pointsRequired = Math.floor(amountToUse * 100);
-        
-        // Check if points required exceeds available points
-        if (pointsRequired > availablePoints) {
-            const maxAmount = availablePoints / 100;
-            event.target.value = maxAmount.toFixed(2);
-            const adjustedPointsRequired = availablePoints;
-            document.getElementById('loyaltyPointsRequired').value = adjustedPointsRequired;
-        } else {
-            document.getElementById('loyaltyPointsRequired').value = pointsRequired;
+        // Validate points
+        if (pointsToUse > availablePoints) {
+            event.target.value = availablePoints;
+            pointsToUse = availablePoints;
         }
-        
+
+        // Calculate points value (100 points = 1 currency unit)
+        const pointsValue = pointsToUse / 100;
+        const remainingAmount = Math.max(0, this.paymentAmount - pointsValue);
+
+        document.getElementById('loyaltyPointsValue').value = this.formatAmount(pointsValue);
+        document.getElementById('remainingAmount').value = this.formatAmount(remainingAmount);
+
         // Update confirm button state
         this.updateConfirmButton();
-    }
-
-    addLoyaltyButtonListeners() {
-        // Add Loyalty Payment button
-        const addBtn = document.getElementById('addLoyaltyPaymentBtn');
-        if (addBtn) {
-            addBtn.removeEventListener('click', this.handleAddLoyaltyPayment);
-            addBtn.addEventListener('click', this.handleAddLoyaltyPayment.bind(this));
-        }
-
-        // Cancel button
-        const cancelBtn = document.getElementById('cancelLoyaltyBtn');
-        if (cancelBtn) {
-            cancelBtn.removeEventListener('click', this.handleCancelLoyalty);
-            cancelBtn.addEventListener('click', this.handleCancelLoyalty.bind(this));
-        }
-    }
-
-    handleAddLoyaltyPayment() {
-        try {
-            const validation = this.validateLoyaltyPayment();
-            if (!validation.valid) {
-                this.showLoyaltyError(validation.error);
-                return;
-            }
-
-            // Process the loyalty payment
-            this.processLoyaltyPayment(validation);
-        } catch (error) {
-            this.showLoyaltyError(error.message);
-        }
-    }
-
-    handleCancelLoyalty() {
-        // Reset loyalty payment section
-        this.showLoyaltyCustomerSearch();
-        // Switch back to cash payment
-        this.selectPaymentMethod(document.querySelector('input[name="paymentMethod"][value="cash"]'));
-    }
-
-    processLoyaltyPayment(validation) {
-        // Set the payment data for processing
-        this.paymentData = {
-            method: 'loyalty_points',
-            amount: validation.pointsValue,
-            customer_id: validation.customer.id,
-            customer_name: validation.customer.display_name,
-            customer_type: 'registered',
-            loyalty_points_to_use: validation.pointsRequired,
-            loyalty_discount: validation.pointsValue,
-            remaining_amount: validation.remainingAmount
-        };
-
-        // Show success message
-        this.showLoyaltySuccess('Loyalty payment processed successfully!');
-        
-        // Update the payment summary
-        this.updatePaymentSummary();
-    }
-
-    updatePaymentSummary() {
-        // Update the payment total display
-        const totalEl = document.getElementById('paymentTotal');
-        if (totalEl && this.paymentData) {
-            totalEl.textContent = this.formatAmount(this.paymentData.amount);
-        }
-        
-        // Update confirm button to show payment is ready
-        const confirmBtn = document.getElementById('confirmPaymentBtn');
-        if (confirmBtn) {
-            confirmBtn.disabled = false;
-            confirmBtn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Complete Payment';
-        }
-    }
-
-    showLoyaltySuccess(message) {
-        const loyaltySection = document.getElementById('loyaltyPointsPaymentSection');
-        const successAlert = document.createElement('div');
-        successAlert.className = 'alert alert-success alert-dismissible fade show';
-        successAlert.innerHTML = `
-            <i class="bi bi-check-circle me-2"></i>${message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        `;
-        
-        // Insert at the top of the card body
-        const cardBody = loyaltySection.querySelector('.card-body');
-        cardBody.insertBefore(successAlert, cardBody.firstChild);
-        
-        // Auto-remove after 3 seconds
-        setTimeout(() => {
-            if (successAlert.parentNode) {
-                successAlert.remove();
-            }
-        }, 3000);
     }
 
     showLoyaltyError(message) {
@@ -1277,19 +1177,18 @@ class PaymentProcessor {
             return { valid: false, error: 'Please select a customer for loyalty points payment' };
         }
 
-        const amountToUse = parseFloat(document.getElementById('loyaltyAmountToUse').value) || 0;
+        const pointsToUse = parseInt(document.getElementById('loyaltyPointsToUse').value) || 0;
         const availablePoints = parseInt(document.getElementById('loyaltyPointsAvailable').value) || 0;
-        const pointsRequired = parseInt(document.getElementById('loyaltyPointsRequired').value) || 0;
 
-        if (amountToUse <= 0) {
-            return { valid: false, error: 'Please enter amount to use' };
+        if (pointsToUse <= 0) {
+            return { valid: false, error: 'Please enter points to use' };
         }
 
-        if (pointsRequired > availablePoints) {
+        if (pointsToUse > availablePoints) {
             return { valid: false, error: 'Not enough loyalty points available' };
         }
 
-        const pointsValue = amountToUse;
+        const pointsValue = pointsToUse / 100;
         const remainingAmount = this.paymentAmount - pointsValue;
 
         if (remainingAmount < 0) {
@@ -1298,7 +1197,7 @@ class PaymentProcessor {
 
         return { 
             valid: true, 
-            pointsRequired: pointsRequired, 
+            pointsToUse: pointsToUse, 
             pointsValue: pointsValue, 
             remainingAmount: remainingAmount,
             customer: selectedCustomer

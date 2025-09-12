@@ -142,6 +142,7 @@ unset($_SESSION['success']);
                         <i class="bi bi-pencil"></i>
                         Edit Product
                     </a>
+                    <!-- toggle button moved below into action buttons area -->
                     <a href="index.php" class="btn btn-outline-secondary">
                         <i class="bi bi-arrow-left"></i>
                         Back to Products
@@ -190,6 +191,37 @@ unset($_SESSION['success']);
                                 <div class="mb-2">
                                     <strong>Product ID:</strong> 
                                     <span class="text-muted">#<?php echo $product['id']; ?></span>
+                                </div>
+                                <!-- Additional product metadata -->
+                                <div class="mb-2">
+                                    <strong>SKU:</strong>
+                                    <span class="ms-2">
+                                        <code id="sku-value"><?php echo htmlspecialchars($product['sku'] ?? ''); ?></code>
+                                        <button type="button" class="copy-sku btn-sm" onclick="copySKU()" title="Copy SKU">
+                                            <i class="bi bi-clipboard"></i>
+                                            <small class="ms-1">Copy</small>
+                                        </button>
+                                    </span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Product Number:</strong>
+                                    <span class="text-muted ms-2"><?php echo htmlspecialchars($product['product_number'] ?? 'N/A'); ?></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Product Type:</strong>
+                                    <span class="text-muted ms-2"><?php echo htmlspecialchars(ucfirst($product['product_type'] ?? 'physical')); ?></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Weight / Dimensions:</strong>
+                                    <span class="text-muted ms-2"><?php echo htmlspecialchars(($product['weight'] ?? '') . ($product['weight'] ? ' kg' : '')); ?> <?php if (!empty($product['length']) || !empty($product['width']) || !empty($product['height'])): ?>(<?php echo htmlspecialchars(($product['length'] ?? '') . 'x' . ($product['width'] ?? '') . 'x' . ($product['height'] ?? '')); ?> cm)<?php endif; ?></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Tags:</strong>
+                                    <span class="text-muted ms-2"><?php echo htmlspecialchars($product['tags'] ?? ''); ?></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Warranty:</strong>
+                                    <span class="text-muted ms-2"><?php echo htmlspecialchars($product['warranty_period'] ?? 'N/A'); ?></span>
                                 </div>
                             </div>
                             
@@ -240,6 +272,19 @@ unset($_SESSION['success']);
                                 <i class="bi bi-pencil"></i>
                                 Edit Product
                             </a>
+                            <form action="toggle_status.php" method="post" style="display:inline-block; margin-right:6px;">
+                                <input type="hidden" name="product_id" value="<?php echo $product_id; ?>">
+                                <?php 
+                                    $isActive = ($product['status'] ?? 'active') === 'active';
+                                    // Admin always allowed; otherwise require manage_products permission
+                                    $canToggle = (isset(
+                                        $role_name) && $role_name === 'Admin') || hasPermission('manage_products', $permissions);
+                                ?>
+                                <button type="submit" name="toggle_product" class="btn <?php echo $isActive ? 'btn-warning' : 'btn-success'; ?> btn-rounded" aria-label="<?php echo $isActive ? 'Suspend Product' : 'Activate Product'; ?>" title="<?php echo $canToggle ? ($isActive ? 'Suspend Product' : 'Activate Product') : 'Only Admins or users with Manage Products permission can perform this action'; ?>" <?php echo $canToggle ? '' : 'disabled'; ?>>
+                                    <i class="bi <?php echo $isActive ? 'bi-pause-fill' : 'bi-play-fill'; ?>"></i>
+                                    <span class="ms-1"><?php echo $isActive ? 'Suspend Product' : 'Activate Product'; ?></span>
+                                </button>
+                            </form>
                             <a href="delete.php?id=<?php echo $product_id; ?>" 
                                class="btn btn-danger btn-delete" 
                                data-product-name="<?php echo htmlspecialchars($product['name']); ?>">
@@ -508,5 +553,23 @@ unset($_SESSION['success']);
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="../assets/js/products.js"></script>
+    <script>
+        function copySKU() {
+            const skuEl = document.getElementById('sku-value');
+            if (!skuEl) return;
+            const sku = skuEl.textContent.trim();
+            if (!sku) return alert('No SKU available to copy');
+
+            navigator.clipboard.writeText(sku).then(() => {
+                // small visual feedback
+                const btn = document.querySelector('.copy-sku');
+                const original = btn.innerHTML;
+                btn.innerHTML = '<i class="bi bi-check2"></i> <small class="ms-1">Copied</small>';
+                setTimeout(() => btn.innerHTML = original, 1500);
+            }).catch(() => {
+                alert('Unable to copy SKU to clipboard');
+            });
+        }
+    </script>
 </body>
 </html>

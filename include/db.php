@@ -7,11 +7,11 @@ $password = '';
 try {
     $conn = new PDO("mysql:host=$host", $username, $password);
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-    
+
     // Create database if not exists
     $conn->exec("CREATE DATABASE IF NOT EXISTS `$dbname`");
     $conn->exec("USE `$dbname`");
-    
+
     // Create users table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS users (
@@ -24,7 +24,16 @@ try {
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ");
-    
+
+    // Ensure users.role enum supports all roles we use
+    try {
+        $conn->exec("ALTER TABLE users MODIFY COLUMN role ENUM('Admin','Manager','Cashier','User') NOT NULL");
+    } catch (PDOException $e) {
+        // Table may already have a compatible enum; ignore if alter fails
+        error_log('Role enum alter (users.role) skipped or failed: ' . $e->getMessage());
+    }
+
+
     // Create categories table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS categories (
@@ -36,7 +45,7 @@ try {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
     ");
-    
+
     $conn->exec("
         CREATE TABLE IF NOT EXISTS products (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -310,7 +319,7 @@ try {
             FOREIGN KEY (till_id) REFERENCES register_tills(id)
         )
     ");
-    
+
     // Add till_id column to existing sales table if it doesn't exist
     try {
         $conn->exec("ALTER TABLE sales ADD COLUMN till_id INT DEFAULT NULL AFTER user_id");
@@ -318,31 +327,47 @@ try {
     } catch (PDOException $e) {
         // Column might already exist, ignore error
     }
-    
+
     // Create void transactions table for audit trail
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS void_transactions (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT NOT NULL,
-            till_id INT DEFAULT NULL,
-            void_type ENUM('product', 'cart', 'sale') NOT NULL,
-            product_id INT DEFAULT NULL,
-            product_name VARCHAR(255) DEFAULT NULL,
-            quantity DECIMAL(10,3) DEFAULT NULL,
-            unit_price DECIMAL(10,2) DEFAULT NULL,
-            total_amount DECIMAL(10,2) DEFAULT NULL,
-            void_reason TEXT,
-            void_notes TEXT,
-            voided_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id),
-            FOREIGN KEY (till_id) REFERENCES register_tills(id),
-            FOREIGN KEY (product_id) REFERENCES products(id),
-            INDEX idx_void_type (void_type),
-            INDEX idx_voided_at (voided_at),
-            INDEX idx_user_id (user_id)
-        )
-    ");
-    
+    $conn->exec("\n        CREATE TABLE IF NOT EXISTS void_transactions (\n            id INT AUTO_INCREMENT PRIMARY KEY,\n            user_id INT NOT NULL,\n            till_id INT DEFAULT NULL,\n            void_type ENUM('product', 'cart', 'sale', 'held_transaction') NOT NULL,\n            product_id INT DEFAULT NULL,\n            product_name VARCHAR(255) DEFAULT NULL,\n            quantity DECIMAL(10,3) DEFAULT NULL,\n            unit_price DECIMAL(10,2) DEFAULT NULL,\n            total_amount DECIMAL(10,2) DEFAULT NULL,\n            void_reason TEXT,\n            void_notes TEXT,\n            voided_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n            FOREIGN KEY (user_id) REFERENCES users(id),\n            FOREIGN KEY (till_id) REFERENCES register_tills(id),\n            FOREIGN KEY (product_id) REFERENCES products(id),\n            INDEX idx_void_type (void_type),\n            INDEX idx_voided_at (voided_at),\n            INDEX idx_user_id (user_id)\n        )\n    ");
+
+    // If an existing database has the old enum, attempt to migrate it safely
+    try {
+        // First check if the table exists and what the current enum values are
+        $stmt = $conn->query("SHOW COLUMNS FROM void_transactions LIKE 'void_type'");
+        $column_info = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($column_info) {
+            $current_type = $column_info['Type'];
+            // Check if 'held_transaction' is already in the enum
+            if (strpos($current_type, 'held_transaction') === false) {
+                // Need to update the enum to include held_transaction
+                $conn->exec("ALTER TABLE void_transactions MODIFY COLUMN void_type ENUM('product','cart','sale','held_transaction') NOT NULL");
+                error_log('Successfully updated void_transactions.void_type enum to include held_transaction');
+            }
+        }
+    } catch (PDOException $e) {
+        // Log the specific error for debugging
+        error_log('Could not alter void_transactions.void_type enum to include held_transaction: ' . $e->getMessage());
+
+        // Try to create a temporary fix by recreating the table if it's a critical error
+        try {
+            // Check if the error is due to data incompatibility
+            if (strpos($e->getMessage(), 'Data truncated') !== false || strpos($e->getMessage(), 'Invalid enum value') !== false) {
+                error_log('Attempting to fix void_transactions table enum values...');
+
+                // First, backup any existing data that might have invalid enum values
+                $conn->exec("UPDATE void_transactions SET void_type = 'sale' WHERE void_type NOT IN ('product', 'cart', 'sale')");
+
+                // Now try the alter again
+                $conn->exec("ALTER TABLE void_transactions MODIFY COLUMN void_type ENUM('product','cart','sale','held_transaction') NOT NULL");
+                error_log('Successfully fixed and updated void_transactions.void_type enum');
+            }
+        } catch (PDOException $e2) {
+            error_log('Final attempt to fix void_transactions.void_type enum failed: ' . $e2->getMessage());
+        }
+    }
+
     $conn->exec("
         CREATE TABLE IF NOT EXISTS customers (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -389,20 +414,20 @@ try {
             status ENUM('held', 'resumed', 'deleted', 'completed') DEFAULT 'held' COMMENT 'Transaction status',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT 'When transaction was held',
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last updated timestamp',
-            
+
             -- Indexes for better performance
             INDEX idx_user_id (user_id),
             INDEX idx_till_id (till_id),
             INDEX idx_status (status),
             INDEX idx_created_at (created_at),
-            
+
             -- Foreign key constraints
-            CONSTRAINT fk_held_transactions_user_id 
+            CONSTRAINT fk_held_transactions_user_id
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-            CONSTRAINT fk_held_transactions_till_id 
+            CONSTRAINT fk_held_transactions_till_id
                 FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE SET NULL
-        ) ENGINE=InnoDB 
-          DEFAULT CHARSET=utf8mb4 
+        ) ENGINE=InnoDB
+          DEFAULT CHARSET=utf8mb4
           COLLATE=utf8mb4_unicode_ci
           COMMENT='Stores suspended POS transactions that can be resumed later'
     ");
@@ -524,7 +549,7 @@ try {
         // Add tax_category_id to products table
         $stmt = $conn->query("DESCRIBE products");
         $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        
+
         if (!in_array('tax_category_id', $columns)) {
             $conn->exec("ALTER TABLE products ADD COLUMN tax_category_id INT DEFAULT NULL AFTER tax_rate");
             $conn->exec("ALTER TABLE products ADD CONSTRAINT fk_products_tax_category_id FOREIGN KEY (tax_category_id) REFERENCES tax_categories(id) ON DELETE SET NULL");
@@ -534,46 +559,46 @@ try {
         // Add tax exemption columns to customers table
         $stmt = $conn->query("DESCRIBE customers");
         $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        
+
         if (!in_array('tax_exempt', $columns)) {
             $conn->exec("ALTER TABLE customers ADD COLUMN tax_exempt TINYINT(1) DEFAULT 0 AFTER membership_level");
             $conn->exec("ALTER TABLE customers ADD COLUMN tax_exempt_reason VARCHAR(255) DEFAULT NULL AFTER tax_exempt");
             $conn->exec("ALTER TABLE customers ADD COLUMN tax_exempt_certificate VARCHAR(100) DEFAULT NULL AFTER tax_exempt_reason");
             $conn->exec("ALTER TABLE customers ADD INDEX idx_tax_exempt (tax_exempt)");
         }
-        
+
         // Add customer_id to sales table
         $stmt = $conn->query("DESCRIBE sales");
         $sales_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        
+
         if (!in_array('customer_id', $sales_columns)) {
             $conn->exec("ALTER TABLE sales ADD COLUMN customer_id INT DEFAULT NULL AFTER user_id");
             $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL");
             $conn->exec("ALTER TABLE sales ADD INDEX idx_customer_id (customer_id)");
         }
-        
+
         // Add till_id column to sales table if it doesn't exist
         if (!in_array('till_id', $sales_columns)) {
             $conn->exec("ALTER TABLE sales ADD COLUMN till_id INT DEFAULT NULL AFTER customer_id");
             $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE SET NULL");
             $conn->exec("ALTER TABLE sales ADD INDEX idx_till_id (till_id)");
         }
-        
+
         // Ensure is_active column exists in register_tills table
         $stmt = $conn->query("DESCRIBE register_tills");
         $till_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        
+
         if (!in_array('is_active', $till_columns)) {
             $conn->exec("ALTER TABLE register_tills ADD COLUMN is_active TINYINT(1) DEFAULT 1 AFTER location");
             $conn->exec("UPDATE register_tills SET is_active = 1 WHERE is_active IS NULL");
         }
-        
+
         // Add till_status column to register_tills table if it doesn't exist
         if (!in_array('till_status', $till_columns)) {
             $conn->exec("ALTER TABLE register_tills ADD COLUMN till_status ENUM('closed', 'opened') DEFAULT 'closed' AFTER is_active");
             $conn->exec("UPDATE register_tills SET till_status = 'closed' WHERE till_status IS NULL");
         }
-        
+
         // Add current_user_id column to register_tills table if it doesn't exist
         if (!in_array('current_user_id', $till_columns)) {
             $conn->exec("ALTER TABLE register_tills ADD COLUMN current_user_id INT DEFAULT NULL AFTER till_status");
@@ -588,7 +613,7 @@ try {
     try {
         $stmt = $conn->query("DESCRIBE held_transactions");
         $held_transactions_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        
+
         if (!in_array('till_id', $held_transactions_columns)) {
             $conn->exec("ALTER TABLE held_transactions ADD COLUMN till_id INT DEFAULT NULL AFTER user_id");
             $conn->exec("ALTER TABLE held_transactions ADD FOREIGN KEY (till_id) REFERENCES register_tills(id) ON DELETE SET NULL");
@@ -609,7 +634,7 @@ try {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
     ");
-    
+
     // Create permissions table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS permissions (
@@ -621,7 +646,7 @@ try {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
     ");
-    
+
     // Add category column to permissions table if it doesn't exist
     try {
         $stmt = $conn->prepare("SHOW COLUMNS FROM permissions LIKE 'category'");
@@ -642,7 +667,7 @@ try {
     } catch (PDOException $e) {
         error_log("Warning: Could not add category column to permissions table: " . $e->getMessage());
     }
-    
+
     // Add redirect_url column to roles table if it doesn't exist
     try {
         $stmt = $conn->prepare("SHOW COLUMNS FROM roles LIKE 'redirect_url'");
@@ -656,7 +681,7 @@ try {
     } catch (PDOException $e) {
         error_log("Warning: Could not add redirect_url column to roles table: " . $e->getMessage());
     }
-    
+
     // Create role_permission table
     $conn->exec("CREATE TABLE IF NOT EXISTS role_permissions (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -666,7 +691,7 @@ try {
         FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
         FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
     )");
-    
+
     // Create permission_groups table for organizing permissions
     $conn->exec("
         CREATE TABLE IF NOT EXISTS permission_groups (
@@ -680,7 +705,7 @@ try {
             INDEX idx_group_name (group_name)
         )
     ");
-    
+
     // Create menu_sections table for navigation control
     $conn->exec("
         CREATE TABLE IF NOT EXISTS menu_sections (
@@ -695,7 +720,7 @@ try {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
     ");
-    
+
     // Create available_pages table for dynamic page management
     $conn->exec("
         CREATE TABLE IF NOT EXISTS available_pages (
@@ -713,7 +738,7 @@ try {
             UNIQUE KEY unique_page_url (page_url)
         )
     ");
-    
+
     // Create role_menu_access table for role-based menu visibility
     $conn->exec("
         CREATE TABLE IF NOT EXISTS role_menu_access (
@@ -729,12 +754,12 @@ try {
             FOREIGN KEY (menu_section_id) REFERENCES menu_sections(id) ON DELETE CASCADE
         )
     ");
-    
+
     // Initialize menu sections if they don't exist
     try {
         $stmt = $conn->query("SELECT COUNT(*) as count FROM menu_sections");
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        
+
         if ($result['count'] == 0) {
             // Insert default menu sections
             $menu_sections = [
@@ -749,17 +774,17 @@ try {
                 ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 11],
                 ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 12]
             ];
-            
+
             $stmt = $conn->prepare("
-                INSERT INTO menu_sections (section_key, section_name, section_icon, section_description, sort_order) 
+                INSERT INTO menu_sections (section_key, section_name, section_icon, section_description, sort_order)
                 VALUES (?, ?, ?, ?, ?)
             ");
-            
+
             foreach ($menu_sections as $section) {
                 $stmt->execute($section);
             }
         }
-        
+
         // Ensure all required sections exist (for existing databases)
         $required_sections = [
             ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 3],
@@ -773,31 +798,41 @@ try {
             ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 11],
             ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 12]
         ];
-        
+
         $stmt = $conn->prepare("
-            INSERT IGNORE INTO menu_sections (section_key, section_name, section_icon, section_description, sort_order) 
+            INSERT IGNORE INTO menu_sections (section_key, section_name, section_icon, section_description, sort_order)
             VALUES (?, ?, ?, ?, ?)
         ");
-        
+
         foreach ($required_sections as $section) {
             $stmt->execute($section);
         }
-        
+
         // Update existing sections with new sort order
         $stmt = $conn->prepare("
-            UPDATE menu_sections 
-            SET section_name = ?, section_icon = ?, section_description = ?, sort_order = ? 
+            UPDATE menu_sections
+            SET section_name = ?, section_icon = ?, section_description = ?, sort_order = ?
             WHERE section_key = ?
         ");
-        
+
         foreach ($required_sections as $section) {
             $stmt->execute([$section[1], $section[2], $section[3], $section[4], $section[0]]);
         }
-        
+
     } catch (PDOException $e) {
+
         error_log("Warning: Could not initialize menu sections: " . $e->getMessage());
     }
-    
+
+    // Ensure 'dashboard' exists as a menu section so its visibility can be role-assigned
+    try {
+        $stmt = $conn->prepare("INSERT IGNORE INTO menu_sections (section_key, section_name, section_icon, section_description, sort_order)
+                                VALUES ('dashboard', 'Dashboard', 'bi-speedometer2', 'Main dashboard overview', 1)");
+        $stmt->execute();
+    } catch (PDOException $e) {
+        error_log("Ensure dashboard menu section failed: " . $e->getMessage());
+    }
+
     // Add menu management permissions
     try {
         $menu_permissions = [
@@ -809,10 +844,10 @@ try {
             ['assign_menu_roles', 'Assign Menu to Roles', 'Assign menu sections to roles and set visibility'],
             ['view_all_menus', 'View All Menus', 'View all menu sections regardless of role assignment']
         ];
-        
+
         foreach ($menu_permissions as $permission) {
             $stmt = $conn->prepare("
-                INSERT IGNORE INTO permissions (name, description, category) 
+                INSERT IGNORE INTO permissions (name, description, category)
                 VALUES (?, ?, 'Menu Management')
             ");
             $stmt->execute($permission);
@@ -820,7 +855,7 @@ try {
     } catch (PDOException $e) {
         error_log("Warning: Could not add menu management permissions: " . $e->getMessage());
     }
-    
+
     // Create settings table
     $conn->exec("CREATE TABLE IF NOT EXISTS settings (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1581,7 +1616,7 @@ try {
         // Table might not exist yet, that's okay
         error_log("Could not update return_items table: " . $e->getMessage());
     }
-    
+
     // Add role_id to users table if it doesn't exist
     $stmt = $conn->prepare("SHOW COLUMNS FROM users LIKE 'role_id'");
     $stmt->execute();
@@ -1612,7 +1647,7 @@ try {
             $conn->exec($sql);
         }
     }
-    
+
     // Add enhanced user management fields to users table
     $enhancedUserFields = [
         'first_name' => "ALTER TABLE users ADD COLUMN first_name VARCHAR(100) DEFAULT NULL AFTER username",
@@ -1642,14 +1677,14 @@ try {
             }
         }
     }
-    
+
     // Add foreign key for manager_id
     try {
         $conn->exec("ALTER TABLE users ADD CONSTRAINT fk_users_manager_id FOREIGN KEY (manager_id) REFERENCES users(id) ON DELETE SET NULL");
     } catch (PDOException $e) {
         // Foreign key might already exist
     }
-    
+
     // Add indexes for user management
     $userIndexes = [
         "CREATE INDEX idx_users_first_name ON users (first_name)",
@@ -1668,16 +1703,16 @@ try {
             // Index might already exist
         }
     }
-    
+
     // Insert default roles
     $conn->exec("INSERT IGNORE INTO roles (id, name, description) VALUES (1, 'Admin', 'Full access to the system')");
     $conn->exec("INSERT IGNORE INTO roles (id, name, description) VALUES (2, 'Cashier', 'Limited access for cashier operations')");
-    
+
     // Insert default permissions
     $permissions = [
         // Dashboard & General
         ['view_dashboard', 'View dashboard', 'General'],
-        
+
         // Product Management - Comprehensive Permissions
         ['create_products', 'Create new products', 'Product Management'],
         ['edit_products', 'Edit existing products', 'Product Management'],
@@ -1704,10 +1739,10 @@ try {
         ['manage_product_reviews', 'Manage product reviews and ratings', 'Product Management'],
         ['manage_product_discounts', 'Manage product-specific discounts and sales', 'Product Management'],
         ['manage_expiry_dates', 'Manage product expiry dates and alerts', 'Product Management'],
-        
+
         // Category Management
         ['manage_categories', 'Add, edit, delete categories', 'Product Management'],
-        
+
         // Sales & Transactions - Comprehensive Permissions
         ['manage_sales', 'View sales history and details', 'Sales & Transactions'],
         ['process_sales', 'Process sales transactions', 'Sales & Transactions'],
@@ -1864,7 +1899,7 @@ try {
         ['integrate_payment_gateways', 'Integrate with external payment gateways', 'Sales & Transactions'],
         ['manage_sales_api', 'Manage sales-related API access', 'Sales & Transactions'],
         ['automate_sales_processes', 'Automate repetitive sales processes', 'Sales & Transactions'],
-        
+
         // Customer Management - Comprehensive Permissions
         ['view_customers', 'View customer accounts and profiles', 'Customer Management'],
         ['create_customers', 'Create new customer accounts', 'Customer Management'],
@@ -1904,7 +1939,7 @@ try {
         ['suspend_users', 'Suspend and unsuspend user accounts', 'User Management'],
         ['reset_user_passwords', 'Reset user passwords', 'User Management'],
         ['unlock_user_accounts', 'Unlock locked user accounts', 'User Management'],
-        
+
         // User Profile Management
         ['view_user_profiles', 'View detailed user profiles and information', 'User Management'],
         ['edit_user_profiles', 'Edit user profile information', 'User Management'],
@@ -1912,7 +1947,7 @@ try {
         ['manage_user_personal_info', 'Manage personal information (name, phone, address)', 'User Management'],
         ['manage_user_employment_info', 'Manage employment details (hire date, department, etc.)', 'User Management'],
         ['view_user_employment_history', 'View user employment and role history', 'User Management'],
-        
+
         // User Account Security
         ['manage_user_security', 'Manage user account security settings', 'User Management'],
         ['view_user_login_history', 'View user login history and activity', 'User Management'],
@@ -1921,68 +1956,68 @@ try {
         ['manage_user_2fa', 'Manage two-factor authentication for users', 'User Management'],
         ['view_failed_login_attempts', 'View failed login attempts and security alerts', 'User Management'],
         ['manage_account_lockouts', 'Manage account lockout policies and unlock accounts', 'User Management'],
-        
+
         // User Role Assignment
         ['assign_user_roles', 'Assign roles to user accounts', 'User Management'],
         ['revoke_user_roles', 'Remove roles from user accounts', 'User Management'],
         ['view_user_role_assignments', 'View user role assignments and permissions', 'User Management'],
         ['manage_user_role_history', 'View and manage user role change history', 'User Management'],
         ['temporary_role_elevation', 'Grant temporary elevated roles to users', 'User Management'],
-        
+
         // User Department and Hierarchy
         ['manage_user_departments', 'Assign users to departments and manage department structure', 'User Management'],
         ['view_user_hierarchy', 'View organizational user hierarchy', 'User Management'],
         ['assign_user_managers', 'Assign managers and supervisors to users', 'User Management'],
         ['manage_team_assignments', 'Manage team and group assignments', 'User Management'],
-        
+
         // User Permissions Management
         ['view_user_permissions', 'View effective permissions for users', 'User Management'],
         ['assign_direct_user_permissions', 'Assign permissions directly to users (bypass roles)', 'User Management'],
         ['manage_user_permission_overrides', 'Override role permissions for specific users', 'User Management'],
         ['audit_user_permissions', 'Audit and review user permission assignments', 'User Management'],
-        
+
         // User Import/Export
         ['import_users', 'Import users from external files or systems', 'User Management'],
         ['export_users', 'Export user data and information', 'User Management'],
         ['bulk_create_users', 'Create multiple users in bulk operations', 'User Management'],
         ['bulk_update_users', 'Update multiple users in bulk operations', 'User Management'],
         ['bulk_delete_users', 'Delete multiple users in bulk operations', 'User Management'],
-        
+
         // User Analytics and Reporting
         ['view_user_reports', 'View user analytics and reports', 'User Management'],
         ['generate_user_reports', 'Generate custom user reports', 'User Management'],
         ['view_user_activity_reports', 'View user activity and usage reports', 'User Management'],
         ['view_user_performance_metrics', 'View user performance and productivity metrics', 'User Management'],
         ['analyze_user_behavior', 'Analyze user behavior patterns and trends', 'User Management'],
-        
+
         // User Communication
         ['send_user_notifications', 'Send notifications and messages to users', 'User Management'],
         ['manage_user_email_settings', 'Manage user email preferences and settings', 'User Management'],
         ['send_password_reset_emails', 'Send password reset emails to users', 'User Management'],
         ['send_account_activation_emails', 'Send account activation emails', 'User Management'],
         ['manage_user_announcements', 'Send announcements and system messages to users', 'User Management'],
-        
+
         // User Compliance and Audit
         ['audit_user_activities', 'View user activity logs and audit trails', 'User Management'],
         ['manage_user_compliance', 'Ensure user accounts comply with policies', 'User Management'],
         ['generate_compliance_reports', 'Generate user compliance and audit reports', 'User Management'],
         ['manage_user_data_retention', 'Manage user data retention and deletion policies', 'User Management'],
         ['handle_user_data_requests', 'Handle user data access and deletion requests', 'User Management'],
-        
+
         // Advanced User Features
         ['manage_user_preferences', 'Manage user system preferences and settings', 'User Management'],
         ['configure_user_dashboards', 'Configure personalized user dashboards', 'User Management'],
         ['manage_user_api_access', 'Manage user API keys and access tokens', 'User Management'],
         ['manage_user_integrations', 'Manage user third-party integrations', 'User Management'],
         ['impersonate_users', 'Log in as other users for support purposes', 'User Management'],
-        
+
         // User System Administration
         ['configure_user_settings', 'Configure user management system settings', 'User Management'],
         ['manage_user_templates', 'Create and manage user account templates', 'User Management'],
         ['backup_user_data', 'Backup and restore user data', 'User Management'],
         ['migrate_user_data', 'Migrate user data between systems', 'User Management'],
         ['cleanup_inactive_users', 'Clean up and archive inactive user accounts', 'User Management'],
-        
+
         // Role Management - Comprehensive Permissions
         ['view_roles', 'View roles and their configurations', 'Role Management'],
         ['create_roles', 'Create new roles', 'Role Management'],
@@ -1991,7 +2026,7 @@ try {
         ['manage_roles', 'Full role management access', 'Role Management'],
         ['activate_roles', 'Activate and deactivate roles', 'Role Management'],
         ['duplicate_roles', 'Duplicate existing roles', 'Role Management'],
-        
+
         // Role Permission Management
         ['view_permissions', 'View all available permissions', 'Role Management'],
         ['assign_permissions', 'Assign permissions to roles', 'Role Management'],
@@ -2000,27 +2035,27 @@ try {
         ['bulk_assign_permissions', 'Bulk assign permissions to multiple roles', 'Role Management'],
         ['copy_role_permissions', 'Copy permissions from one role to another', 'Role Management'],
         ['validate_role_permissions', 'Validate role permission configurations', 'Role Management'],
-        
+
         // Permission Category Management
         ['view_permission_categories', 'View permission categories and organization', 'Role Management'],
         ['manage_permission_categories', 'Organize permissions into categories', 'Role Management'],
         ['create_permission_categories', 'Create new permission categories', 'Role Management'],
         ['edit_permission_categories', 'Edit existing permission categories', 'Role Management'],
         ['delete_permission_categories', 'Delete permission categories', 'Role Management'],
-        
+
         // Custom Permission Management
         ['create_custom_permissions', 'Create custom permissions for specific needs', 'Role Management'],
         ['edit_custom_permissions', 'Edit custom permission definitions', 'Role Management'],
         ['delete_custom_permissions', 'Delete custom permissions', 'Role Management'],
         ['manage_permission_descriptions', 'Manage permission names and descriptions', 'Role Management'],
-        
+
         // Role Hierarchy Management
         ['manage_role_hierarchy', 'Create and manage role hierarchies', 'Role Management'],
         ['view_role_hierarchy', 'View role hierarchy and relationships', 'Role Management'],
         ['assign_parent_roles', 'Assign parent roles to create hierarchies', 'Role Management'],
         ['inherit_role_permissions', 'Manage permission inheritance between roles', 'Role Management'],
         ['override_inherited_permissions', 'Override inherited permissions', 'Role Management'],
-        
+
         // Role Assignment Management
         ['assign_roles_to_users', 'Assign roles to users', 'Role Management'],
         ['revoke_roles_from_users', 'Remove roles from users', 'Role Management'],
@@ -2028,7 +2063,7 @@ try {
         ['manage_multiple_user_roles', 'Assign multiple roles to single users', 'Role Management'],
         ['bulk_assign_user_roles', 'Bulk assign roles to multiple users', 'Role Management'],
         ['temporary_role_assignment', 'Assign temporary roles with expiration dates', 'Role Management'],
-        
+
         // Role Analytics and Reporting
         ['view_role_usage_reports', 'View role usage and assignment reports', 'Role Management'],
         ['view_permission_usage_reports', 'View permission usage across roles', 'Role Management'],
@@ -2037,7 +2072,7 @@ try {
         ['analyze_role_effectiveness', 'Analyze role effectiveness and optimization', 'Role Management'],
         ['view_role_conflicts', 'View and resolve role permission conflicts', 'Role Management'],
         ['audit_role_changes', 'View role and permission change audit logs', 'Role Management'],
-        
+
         // Role Security Management
         ['manage_sensitive_roles', 'Manage high-privilege and sensitive roles', 'Role Management'],
         ['approve_role_changes', 'Approve role and permission changes', 'Role Management'],
@@ -2045,7 +2080,7 @@ try {
         ['manage_role_restrictions', 'Set restrictions and limitations on roles', 'Role Management'],
         ['enforce_role_policies', 'Enforce role-based security policies', 'Role Management'],
         ['validate_role_compliance', 'Validate role compliance with policies', 'Role Management'],
-        
+
         // Role Templates and Presets
         ['create_role_templates', 'Create role templates for common use cases', 'Role Management'],
         ['edit_role_templates', 'Edit existing role templates', 'Role Management'],
@@ -2054,7 +2089,7 @@ try {
         ['manage_role_presets', 'Manage predefined role configurations', 'Role Management'],
         ['import_role_templates', 'Import role templates from external sources', 'Role Management'],
         ['export_role_templates', 'Export role templates for reuse', 'Role Management'],
-        
+
         // Advanced Role Features
         ['manage_dynamic_roles', 'Manage roles that change based on conditions', 'Role Management'],
         ['manage_contextual_permissions', 'Manage permissions that vary by context', 'Role Management'],
@@ -2062,14 +2097,14 @@ try {
         ['manage_location_based_roles', 'Manage roles with location-based restrictions', 'Role Management'],
         ['manage_conditional_permissions', 'Set up conditional permission logic', 'Role Management'],
         ['manage_role_workflows', 'Create workflows for role approval and assignment', 'Role Management'],
-        
+
         // Role Integration and API
         ['integrate_external_roles', 'Integrate with external role management systems', 'Role Management'],
         ['sync_role_systems', 'Synchronize roles with external systems', 'Role Management'],
         ['manage_role_api', 'Manage role management API access', 'Role Management'],
         ['import_roles_from_ldap', 'Import roles and permissions from LDAP/AD', 'Role Management'],
         ['export_roles_to_external', 'Export role data to external systems', 'Role Management'],
-        
+
         // Role System Administration
         ['configure_role_settings', 'Configure role management system settings', 'Role Management'],
         ['manage_role_defaults', 'Set default roles for new users', 'Role Management'],
@@ -2077,13 +2112,13 @@ try {
         ['migrate_role_data', 'Migrate roles between systems or versions', 'Role Management'],
         ['optimize_role_performance', 'Optimize role checking and permission validation', 'Role Management'],
         ['troubleshoot_role_issues', 'Diagnose and fix role-related problems', 'Role Management'],
-        
+
         // Role Documentation and Training
         ['document_roles', 'Create and maintain role documentation', 'Role Management'],
         ['manage_role_help_content', 'Manage help and training content for roles', 'Role Management'],
         ['create_role_training_materials', 'Create training materials for role usage', 'Role Management'],
         ['manage_role_onboarding', 'Manage role-based user onboarding processes', 'Role Management'],
-        
+
         // Inventory Management - Comprehensive Permissions
         ['view_inventory', 'View inventory levels and stock information', 'Inventory Management'],
         ['manage_inventory', 'Full inventory management access', 'Inventory Management'],
@@ -2091,7 +2126,7 @@ try {
         ['adjust_inventory', 'Make inventory adjustments and corrections', 'Inventory Management'],
         ['transfer_inventory', 'Transfer inventory between locations', 'Inventory Management'],
         ['reserve_inventory', 'Reserve inventory for orders and allocations', 'Inventory Management'],
-        
+
         // Stock Management
         ['view_stock_levels', 'View current stock levels across all locations', 'Inventory Management'],
         ['manage_stock_levels', 'Manage and update stock levels', 'Inventory Management'],
@@ -2100,7 +2135,7 @@ try {
         ['view_stock_movements', 'View stock movement history and transactions', 'Inventory Management'],
         ['manage_reorder_points', 'Set and manage product reorder points', 'Inventory Management'],
         ['manage_safety_stock', 'Manage safety stock levels', 'Inventory Management'],
-        
+
         // Purchase Orders
         ['view_purchase_orders', 'View purchase orders and details', 'Inventory Management'],
         ['create_purchase_orders', 'Create new purchase orders', 'Inventory Management'],
@@ -2110,33 +2145,33 @@ try {
         ['send_purchase_orders', 'Send purchase orders to suppliers', 'Inventory Management'],
         ['cancel_purchase_orders', 'Cancel purchase orders', 'Inventory Management'],
         ['duplicate_purchase_orders', 'Duplicate existing purchase orders', 'Inventory Management'],
-        
+
         // Inventory Receiving
         ['receive_inventory', 'Receive and process inventory deliveries', 'Inventory Management'],
         ['partial_receive_inventory', 'Process partial inventory receipts', 'Inventory Management'],
         ['verify_received_inventory', 'Verify received inventory against orders', 'Inventory Management'],
         ['reject_received_inventory', 'Reject received inventory items', 'Inventory Management'],
         ['manage_receiving_discrepancies', 'Handle receiving discrepancies', 'Inventory Management'],
-        
+
         // Inventory Locations
         ['manage_inventory_locations', 'Manage warehouse locations and zones', 'Inventory Management'],
         ['view_inventory_locations', 'View inventory location information', 'Inventory Management'],
         ['transfer_between_locations', 'Transfer inventory between locations', 'Inventory Management'],
         ['manage_location_capacity', 'Manage location storage capacity', 'Inventory Management'],
-        
+
         // Inventory Counting & Audits
         ['perform_inventory_counts', 'Perform physical inventory counts', 'Inventory Management'],
         ['manage_cycle_counts', 'Manage cycle counting schedules', 'Inventory Management'],
         ['approve_inventory_adjustments', 'Approve inventory count adjustments', 'Inventory Management'],
         ['view_inventory_variance_reports', 'View inventory variance reports', 'Inventory Management'],
         ['conduct_inventory_audits', 'Conduct inventory audits', 'Inventory Management'],
-        
+
         // Inventory Forecasting & Planning
         ['view_demand_forecasting', 'View inventory demand forecasts', 'Inventory Management'],
         ['manage_demand_forecasting', 'Manage demand forecasting parameters', 'Inventory Management'],
         ['manage_seasonal_adjustments', 'Manage seasonal inventory adjustments', 'Inventory Management'],
         ['optimize_inventory_levels', 'Use inventory optimization tools', 'Inventory Management'],
-        
+
         // Inventory Reporting & Analytics
         ['view_inventory_reports', 'View inventory reports and analytics', 'Inventory Management'],
         ['generate_inventory_reports', 'Generate custom inventory reports', 'Inventory Management'],
@@ -2145,45 +2180,45 @@ try {
         ['view_abc_analysis', 'View ABC analysis reports', 'Inventory Management'],
         ['view_inventory_turnover', 'View inventory turnover analysis', 'Inventory Management'],
         ['view_dead_stock_reports', 'View dead stock and obsolete inventory reports', 'Inventory Management'],
-        
+
         // Inventory Valuation
         ['manage_inventory_valuation', 'Manage inventory valuation methods', 'Inventory Management'],
         ['view_inventory_valuation', 'View inventory valuation reports', 'Inventory Management'],
         ['adjust_inventory_costs', 'Adjust inventory cost values', 'Inventory Management'],
         ['manage_costing_methods', 'Manage inventory costing methods (FIFO, LIFO, etc.)', 'Inventory Management'],
-        
+
         // Serial Numbers & Lot Tracking
         ['manage_serial_numbers', 'Manage serial number tracking', 'Inventory Management'],
         ['track_lot_numbers', 'Track lot numbers and batch information', 'Inventory Management'],
         ['manage_expiry_tracking', 'Manage expiry date tracking', 'Inventory Management'],
         ['trace_inventory_history', 'Trace inventory item history', 'Inventory Management'],
-        
+
         // Low Stock & Alerts
         ['manage_low_stock_alerts', 'Manage low stock alert settings', 'Inventory Management'],
         ['view_low_stock_alerts', 'View low stock alerts and notifications', 'Inventory Management'],
         ['manage_overstock_alerts', 'Manage overstock alert settings', 'Inventory Management'],
         ['auto_reorder_management', 'Manage automatic reorder functionality', 'Inventory Management'],
-        
+
         // Inventory Integration
         ['sync_inventory_systems', 'Synchronize with external inventory systems', 'Inventory Management'],
         ['import_inventory_data', 'Import inventory data from external sources', 'Inventory Management'],
         ['export_inventory_feeds', 'Export inventory feeds to external systems', 'Inventory Management'],
         ['manage_inventory_api', 'Manage inventory API access and integrations', 'Inventory Management'],
-        
+
         // Advanced Inventory Features
         ['manage_backorders', 'Manage backorder processing', 'Inventory Management'],
         ['manage_pre_orders', 'Manage pre-order inventory allocation', 'Inventory Management'],
         ['manage_drop_shipping', 'Manage drop shipping inventory', 'Inventory Management'],
         ['manage_consignment_inventory', 'Manage consignment inventory tracking', 'Inventory Management'],
         ['manage_kitting', 'Manage inventory kitting and bundling', 'Inventory Management'],
-        
+
         // Inventory System Administration
         ['configure_inventory_settings', 'Configure inventory system settings', 'Inventory Management'],
         ['manage_inventory_categories', 'Manage inventory categorization', 'Inventory Management'],
         ['manage_inventory_templates', 'Create and manage inventory templates', 'Inventory Management'],
         ['backup_inventory_data', 'Backup and restore inventory data', 'Inventory Management'],
         ['audit_inventory_changes', 'View inventory change logs and audit trails', 'Inventory Management'],
-        
+
         // Returns Management - Comprehensive Permissions
         ['view_returns', 'View return history and details', 'Returns Management'],
         ['create_returns', 'Create new product return requests', 'Returns Management'],
@@ -2192,14 +2227,14 @@ try {
         ['manage_returns', 'Full returns management access', 'Returns Management'],
         ['cancel_returns', 'Cancel return requests', 'Returns Management'],
         ['duplicate_returns', 'Duplicate existing return requests', 'Returns Management'],
-        
+
         // Return Authorization & Approval
         ['approve_returns', 'Approve product returns for processing', 'Returns Management'],
         ['reject_returns', 'Reject return requests', 'Returns Management'],
         ['authorize_returns', 'Authorize returns without full approval process', 'Returns Management'],
         ['review_return_requests', 'Review and evaluate return requests', 'Returns Management'],
         ['expedite_returns', 'Expedite high-priority return processing', 'Returns Management'],
-        
+
         // Return Processing
         ['process_returns', 'Process approved returns', 'Returns Management'],
         ['receive_returned_items', 'Receive and inspect returned items', 'Returns Management'],
@@ -2207,25 +2242,25 @@ try {
         ['evaluate_return_condition', 'Evaluate and categorize return item conditions', 'Returns Management'],
         ['accept_returned_items', 'Accept returned items into inventory', 'Returns Management'],
         ['reject_returned_items', 'Reject returned items', 'Returns Management'],
-        
+
         // Return Reasons & Categories
         ['manage_return_reasons', 'Manage return reason codes and categories', 'Returns Management'],
         ['view_return_reasons', 'View return reason analysis', 'Returns Management'],
         ['categorize_returns', 'Categorize returns by type and reason', 'Returns Management'],
-        
+
         // Return Item Management
         ['manage_return_items', 'Manage individual items in return requests', 'Returns Management'],
         ['partial_return_processing', 'Process partial returns', 'Returns Management'],
         ['split_return_orders', 'Split return orders into multiple shipments', 'Returns Management'],
         ['consolidate_returns', 'Consolidate multiple returns from same customer', 'Returns Management'],
-        
+
         // Return Shipping & Logistics
         ['manage_return_shipping', 'Manage return shipping and logistics', 'Returns Management'],
         ['generate_return_labels', 'Generate return shipping labels', 'Returns Management'],
         ['track_return_shipments', 'Track return shipment status', 'Returns Management'],
         ['manage_return_carriers', 'Manage return shipping carriers', 'Returns Management'],
         ['calculate_return_shipping_costs', 'Calculate return shipping costs', 'Returns Management'],
-        
+
         // Return Refunds & Credits
         ['process_return_refunds', 'Process refunds for returned items', 'Returns Management'],
         ['issue_store_credit', 'Issue store credit for returns', 'Returns Management'],
@@ -2233,20 +2268,20 @@ try {
         ['calculate_return_value', 'Calculate return value and refund amounts', 'Returns Management'],
         ['apply_return_fees', 'Apply restocking or processing fees', 'Returns Management'],
         ['waive_return_fees', 'Waive return fees and charges', 'Returns Management'],
-        
+
         // Return Inventory Management
         ['return_to_inventory', 'Return items back to available inventory', 'Returns Management'],
         ['quarantine_returned_items', 'Quarantine returned items for inspection', 'Returns Management'],
         ['dispose_returned_items', 'Dispose of damaged or unsellable returned items', 'Returns Management'],
         ['restock_returned_items', 'Restock returned items to inventory', 'Returns Management'],
         ['manage_return_inventory_locations', 'Manage return inventory locations', 'Returns Management'],
-        
+
         // Return Quality Control
         ['perform_return_quality_checks', 'Perform quality checks on returned items', 'Returns Management'],
         ['certify_returned_items', 'Certify returned items as sellable', 'Returns Management'],
         ['grade_return_conditions', 'Grade and categorize return item conditions', 'Returns Management'],
         ['manage_return_warranties', 'Manage warranty claims for returned items', 'Returns Management'],
-        
+
         // Return Analytics & Reporting
         ['view_return_reports', 'View return analytics and reports', 'Returns Management'],
         ['generate_return_reports', 'Generate custom return reports', 'Returns Management'],
@@ -2255,37 +2290,37 @@ try {
         ['analyze_return_reasons', 'Analyze return reasons and patterns', 'Returns Management'],
         ['view_return_costs', 'View return processing costs and impact', 'Returns Management'],
         ['monitor_return_fraud', 'Monitor for fraudulent return activities', 'Returns Management'],
-        
+
         // Return Customer Management
         ['manage_return_customers', 'Manage customer return profiles and history', 'Returns Management'],
         ['view_customer_return_history', 'View individual customer return history', 'Returns Management'],
         ['flag_return_customers', 'Flag customers with suspicious return patterns', 'Returns Management'],
         ['manage_return_policies', 'Manage return policies and customer communications', 'Returns Management'],
-        
+
         // Return Documentation & Communication
         ['manage_return_attachments', 'Manage return documentation and attachments', 'Returns Management'],
         ['send_return_notifications', 'Send return status notifications to customers', 'Returns Management'],
         ['generate_return_documentation', 'Generate return receipts and documentation', 'Returns Management'],
         ['manage_return_correspondence', 'Manage customer correspondence regarding returns', 'Returns Management'],
-        
+
         // Advanced Return Features
         ['bulk_process_returns', 'Process multiple returns in bulk', 'Returns Management'],
         ['automated_return_processing', 'Manage automated return processing rules', 'Returns Management'],
         ['cross_reference_returns', 'Cross-reference returns with original orders', 'Returns Management'],
         ['manage_return_exceptions', 'Handle exceptional return cases', 'Returns Management'],
-        
+
         // Return System Administration
         ['configure_return_settings', 'Configure return system settings', 'Returns Management'],
         ['manage_return_workflows', 'Manage return processing workflows', 'Returns Management'],
         ['manage_return_templates', 'Create and manage return document templates', 'Returns Management'],
         ['backup_return_data', 'Backup and restore return data', 'Returns Management'],
         ['audit_return_changes', 'View return change logs and audit trails', 'Returns Management'],
-        
+
         // Return Integration
         ['sync_return_systems', 'Synchronize with external return systems', 'Returns Management'],
         ['integrate_return_carriers', 'Integrate with shipping carriers for returns', 'Returns Management'],
         ['manage_return_api', 'Manage return API access and integrations', 'Returns Management'],
-        
+
         // Basic Supplier Management
         ['view_suppliers', 'View supplier information and listings', 'Supplier Management'],
         ['manage_suppliers', 'Add, edit, delete suppliers', 'Supplier Management'],
@@ -2298,14 +2333,14 @@ try {
         ['export_suppliers', 'Export supplier data', 'Supplier Management'],
         ['bulk_manage_suppliers', 'Perform bulk operations on suppliers', 'Supplier Management'],
         ['duplicate_suppliers', 'Duplicate existing suppliers', 'Supplier Management'],
-        
+
         // Supplier Contact Management
         ['manage_supplier_contacts', 'Manage supplier contact information', 'Supplier Management'],
         ['add_supplier_contacts', 'Add new contacts for suppliers', 'Supplier Management'],
         ['edit_supplier_contacts', 'Edit supplier contact details', 'Supplier Management'],
         ['delete_supplier_contacts', 'Remove supplier contacts', 'Supplier Management'],
         ['view_supplier_contact_history', 'View supplier contact interaction history', 'Supplier Management'],
-        
+
         // Supplier Performance Management
         ['view_supplier_performance', 'View supplier performance metrics and dashboards', 'Supplier Management'],
         ['manage_supplier_performance', 'Manage supplier performance tracking and metrics', 'Supplier Management'],
@@ -2317,7 +2352,7 @@ try {
         ['manage_performance_scorecards', 'Manage supplier performance scorecards', 'Supplier Management'],
         ['generate_performance_reports', 'Generate supplier performance reports', 'Supplier Management'],
         ['benchmark_supplier_performance', 'Compare and benchmark supplier performance', 'Supplier Management'],
-        
+
         // Supplier Quality Management
         ['view_supplier_quality', 'View supplier quality metrics and issues', 'Supplier Management'],
         ['manage_supplier_quality', 'Manage supplier quality tracking and issues', 'Supplier Management'],
@@ -2329,7 +2364,7 @@ try {
         ['approve_quality_actions', 'Approve corrective actions for quality issues', 'Supplier Management'],
         ['view_quality_trends', 'View supplier quality trends and patterns', 'Supplier Management'],
         ['manage_quality_certifications', 'Manage supplier quality certifications', 'Supplier Management'],
-        
+
         // Supplier BOM Management
         ['manage_bom_suppliers', 'Manage supplier assignments for BOM components', 'Supplier Management'],
         ['view_bom_suppliers', 'View BOM supplier assignments and relationships', 'Supplier Management'],
@@ -2338,7 +2373,7 @@ try {
         ['manage_supplier_alternates', 'Manage alternate suppliers for BOM components', 'Supplier Management'],
         ['track_bom_supplier_costs', 'Track costs for BOM suppliers', 'Supplier Management'],
         ['analyze_bom_supplier_performance', 'Analyze BOM supplier performance', 'Supplier Management'],
-        
+
         // Supplier Cost Management
         ['view_supplier_costs', 'View supplier cost information and history', 'Supplier Management'],
         ['manage_supplier_costs', 'Manage supplier cost tracking and analysis', 'Supplier Management'],
@@ -2349,7 +2384,7 @@ try {
         ['manage_volume_discounts', 'Manage volume-based supplier discounts', 'Supplier Management'],
         ['optimize_supplier_costs', 'Use cost optimization tools and analysis', 'Supplier Management'],
         ['forecast_supplier_costs', 'Forecast future supplier costs and trends', 'Supplier Management'],
-        
+
         // Supplier Contract Management
         ['view_supplier_contracts', 'View supplier contracts and agreements', 'Supplier Management'],
         ['manage_supplier_contracts', 'Create and manage supplier contracts', 'Supplier Management'],
@@ -2361,7 +2396,7 @@ try {
         ['track_contract_compliance', 'Track supplier contract compliance', 'Supplier Management'],
         ['manage_contract_terms', 'Manage supplier contract terms and conditions', 'Supplier Management'],
         ['alert_contract_expiry', 'Manage contract expiry alerts and notifications', 'Supplier Management'],
-        
+
         // Supplier Document Management
         ['view_supplier_documents', 'View supplier documents and attachments', 'Supplier Management'],
         ['manage_supplier_documents', 'Upload and manage supplier documents', 'Supplier Management'],
@@ -2372,7 +2407,7 @@ try {
         ['manage_document_approvals', 'Manage supplier document approval workflows', 'Supplier Management'],
         ['track_document_expiry', 'Track supplier document expiration dates', 'Supplier Management'],
         ['share_supplier_documents', 'Share supplier documents with team members', 'Supplier Management'],
-        
+
         // Supplier Communication
         ['communicate_with_suppliers', 'Send messages and communications to suppliers', 'Supplier Management'],
         ['manage_supplier_messages', 'Manage supplier communication history', 'Supplier Management'],
@@ -2381,7 +2416,7 @@ try {
         ['track_supplier_interactions', 'Track all supplier interactions and communications', 'Supplier Management'],
         ['manage_supplier_feedback', 'Manage supplier feedback and surveys', 'Supplier Management'],
         ['broadcast_to_suppliers', 'Send broadcast messages to multiple suppliers', 'Supplier Management'],
-        
+
         // Supplier Onboarding & Setup
         ['onboard_new_suppliers', 'Manage new supplier onboarding process', 'Supplier Management'],
         ['verify_supplier_credentials', 'Verify supplier credentials and documentation', 'Supplier Management'],
@@ -2389,7 +2424,7 @@ try {
         ['train_suppliers', 'Provide training and resources to suppliers', 'Supplier Management'],
         ['manage_supplier_profiles', 'Manage detailed supplier profile information', 'Supplier Management'],
         ['validate_supplier_information', 'Validate and verify supplier information', 'Supplier Management'],
-        
+
         // Supplier Financial Management
         ['view_supplier_financials', 'View supplier financial information and health', 'Supplier Management'],
         ['manage_supplier_payments', 'Manage supplier payment processes', 'Supplier Management'],
@@ -2400,7 +2435,7 @@ try {
         ['analyze_supplier_spending', 'Analyze spending patterns with suppliers', 'Supplier Management'],
         ['forecast_supplier_payments', 'Forecast future supplier payment obligations', 'Supplier Management'],
         ['manage_supplier_disputes', 'Manage payment and billing disputes with suppliers', 'Supplier Management'],
-        
+
         // Supplier Risk Management
         ['assess_supplier_risk', 'Assess and evaluate supplier risks', 'Supplier Management'],
         ['manage_supplier_risk', 'Manage supplier risk mitigation strategies', 'Supplier Management'],
@@ -2409,7 +2444,7 @@ try {
         ['track_risk_indicators', 'Track key supplier risk indicators', 'Supplier Management'],
         ['manage_risk_mitigation', 'Manage supplier risk mitigation plans', 'Supplier Management'],
         ['alert_high_risk_suppliers', 'Receive alerts for high-risk suppliers', 'Supplier Management'],
-        
+
         // Supplier Compliance Management
         ['manage_supplier_compliance', 'Manage supplier compliance requirements', 'Supplier Management'],
         ['track_compliance_status', 'Track supplier compliance status', 'Supplier Management'],
@@ -2418,7 +2453,7 @@ try {
         ['track_certifications', 'Track supplier certifications and licenses', 'Supplier Management'],
         ['monitor_regulatory_changes', 'Monitor regulatory changes affecting suppliers', 'Supplier Management'],
         ['ensure_compliance_standards', 'Ensure suppliers meet compliance standards', 'Supplier Management'],
-        
+
         // Supplier Analytics & Reporting
         ['view_supplier_analytics', 'View supplier analytics and insights', 'Supplier Management'],
         ['generate_supplier_reports', 'Generate comprehensive supplier reports', 'Supplier Management'],
@@ -2427,7 +2462,7 @@ try {
         ['benchmark_suppliers', 'Benchmark suppliers against industry standards', 'Supplier Management'],
         ['create_supplier_dashboards', 'Create custom supplier dashboards', 'Supplier Management'],
         ['schedule_supplier_reports', 'Schedule automated supplier reports', 'Supplier Management'],
-        
+
         // Advanced Supplier Features
         ['manage_supplier_categories', 'Manage supplier categories and classifications', 'Supplier Management'],
         ['setup_supplier_hierarchies', 'Set up supplier organizational hierarchies', 'Supplier Management'],
@@ -2435,7 +2470,7 @@ try {
         ['integrate_supplier_systems', 'Integrate with supplier systems and portals', 'Supplier Management'],
         ['automate_supplier_processes', 'Automate supplier management processes', 'Supplier Management'],
         ['manage_supplier_workflows', 'Manage supplier approval and process workflows', 'Supplier Management'],
-        
+
         // Supplier System Administration
         ['configure_supplier_settings', 'Configure supplier management system settings', 'Supplier Management'],
         ['manage_supplier_templates', 'Manage supplier document and communication templates', 'Supplier Management'],
@@ -2443,13 +2478,13 @@ try {
         ['audit_supplier_changes', 'View supplier change logs and audit trails', 'Supplier Management'],
         ['migrate_supplier_data', 'Migrate supplier data between systems', 'Supplier Management'],
         ['optimize_supplier_database', 'Optimize supplier database performance', 'Supplier Management'],
-        
+
         // Reports & Analytics
         ['view_sales_reports', 'View sales reports and analytics', 'Reports & Analytics'],
         ['view_inventory_reports', 'View inventory reports', 'Reports & Analytics'],
         ['view_financial_reports', 'View financial reports', 'Reports & Analytics'],
         ['export_reports', 'Export report data', 'Reports & Analytics'],
-        
+
         // System Settings - Comprehensive Permissions
         ['view_settings', 'View system settings and configurations', 'System Settings'],
         ['manage_settings', 'Full system settings management access', 'System Settings'],
@@ -2457,19 +2492,19 @@ try {
         ['configure_company_settings', 'Configure company information and branding', 'System Settings'],
         ['manage_currency_settings', 'Manage currency and financial settings', 'System Settings'],
         ['configure_tax_settings', 'Configure tax rates and tax-related settings', 'System Settings'],
-        
+
         // POS Settings
         ['manage_pos_settings', 'Manage point-of-sale system configurations', 'System Settings'],
         ['configure_payment_methods', 'Configure accepted payment methods', 'System Settings'],
         ['manage_barcode_settings', 'Configure barcode generation and scanning settings', 'System Settings'],
-        
+
         // Email and Communication Settings
         ['configure_email_settings', 'Configure SMTP and email delivery settings', 'System Settings'],
         ['manage_notification_settings', 'Manage system notification preferences', 'System Settings'],
         ['configure_sms_settings', 'Configure SMS gateway and messaging settings', 'System Settings'],
         ['test_email_configuration', 'Test email configuration and delivery', 'System Settings'],
         ['manage_communication_templates', 'Manage email and SMS templates', 'System Settings'],
-        
+
         // Security and Authentication Settings
         ['configure_security_settings', 'Configure system security and authentication settings', 'System Settings'],
         ['manage_password_policies', 'Set password strength and policy requirements', 'System Settings'],
@@ -2477,104 +2512,104 @@ try {
         ['manage_login_security', 'Configure login attempt limits and lockout policies', 'System Settings'],
         ['configure_2fa_settings', 'Configure two-factor authentication settings', 'System Settings'],
         ['manage_ip_restrictions', 'Manage IP address access restrictions', 'System Settings'],
-        
+
         // Inventory and Stock Settings
         ['configure_inventory_settings', 'Configure inventory management system settings', 'System Settings'],
         ['manage_stock_alert_settings', 'Configure low stock and reorder alert settings', 'System Settings'],
         ['configure_auto_reorder_settings', 'Configure automatic reorder system settings', 'System Settings'],
         ['manage_product_numbering', 'Configure product SKU and numbering schemes', 'System Settings'],
-        
+
         // Order Management Settings
         ['configure_order_settings', 'Configure purchase order system settings', 'System Settings'],
         ['manage_order_numbering', 'Configure order numbering and formatting', 'System Settings'],
         ['configure_order_workflows', 'Configure order approval and processing workflows', 'System Settings'],
         ['manage_supplier_settings', 'Configure supplier management settings', 'System Settings'],
-        
+
         // Return Management Settings
         ['configure_return_settings', 'Configure return processing system settings', 'System Settings'],
         ['manage_return_policies', 'Configure return policies and rules', 'System Settings'],
         ['configure_return_workflows', 'Configure return approval and processing workflows', 'System Settings'],
-        
+
         // User and Role Settings
         ['configure_user_settings', 'Configure user management system settings', 'System Settings'],
         ['manage_default_roles', 'Configure default roles for new users', 'System Settings'],
         ['configure_user_registration', 'Configure user registration and onboarding settings', 'System Settings'],
         ['manage_user_session_settings', 'Configure user session and activity settings', 'System Settings'],
-        
+
         // Backup and Maintenance Settings
         ['configure_backup_settings', 'Configure automatic backup schedules and settings', 'System Settings'],
         ['manage_backup_retention', 'Configure backup retention and cleanup policies', 'System Settings'],
         ['configure_maintenance_mode', 'Enable and configure system maintenance mode', 'System Settings'],
         ['manage_system_cleanup', 'Configure automatic system cleanup and archiving', 'System Settings'],
-        
+
         // Performance and Optimization Settings
         ['configure_performance_settings', 'Configure system performance and optimization settings', 'System Settings'],
         ['manage_cache_settings', 'Configure caching and performance optimization', 'System Settings'],
         ['configure_database_settings', 'Configure database performance and maintenance settings', 'System Settings'],
         ['manage_log_settings', 'Configure system logging and log retention', 'System Settings'],
-        
+
         // Integration and API Settings
         ['configure_api_settings', 'Configure API access and integration settings', 'System Settings'],
         ['manage_external_integrations', 'Manage third-party service integrations', 'System Settings'],
         ['configure_webhook_settings', 'Configure webhooks and external notifications', 'System Settings'],
         ['manage_sync_settings', 'Configure data synchronization settings', 'System Settings'],
-        
+
         // Theme and Appearance Settings
         ['configure_theme_settings', 'Configure system theme and appearance', 'System Settings'],
         ['manage_ui_customization', 'Manage user interface customization options', 'System Settings'],
         ['configure_branding_settings', 'Configure company branding and logos', 'System Settings'],
         ['manage_color_schemes', 'Manage system color schemes and themes', 'System Settings'],
-        
+
         // Localization and Regional Settings
         ['configure_localization_settings', 'Configure language and localization settings', 'System Settings'],
         ['manage_timezone_settings', 'Configure timezone and date/time format settings', 'System Settings'],
         ['configure_regional_formats', 'Configure regional number and currency formats', 'System Settings'],
         ['manage_language_packs', 'Manage language packs and translations', 'System Settings'],
-        
+
         // Reporting and Analytics Settings
         ['configure_reporting_settings', 'Configure reporting system settings', 'System Settings'],
         ['manage_analytics_settings', 'Configure analytics and tracking settings', 'System Settings'],
         ['configure_dashboard_settings', 'Configure default dashboard layouts and widgets', 'System Settings'],
         ['manage_report_scheduling', 'Configure automated report generation and delivery', 'System Settings'],
-        
+
         // License and Compliance Settings
         ['manage_license_settings', 'Manage system license and activation settings', 'System Settings'],
         ['configure_compliance_settings', 'Configure regulatory compliance settings', 'System Settings'],
         ['manage_audit_settings', 'Configure audit logging and compliance tracking', 'System Settings'],
         ['configure_data_retention', 'Configure data retention and archival policies', 'System Settings'],
-        
+
         // Advanced System Configuration
         ['configure_advanced_settings', 'Configure advanced system settings', 'System Settings'],
         ['manage_feature_flags', 'Enable and disable system features and modules', 'System Settings'],
         ['configure_system_limits', 'Configure system resource limits and quotas', 'System Settings'],
         ['manage_custom_fields', 'Configure custom fields and data structures', 'System Settings'],
-        
+
         // System Monitoring and Health
         ['view_system_status', 'View system health and status information', 'System Settings'],
         ['monitor_system_performance', 'Monitor system performance metrics', 'System Settings'],
         ['manage_system_alerts', 'Configure system health alerts and notifications', 'System Settings'],
         ['view_system_logs', 'View system logs and error reports', 'System Settings'],
-        
+
         // Emergency and Recovery Settings
         ['configure_emergency_settings', 'Configure emergency access and recovery settings', 'System Settings'],
         ['manage_disaster_recovery', 'Configure disaster recovery and backup procedures', 'System Settings'],
         ['configure_failover_settings', 'Configure system failover and redundancy settings', 'System Settings'],
         ['manage_emergency_contacts', 'Configure emergency contact information', 'System Settings'],
-        
+
         // Module-Specific Settings
         ['configure_bom_settings', 'Configure BOM system settings', 'System Settings'],
         ['configure_auto_bom_settings', 'Configure Auto BOM system settings', 'System Settings'],
         ['configure_expiry_settings', 'Configure product expiry tracking settings', 'System Settings'],
         ['configure_expense_settings', 'Configure expense management settings', 'System Settings'],
         ['configure_role_settings', 'Configure role management system settings', 'System Settings'],
-        
+
         // Export and Import Settings
         ['export_system_settings', 'Export system configuration settings', 'System Settings'],
         ['import_system_settings', 'Import system configuration settings', 'System Settings'],
         ['backup_system_configuration', 'Create backups of system configuration', 'System Settings'],
         ['restore_system_configuration', 'Restore system configuration from backups', 'System Settings']
     ];
-    
+
     $stmt = $conn->prepare("INSERT IGNORE INTO permissions (name, description, category) VALUES (:name, :description, :category)");
     foreach ($permissions as $permission) {
         $stmt->bindParam(':name', $permission[0]);
@@ -2582,10 +2617,10 @@ try {
         $stmt->bindParam(':category', $permission[2]);
         $stmt->execute();
     }
-    
+
     // Clear existing role permissions for default roles to avoid conflicts
     $conn->exec("DELETE FROM role_permissions WHERE role_id IN (1, 2)");
-    
+
     // Assign permissions to Admin role (all permissions)
     $admin_role_id = 1;
     $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id)
@@ -2593,9 +2628,14 @@ try {
     $stmt->bindParam(':role_id', $admin_role_id);
     $stmt->execute();
 
-    // Assign permissions to Cashier role (limited permissions)
+    // Assign permissions to Cashier role (minimal, POS-focused)
     $cashier_role_id = 2;
-    $cashier_permissions = ['view_dashboard', 'manage_sales', 'process_sales', 'view_returns', 'view_supplier_performance'];
+    $cashier_permissions = [
+        'view_dashboard',      // allow landing on dashboard
+        'process_sales',       // POS access
+        'view_customers'       // customer lookup for POS
+        // Add more only if needed: 'view_held_transactions','create_held_transactions','resume_held_transactions'
+    ];
     $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id)
                             SELECT :role_id, id FROM permissions WHERE name IN ('" . implode("','", $cashier_permissions) . "')");
     $stmt->bindParam(':role_id', $cashier_role_id);
@@ -2619,15 +2659,50 @@ try {
         // Update existing users to have role_id
     $conn->exec("UPDATE users SET role_id = 1 WHERE role = 'Admin' AND (role_id IS NULL OR role_id = 0)");
     $conn->exec("UPDATE users SET role_id = 2 WHERE role = 'Cashier' AND (role_id IS NULL OR role_id = 0)");
-    
+
     // Add manage_settings permission
     $stmt = $conn->prepare("INSERT IGNORE INTO permissions (name, description) VALUES ('manage_settings', 'Manage system settings')");
     $stmt->execute();
-    
+
     // Add manage_settings permission to admin role
     $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
                            SELECT 1, id FROM permissions WHERE name = 'manage_settings'");
     $stmt->execute();
+
+    // Ensure cashier role redirects to POS by default
+    try {
+        $conn->exec("UPDATE roles SET redirect_url = '../pos/sale.php' WHERE name = 'Cashier' AND (redirect_url IS NULL OR redirect_url = '../dashboard/dashboard.php')");
+    } catch (PDOException $e) {
+        error_log('Redirect URL update for Cashier skipped: ' . $e->getMessage());
+    }
+
+    // Seed role_menu_access defaults for Admin and Cashier
+    try {
+        // Build menu sections map
+        $sections = [];
+        $stmt = $conn->query("SELECT id, section_key FROM menu_sections WHERE is_active = 1");
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $sections[$row['section_key']] = (int)$row['id'];
+        }
+
+        // Prepared insert (INSERT IGNORE to avoid duplicates)
+        $ins = $conn->prepare("INSERT IGNORE INTO role_menu_access (role_id, menu_section_id, is_visible, is_priority) VALUES (:role, :menu, :visible, :priority)");
+
+        // Admin: see all, prioritized
+        foreach ($sections as $menuId) {
+            $ins->execute([':role' => 1, ':menu' => $menuId, ':visible' => 1, ':priority' => 1]);
+        }
+
+        // Cashier: hide all by default, explicitly enable Customer CRM only
+        foreach ($sections as $key => $menuId) {
+            $visible = ($key === 'customer_crm') ? 1 : 0;
+            $priority = 0;
+            $ins->execute([':role' => 2, ':menu' => $menuId, ':visible' => $visible, ':priority' => $priority]);
+        }
+    } catch (PDOException $e) {
+        error_log('Seeding role_menu_access failed: ' . $e->getMessage());
+    }
+
 
     // Add tax management permissions
     $tax_permissions = [
@@ -2734,7 +2809,7 @@ try {
             continue;
         }
     }
-    
+
     // Insert default settings
     $default_settings = [
         ['company_name', 'POS System'],
@@ -2814,18 +2889,18 @@ try {
         ['expiry_disposal_method', 'incineration'],
         ['expiry_tracker_enabled', '1']
     ];
-    
+
     $stmt = $conn->prepare("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES (:key, :value)");
     foreach ($default_settings as $setting) {
         $stmt->bindParam(':key', $setting[0]);
         $stmt->bindParam(':value', $setting[1]);
         $stmt->execute();
     }
-    
+
     // Check if default categories exist
     $stmt = $conn->query("SELECT COUNT(*) as count FROM categories");
     $count = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-    
+
     if ($count == 0) {
         // Insert default categories
         $categories = [
@@ -2835,15 +2910,15 @@ try {
             ['Home & Kitchen', 'Household items and kitchenware'],
             ['Beauty & Health', 'Cosmetics and health products']
         ];
-        
+
         $stmt = $conn->prepare("INSERT INTO categories (name, description) VALUES (:name, :description)");
-        
+
         foreach ($categories as $category) {
             $stmt->bindParam(':name', $category[0]);
             $stmt->bindParam(':description', $category[1]);
             $stmt->execute();
         }
-        
+
         // Default categories created silently
     }
 
@@ -3159,38 +3234,38 @@ try {
     try {
         // Check if expense_approvals table exists and has wrong foreign key
         $check_stmt = $conn->query("
-            SELECT 
+            SELECT
                 CONSTRAINT_NAME,
                 REFERENCED_TABLE_NAME
-            FROM information_schema.KEY_COLUMN_USAGE 
-            WHERE TABLE_SCHEMA = DATABASE() 
-            AND TABLE_NAME = 'expense_approvals' 
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'expense_approvals'
             AND REFERENCED_TABLE_NAME IS NOT NULL
             AND REFERENCED_TABLE_NAME != 'expenses'
         ");
         $wrong_constraints = $check_stmt->fetchAll(PDO::FETCH_ASSOC);
-        
+
         // Drop wrong foreign key constraints
         foreach ($wrong_constraints as $constraint) {
             if ($constraint['REFERENCED_TABLE_NAME'] === 'expense_entries') {
                 $conn->exec("ALTER TABLE expense_approvals DROP FOREIGN KEY {$constraint['CONSTRAINT_NAME']}");
             }
         }
-        
+
         // Ensure correct foreign key constraint exists
         $fk_check = $conn->query("
-            SELECT CONSTRAINT_NAME 
-            FROM information_schema.KEY_COLUMN_USAGE 
-            WHERE TABLE_SCHEMA = DATABASE() 
-            AND TABLE_NAME = 'expense_approvals' 
+            SELECT CONSTRAINT_NAME
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'expense_approvals'
             AND REFERENCED_TABLE_NAME = 'expenses'
             AND COLUMN_NAME = 'expense_id'
         ");
-        
+
         if ($fk_check->rowCount() == 0) {
             $conn->exec("
-                ALTER TABLE expense_approvals 
-                ADD CONSTRAINT fk_expense_approvals_expense_id 
+                ALTER TABLE expense_approvals
+                ADD CONSTRAINT fk_expense_approvals_expense_id
                 FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE
             ");
         }
@@ -3248,7 +3323,7 @@ try {
     // Insert default expense categories only if they don't exist
     $stmt = $conn->query("SELECT COUNT(*) as count FROM expense_categories");
     $existing_categories = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-    
+
     if ($existing_categories == 0) {
         $default_expense_categories = [
             ['Rent', 'Office and facility rent expenses', NULL, '#ef4444', 1, 1, 1],
@@ -3276,7 +3351,7 @@ try {
         while ($parent = $parent_stmt->fetch(PDO::FETCH_ASSOC)) {
             $parent_map[$parent['name']] = $parent['id'];
         }
-        
+
         $subcategories = [
             ['Electricity', 'Electricity bills', 'Utilities', '#f59e0b', 1, 1, 1],
             ['Water', 'Water and sewage bills', 'Utilities', '#f59e0b', 1, 1, 2],
@@ -3330,7 +3405,7 @@ try {
     // Insert default departments only if they don't exist
     $stmt = $conn->query("SELECT COUNT(*) as count FROM expense_departments");
     $existing_departments = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-    
+
     if ($existing_departments == 0) {
         $default_departments = [
             ['Administration', 'General administration and management', NULL, 50000, 'monthly'],
@@ -3376,26 +3451,26 @@ try {
     $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
                            SELECT 2, id FROM permissions WHERE name IN ('create_expenses', 'view_expense_reports')");
     $stmt->execute();
-    
+
     // CLEANUP: Remove old/deprecated permissions and fix categories
     try {
         // Remove old manage_products permission that conflicts with new granular permissions
         $stmt = $conn->prepare("DELETE FROM role_permissions WHERE permission_id IN (SELECT id FROM permissions WHERE name = 'manage_products')");
         $stmt->execute();
-        
+
         $stmt = $conn->prepare("DELETE FROM permissions WHERE name = 'manage_products'");
         $stmt->execute();
-        
+
         // Fix permission categories that might be incorrectly assigned
         $category_fixes = [
             // Move inventory-specific permissions to Inventory Management
             "UPDATE permissions SET category = 'Inventory Management' WHERE name = 'manage_inventory' AND category != 'Inventory Management'",
             "UPDATE permissions SET category = 'Inventory Management' WHERE name = 'manage_production_orders' AND category != 'Inventory Management'",
-            
+
             // Ensure all product-related permissions are in Product Management
             "UPDATE permissions SET category = 'Product Management' WHERE name LIKE '%product%' AND category != 'Product Management'",
             "UPDATE permissions SET category = 'Product Management' WHERE name = 'manage_categories' AND category != 'Product Management'",
-            
+
             // Fix other categories
             "UPDATE permissions SET category = 'User Management' WHERE name LIKE '%user%' AND category != 'User Management'",
             "UPDATE permissions SET category = 'Role Management' WHERE name LIKE '%role%' AND category != 'Role Management'",
@@ -3405,11 +3480,11 @@ try {
             "UPDATE permissions SET category = 'Reports & Analytics' WHERE name LIKE '%report%' AND category != 'Reports & Analytics'",
             "UPDATE permissions SET category = 'System Settings' WHERE name LIKE '%setting%' AND category != 'System Settings'"
         ];
-        
+
         foreach ($category_fixes as $fix) {
             $conn->exec($fix);
         }
-        
+
         // Update categories for specific BOM and expense permissions
         $specific_category_updates = [
             ['manage_boms', 'BOM Management'],
@@ -3418,13 +3493,13 @@ try {
             ['manage_production_orders', 'BOM Management'],
             ['view_production_reports', 'BOM Management'],
             ['manage_bom_costing', 'BOM Management'],
-            
+
             ['manage_auto_boms', 'Auto BOM Management'],
             ['view_auto_boms', 'Auto BOM Management'],
             ['manage_auto_bom_pricing', 'Auto BOM Management'],
             ['view_auto_bom_pricing', 'Auto BOM Management'],
             ['view_auto_bom_reports', 'Auto BOM Management'],
-            
+
             ['manage_expenses', 'Expense Management'],
             ['create_expenses', 'Expense Management'],
             ['edit_expenses', 'Expense Management'],
@@ -3436,32 +3511,32 @@ try {
             ['manage_expense_vendors', 'Expense Management'],
             ['manage_expense_budgets', 'Expense Management'],
             ['export_expenses', 'Expense Management'],
-            
+
             ['manage_expiry_tracker', 'Expiry Management'],
             ['view_expiry_alerts', 'Expiry Management'],
             ['handle_expired_items', 'Expiry Management'],
             ['configure_expiry_alerts', 'Expiry Management']
         ];
-        
+
         $category_update_stmt = $conn->prepare("UPDATE permissions SET category = ? WHERE name = ?");
         foreach ($specific_category_updates as $update) {
             $category_update_stmt->execute([$update[1], $update[0]]);
         }
-        
+
         // Clean up any duplicate permissions (keep the first one)
         $conn->exec("
             DELETE p1 FROM permissions p1
-            INNER JOIN permissions p2 
+            INNER JOIN permissions p2
             WHERE p1.id > p2.id AND p1.name = p2.name
         ");
-        
+
         // Re-assign all permissions to Admin role to ensure nothing is missing
         $conn->exec("DELETE FROM role_permissions WHERE role_id = 1");
         $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id) SELECT 1, id FROM permissions");
         $stmt->execute();
-        
+
         error_log("Permission cleanup completed successfully");
-        
+
     } catch (PDOException $e) {
         // Log cleanup error but don't fail the entire database initialization
         error_log("Warning: Permission cleanup failed: " . $e->getMessage());
@@ -3667,19 +3742,19 @@ try {
         ['activate_boms', 'Activate/deactivate Bill of Materials', 'BOM Management'],
         ['approve_boms', 'Approve BOM changes and production orders', 'BOM Management'],
         ['clone_boms', 'Clone existing Bill of Materials', 'BOM Management'],
-        
+
         // BOM Version Control
         ['manage_bom_versions', 'Create and manage BOM versions', 'BOM Management'],
         ['view_bom_versions', 'View BOM version history', 'BOM Management'],
         ['compare_bom_versions', 'Compare different BOM versions', 'BOM Management'],
         ['rollback_bom_versions', 'Rollback to previous BOM versions', 'BOM Management'],
-        
+
         // BOM Components Management
         ['manage_bom_components', 'Add, edit, and remove BOM components', 'BOM Management'],
         ['view_bom_components', 'View BOM component details', 'BOM Management'],
         ['manage_bom_alternatives', 'Manage alternative components in BOMs', 'BOM Management'],
         ['calculate_bom_requirements', 'Calculate material requirements for BOMs', 'BOM Management'],
-        
+
         // BOM Costing and Pricing
         ['manage_bom_costing', 'Manage BOM costing and pricing calculations', 'BOM Management'],
         ['view_bom_costing', 'View BOM cost breakdowns and analysis', 'BOM Management'],
@@ -3687,7 +3762,7 @@ try {
         ['manage_bom_labor_costs', 'Manage labor costs for BOMs', 'BOM Management'],
         ['manage_bom_overhead_costs', 'Manage overhead costs for BOMs', 'BOM Management'],
         ['calculate_bom_margins', 'Calculate profit margins for BOMs', 'BOM Management'],
-        
+
         // Production Orders
         ['create_production_orders', 'Create new production orders from BOMs', 'BOM Management'],
         ['edit_production_orders', 'Edit existing production orders', 'BOM Management'],
@@ -3699,13 +3774,13 @@ try {
         ['complete_production_orders', 'Mark production orders as completed', 'BOM Management'],
         ['cancel_production_orders', 'Cancel production orders', 'BOM Management'],
         ['assign_production_orders', 'Assign production orders to team members', 'BOM Management'],
-        
+
         // Production Order Materials
         ['allocate_production_materials', 'Allocate materials to production orders', 'BOM Management'],
         ['issue_production_materials', 'Issue materials for production', 'BOM Management'],
         ['return_production_materials', 'Return unused materials from production', 'BOM Management'],
         ['track_production_consumption', 'Track actual material consumption', 'BOM Management'],
-        
+
         // BOM Analytics and Reporting
         ['view_bom_reports', 'Access BOM analytics and reports', 'BOM Management'],
         ['view_production_reports', 'View production and BOM reports', 'BOM Management'],
@@ -3714,12 +3789,12 @@ try {
         ['export_bom_reports', 'Export BOM reports and data', 'BOM Management'],
         ['view_material_requirements', 'View material requirement planning reports', 'BOM Management'],
         ['view_production_capacity', 'View production capacity and scheduling reports', 'BOM Management'],
-        
+
         // BOM Quality Control
         ['manage_bom_quality_control', 'Manage BOM quality control standards', 'BOM Management'],
         ['view_bom_quality_metrics', 'View BOM quality control metrics', 'BOM Management'],
         ['manage_bom_specifications', 'Manage BOM product specifications', 'BOM Management'],
-        
+
         // BOM System Administration
         ['configure_bom_settings', 'Configure BOM system settings', 'BOM Management'],
         ['manage_bom_templates', 'Create and manage BOM templates', 'BOM Management'],
@@ -3727,12 +3802,12 @@ try {
         ['export_boms', 'Export BOM configurations and data', 'BOM Management'],
         ['audit_bom_changes', 'View BOM change logs and audit trails', 'BOM Management'],
         ['backup_bom_data', 'Backup and restore BOM data', 'BOM Management'],
-        
+
         // BOM Integration
         ['sync_bom_inventory', 'Synchronize BOM components with inventory', 'BOM Management'],
         ['integrate_bom_purchasing', 'Integrate BOMs with purchasing system', 'BOM Management'],
         ['manage_bom_suppliers', 'Manage supplier assignments for BOM components', 'BOM Management'],
-        
+
         // Advanced BOM Features
         ['manage_multilevel_boms', 'Manage multi-level/nested BOMs', 'BOM Management'],
         ['manage_bom_routings', 'Manage production routings and sequences', 'BOM Management'],
@@ -3899,19 +3974,19 @@ try {
         ['view_auto_boms', 'View Auto BOM configurations and units', 'Auto BOM Management'],
         ['activate_auto_boms', 'Activate/deactivate Auto BOM configurations', 'Auto BOM Management'],
         ['approve_auto_boms', 'Approve Auto BOM configurations for production use', 'Auto BOM Management'],
-        
+
         // Auto BOM Configuration Management
         ['manage_auto_bom_configs', 'Manage Auto BOM configuration settings', 'Auto BOM Management'],
         ['clone_auto_bom_configs', 'Clone existing Auto BOM configurations', 'Auto BOM Management'],
         ['version_auto_bom_configs', 'Create and manage Auto BOM configuration versions', 'Auto BOM Management'],
         ['export_auto_bom_configs', 'Export Auto BOM configuration data', 'Auto BOM Management'],
         ['import_auto_bom_configs', 'Import Auto BOM configuration data', 'Auto BOM Management'],
-        
+
         // Product Family Management
         ['manage_product_families', 'Create, edit, and manage product families', 'Auto BOM Management'],
         ['view_product_families', 'View product families and their configurations', 'Auto BOM Management'],
         ['assign_product_families', 'Assign products to product families', 'Auto BOM Management'],
-        
+
         // Auto BOM Selling Units
         ['create_auto_bom_units', 'Create new Auto BOM selling units', 'Auto BOM Management'],
         ['edit_auto_bom_units', 'Edit existing Auto BOM selling units', 'Auto BOM Management'],
@@ -3919,7 +3994,7 @@ try {
         ['view_auto_bom_units', 'View Auto BOM selling units', 'Auto BOM Management'],
         ['manage_auto_bom_unit_skus', 'Generate and manage SKUs for Auto BOM units', 'Auto BOM Management'],
         ['manage_auto_bom_unit_barcodes', 'Generate and manage barcodes for Auto BOM units', 'Auto BOM Management'],
-        
+
         // Auto BOM Pricing Management
         ['view_auto_bom_pricing', 'View pricing configurations for Auto BOM units', 'Auto BOM Management'],
         ['edit_auto_bom_pricing', 'Edit pricing for Auto BOM units', 'Auto BOM Management'],
@@ -3928,26 +4003,26 @@ try {
         ['manage_auto_bom_markup', 'Manage markup percentages and profit margins', 'Auto BOM Management'],
         ['manage_auto_bom_discounts', 'Manage Auto BOM unit discounts and promotions', 'Auto BOM Management'],
         ['bulk_update_auto_bom_pricing', 'Perform bulk price updates on Auto BOM units', 'Auto BOM Management'],
-        
+
         // Auto BOM Inventory Management
         ['view_auto_bom_inventory', 'View inventory levels for Auto BOM units', 'Auto BOM Management'],
         ['manage_auto_bom_inventory', 'Manage inventory tracking for Auto BOM units', 'Auto BOM Management'],
         ['track_auto_bom_stock_levels', 'Monitor and track Auto BOM unit stock levels', 'Auto BOM Management'],
         ['manage_auto_bom_reorder_points', 'Set and manage reorder points for Auto BOM units', 'Auto BOM Management'],
-        
+
         // Auto BOM Analytics and Reporting
         ['view_auto_bom_reports', 'Access Auto BOM analytics and reports', 'Auto BOM Management'],
         ['view_auto_bom_performance', 'View Auto BOM unit sales and performance metrics', 'Auto BOM Management'],
         ['view_auto_bom_profitability', 'View Auto BOM unit profitability analysis', 'Auto BOM Management'],
         ['export_auto_bom_reports', 'Export Auto BOM reports and analytics', 'Auto BOM Management'],
         ['view_auto_bom_conversion_rates', 'View base product to selling unit conversion analytics', 'Auto BOM Management'],
-        
+
         // Auto BOM System Administration
         ['configure_auto_bom_settings', 'Configure Auto BOM system settings', 'Auto BOM Management'],
         ['manage_auto_bom_templates', 'Create and manage Auto BOM configuration templates', 'Auto BOM Management'],
         ['audit_auto_bom_changes', 'View Auto BOM change logs and audit trails', 'Auto BOM Management'],
         ['backup_auto_bom_data', 'Backup and restore Auto BOM configuration data', 'Auto BOM Management'],
-        
+
         // Auto BOM Integration
         ['sync_auto_bom_inventory', 'Synchronize Auto BOM units with main inventory system', 'Auto BOM Management'],
         ['integrate_auto_bom_pos', 'Integrate Auto BOM units with POS system', 'Auto BOM Management'],
@@ -3966,7 +4041,7 @@ try {
     $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
                            SELECT 1, id FROM permissions WHERE category = 'Auto BOM Management'");
     $stmt->execute();
-    
+
     // Assign limited Auto BOM permissions to Cashier role (role_id = 2)
     $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
                            SELECT 2, id FROM permissions WHERE name IN ('view_auto_boms', 'view_auto_bom_units', 'view_auto_bom_pricing', 'view_auto_bom_reports')");
@@ -3975,19 +4050,19 @@ try {
     // Database initialized silently
     // Store connection status for login page
     $GLOBALS['db_connected'] = true;
-    
+
     // Add helper functions for error handling and validation
     if (!function_exists('validateOrderCreation')) {
         function validateOrderCreation($conn, $supplier_id = null, $product_ids = []) {
             $errors = [];
             $warnings = [];
-            
+
             // Check if supplier exists and is active
             if ($supplier_id) {
                 $stmt = $conn->prepare("SELECT id, name, is_active, supplier_block_note FROM suppliers WHERE id = ?");
                 $stmt->execute([$supplier_id]);
                 $supplier = $stmt->fetch(PDO::FETCH_ASSOC);
-                
+
                 if (!$supplier) {
                     $errors[] = "Supplier not found (ID: $supplier_id)";
                 } elseif (!$supplier['is_active']) {
@@ -3997,12 +4072,12 @@ try {
                     }
                 }
             }
-            
+
             // Check products if provided
             if (!empty($product_ids)) {
                 $placeholders = str_repeat('?,', count($product_ids) - 1) . '?';
                 $stmt = $conn->prepare("
-                    SELECT p.id, p.name, p.status, p.block_reason, p.supplier_id, 
+                    SELECT p.id, p.name, p.status, p.block_reason, p.supplier_id,
                            s.name as supplier_name, s.is_active as supplier_active
                     FROM products p
                     LEFT JOIN suppliers s ON p.supplier_id = s.id
@@ -4010,7 +4085,7 @@ try {
                 ");
                 $stmt->execute($product_ids);
                 $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                
+
                 foreach ($products as $product) {
                     if ($product['status'] === 'blocked') {
                         $errors[] = "Product '{$product['name']}' is blocked";
@@ -4020,13 +4095,13 @@ try {
                     } elseif ($product['status'] === 'inactive') {
                         $errors[] = "Product '{$product['name']}' is inactive";
                     }
-                    
+
                     if ($product['supplier_id'] && !$product['supplier_active']) {
                         $errors[] = "Product '{$product['name']}' is assigned to inactive supplier '{$product['supplier_name']}'";
                     }
                 }
             }
-            
+
             return [
                 'valid' => empty($errors),
                 'errors' => $errors,
@@ -4034,7 +4109,7 @@ try {
             ];
         }
     }
-    
+
     if (!function_exists('getOrderCreationStatus')) {
         function getOrderCreationStatus($conn) {
             $status = [
@@ -4045,32 +4120,32 @@ try {
                 'product_count' => 0,
                 'category_count' => 0
             ];
-            
+
             try {
                 // Count active suppliers
                 $stmt = $conn->query("SELECT COUNT(*) as count FROM suppliers WHERE is_active = 1");
                 $status['supplier_count'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-                
+
                 if ($status['supplier_count'] == 0) {
                     $status['issues'][] = "No active suppliers found. Add at least one active supplier to create orders.";
                 }
-                
+
                 // Count products with suppliers
                 $stmt = $conn->query("SELECT COUNT(*) as count FROM products WHERE supplier_id IS NOT NULL AND status = 'active'");
                 $status['product_count'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-                
+
                 if ($status['product_count'] == 0) {
                     $status['issues'][] = "No products assigned to suppliers. Assign products to suppliers to create orders.";
                 }
-                
+
                 // Count categories
                 $stmt = $conn->query("SELECT COUNT(*) as count FROM categories");
                 $status['category_count'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-                
+
                 if ($status['category_count'] == 0) {
                     $status['issues'][] = "No product categories found. Add at least one category.";
                 }
-                
+
                 // Check for blocked/inactive products
                 $stmt = $conn->query("
                     SELECT COUNT(*) as count FROM products p
@@ -4078,21 +4153,21 @@ try {
                     WHERE p.status IN ('blocked', 'inactive') OR s.is_active = 0
                 ");
                 $blocked_count = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-                
+
                 if ($blocked_count > 0) {
                     $status['warnings'][] = "$blocked_count products are blocked, inactive, or assigned to inactive suppliers.";
                 }
-                
+
                 $status['ready'] = empty($status['issues']);
-                
+
             } catch (PDOException $e) {
                 $status['issues'][] = "Database error: " . $e->getMessage();
             }
-            
+
             return $status;
         }
     }
-    
+
     // Migration: Ensure is_tax_deductible column exists in expense_categories table
     try {
         $stmt = $conn->prepare("SHOW COLUMNS FROM expense_categories LIKE 'is_tax_deductible'");
@@ -4147,13 +4222,13 @@ try {
         // Log migration error but don't fail the entire database initialization
         error_log("Warning: Could not add credit_limit/current_balance columns to expense_vendors: " . $e->getMessage());
     }
-    
+
     // Enhanced migration logic to ensure database compatibility
     try {
         // Check and update sale_items table for Auto BOM compatibility
         $stmt = $conn->query("DESCRIBE sale_items");
         $sale_items_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        
+
         // Add missing columns to sale_items table if they don't exist
         $missing_sale_items_columns = [
             'selling_unit_id' => 'INT DEFAULT NULL COMMENT "Auto BOM selling unit ID"',
@@ -4163,21 +4238,21 @@ try {
             'is_auto_bom' => 'TINYINT(1) DEFAULT 0 COMMENT "Whether this is an Auto BOM item"',
             'base_quantity_deducted' => 'DECIMAL(10,3) DEFAULT 0 COMMENT "Base quantity deducted from inventory"'
         ];
-        
+
         foreach ($missing_sale_items_columns as $column_name => $column_def) {
             if (!in_array($column_name, $sale_items_columns)) {
                 $conn->exec("ALTER TABLE sale_items ADD COLUMN $column_name $column_def");
                 error_log("Added missing column: sale_items.$column_name");
             }
         }
-        
+
         // Add foreign key for selling_unit_id if it doesn't exist
         try {
             $conn->exec("ALTER TABLE sale_items ADD CONSTRAINT fk_sale_items_selling_unit_id FOREIGN KEY (selling_unit_id) REFERENCES auto_bom_selling_units(id) ON DELETE SET NULL");
         } catch (PDOException $e) {
             // Foreign key might already exist, continue silently
         }
-        
+
         // Add indexes for better performance
         try {
             $conn->exec("CREATE INDEX idx_sale_items_selling_unit ON sale_items(selling_unit_id)");
@@ -4189,47 +4264,47 @@ try {
         } catch (PDOException $e) {
             // Index might already exist, continue silently
         }
-        
+
         // Update existing sale_items data
         $conn->exec("
-            UPDATE sale_items si 
-            JOIN products p ON si.product_id = p.id 
-            SET si.product_name = p.name 
+            UPDATE sale_items si
+            JOIN products p ON si.product_id = p.id
+            SET si.product_name = p.name
             WHERE si.product_name = '' OR si.product_name IS NULL
         ");
-        
+
         $conn->exec("
-            UPDATE sale_items 
-            SET unit_price = price, 
-                total_price = (price * quantity) 
+            UPDATE sale_items
+            SET unit_price = price,
+                total_price = (price * quantity)
             WHERE unit_price = 0 OR total_price = 0
         ");
-        
+
         // Check and update sales table for cash handling
         $stmt = $conn->query("DESCRIBE sales");
         $sales_columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        
+
         $missing_sales_columns = [
             'cash_received' => 'DECIMAL(10,2) DEFAULT NULL COMMENT "Cash amount received"',
-            'change_amount' => 'DECIMAL(10,2) DEFAULT 0 COMMENT "Change amount given"', 
+            'change_amount' => 'DECIMAL(10,2) DEFAULT 0 COMMENT "Change amount given"',
             'amount_given' => 'DECIMAL(10,2) DEFAULT NULL COMMENT "Total amount given by customer"',
             'balance_due' => 'DECIMAL(10,2) DEFAULT 0 COMMENT "Remaining balance due"'
         ];
-        
+
         foreach ($missing_sales_columns as $column_name => $column_def) {
             if (!in_array($column_name, $sales_columns)) {
                 $conn->exec("ALTER TABLE sales ADD COLUMN $column_name $column_def");
                 error_log("Added missing column: sales.$column_name");
             }
         }
-        
+
         // Add performance indexes for sales table
         try {
             $conn->exec("CREATE INDEX idx_sales_cash_received ON sales(cash_received)");
         } catch (PDOException $e) {
             // Index might already exist, continue silently
         }
-        
+
         // Update price column in sale_items to have default value
         if (in_array('price', $sale_items_columns)) {
             try {
@@ -4239,25 +4314,25 @@ try {
                 error_log("Warning: Could not modify price column: " . $e->getMessage());
             }
         }
-        
+
         // Update product_id column in sale_items to allow NULL values
         if (in_array('product_id', $sale_items_columns)) {
             try {
                 // Check if column already allows NULL
                 $checkStmt = $conn->query("SHOW COLUMNS FROM sale_items LIKE 'product_id'");
                 $columnInfo = $checkStmt->fetch(PDO::FETCH_ASSOC);
-                
+
                 if ($columnInfo && $columnInfo['Null'] === 'NO') {
                     error_log("product_id column does not allow NULL, applying migration...");
-                    
+
                     // First, drop the existing foreign key constraint
                     $conn->exec("ALTER TABLE sale_items DROP FOREIGN KEY IF EXISTS sale_items_ibfk_2");
                     error_log("Dropped existing foreign key constraint on sale_items.product_id");
-                    
+
                     // Modify the column to allow NULL values
                     $conn->exec("ALTER TABLE sale_items MODIFY COLUMN product_id INT NULL");
                     error_log("Updated sale_items.product_id to allow NULL values");
-                    
+
                     // Recreate the foreign key constraint with ON DELETE SET NULL
                     $conn->exec("ALTER TABLE sale_items ADD CONSTRAINT fk_sale_items_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL");
                     error_log("Recreated foreign key constraint on sale_items.product_id with ON DELETE SET NULL");
@@ -4269,12 +4344,12 @@ try {
                 error_log("Warning: Could not modify product_id column: " . $e->getMessage());
             }
         }
-        
+
     } catch (Exception $e) {
         // Log migration errors but don't fail database initialization
         error_log("Database migration warning: " . $e->getMessage());
     }
-    
+
     // Create receipt_reprint_log table for tracking receipt reprints
     $conn->exec("
         CREATE TABLE IF NOT EXISTS receipt_reprint_log (
@@ -4294,7 +4369,7 @@ try {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     ");
-    
+
 
     // Add Employee ID settings
     $conn->exec("
@@ -4322,12 +4397,12 @@ try {
     } catch (PDOException $e) {
         // Column might already exist
     }
-    
+
 
     // ========================================
     // BUDGET MANAGEMENT SYSTEM TABLES
     // ========================================
-    
+
     // Create budget_categories table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS budget_categories (
@@ -4380,7 +4455,7 @@ try {
             actual_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
             variance_amount DECIMAL(15,2) GENERATED ALWAYS AS (actual_amount - budgeted_amount) STORED,
             variance_percentage DECIMAL(8,2) GENERATED ALWAYS AS (
-                CASE 
+                CASE
                     WHEN budgeted_amount = 0 THEN NULL
                     ELSE ((actual_amount - budgeted_amount) / budgeted_amount) * 100
                 END
@@ -4552,7 +4627,7 @@ try {
     // ========================================
     // FINANCE DASHBOARD PERMISSIONS
     // ========================================
-    
+
     // Add finance dashboard permissions
     $conn->exec("
         INSERT IGNORE INTO permissions (name, description) VALUES
@@ -4569,7 +4644,7 @@ try {
     $conn->exec("
         INSERT IGNORE INTO role_permissions (role_id, permission_id)
         SELECT 1, id FROM permissions WHERE name IN (
-            'view_finance', 'manage_budgets', 'view_budgets', 'approve_budgets', 
+            'view_finance', 'manage_budgets', 'view_budgets', 'approve_budgets',
             'manage_budget_categories', 'view_financial_reports', 'manage_budget_settings'
         )
     ");
@@ -4595,7 +4670,7 @@ try {
     ");
 
     // ===== RECONCILIATION MODULE TABLES =====
-    
+
     // Create bank_accounts table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS bank_accounts (
@@ -4763,8 +4838,8 @@ try {
     // Remove sales section from menu_sections if it exists (run every time)
     try {
         $conn->exec("DELETE FROM menu_sections WHERE section_key = 'sales'");
-        $conn->exec("DELETE rma FROM role_menu_access rma 
-                     JOIN menu_sections ms ON rma.menu_section_id = ms.id 
+        $conn->exec("DELETE rma FROM role_menu_access rma
+                     JOIN menu_sections ms ON rma.menu_section_id = ms.id
                      WHERE ms.section_key = 'sales'");
     } catch (Exception $e) {
         // Ignore errors if tables don't exist yet
@@ -4808,17 +4883,40 @@ try {
     ];
 
     $stmt = $conn->prepare("
-        INSERT IGNORE INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order) 
+        INSERT IGNORE INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     foreach ($default_payment_types as $type) {
         $stmt->execute($type);
     }
 
+    // Final safeguard: restrict Cashier (role_id=2) to minimal permission set
+    try {
+        $allowed = [
+            'view_dashboard',
+            'process_sales',
+            'view_customers'
+        ];
+        $placeholders = "'" . implode("','", $allowed) . "'";
+
+        // Remove any extra permissions accidentally granted to Cashier
+        $conn->exec("DELETE rp FROM role_permissions rp
+                     LEFT JOIN permissions p ON rp.permission_id = p.id
+                     WHERE rp.role_id = 2 AND (p.name IS NULL OR p.name NOT IN ($placeholders))");
+
+        // Ensure the minimal allowed set is present
+        $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
+                                SELECT 2, id FROM permissions WHERE name IN ($placeholders)");
+        $stmt->execute();
+    } catch (PDOException $e) {
+        error_log('Cashier minimal permission safeguard failed: ' . $e->getMessage());
+    }
+
+
     // Update bank_transactions table to include payment type
     try {
         $conn->exec("
-            ALTER TABLE bank_transactions 
+            ALTER TABLE bank_transactions
             ADD COLUMN payment_type_id INT DEFAULT NULL AFTER amount,
             ADD COLUMN payment_reference VARCHAR(255) DEFAULT NULL AFTER payment_type_id,
             ADD INDEX idx_payment_type_id (payment_type_id),
@@ -4831,7 +4929,7 @@ try {
     // Update transaction_matches table to include payment type
     try {
         $conn->exec("
-            ALTER TABLE transaction_matches 
+            ALTER TABLE transaction_matches
             ADD COLUMN payment_type_id INT DEFAULT NULL AFTER match_amount,
             ADD COLUMN payment_reference VARCHAR(255) DEFAULT NULL AFTER payment_type_id,
             ADD INDEX idx_payment_type_id (payment_type_id),
@@ -4896,7 +4994,7 @@ try {
     ];
 
     $stmt = $conn->prepare("
-        INSERT IGNORE INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order) 
+        INSERT IGNORE INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     foreach ($default_payment_types as $type) {
@@ -4906,7 +5004,7 @@ try {
     // Update bank_transactions table to include payment type
     try {
         $conn->exec("
-            ALTER TABLE bank_transactions 
+            ALTER TABLE bank_transactions
             ADD COLUMN payment_type_id INT DEFAULT NULL AFTER amount,
             ADD COLUMN payment_reference VARCHAR(255) DEFAULT NULL AFTER payment_type_id,
             ADD INDEX idx_payment_type_id (payment_type_id),
@@ -4919,7 +5017,7 @@ try {
     // Update transaction_matches table to include payment type
     try {
         $conn->exec("
-            ALTER TABLE transaction_matches 
+            ALTER TABLE transaction_matches
             ADD COLUMN payment_type_id INT DEFAULT NULL AFTER match_amount,
             ADD COLUMN payment_reference VARCHAR(255) DEFAULT NULL AFTER payment_type_id,
             ADD INDEX idx_payment_type_id (payment_type_id),
@@ -5066,7 +5164,7 @@ try {
     ];
 
     $stmt = $conn->prepare("
-        INSERT IGNORE INTO register_tills (till_name, till_code, location, opening_balance, current_balance, assigned_user_id, is_active) 
+        INSERT IGNORE INTO register_tills (till_name, till_code, location, opening_balance, current_balance, assigned_user_id, is_active)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     ");
     foreach ($default_tills as $till) {
@@ -5089,7 +5187,7 @@ try {
     ];
 
     $stmt = $conn->prepare("
-        INSERT IGNORE INTO pos_settings (setting_key, setting_value, setting_type, category, description, is_active) 
+        INSERT IGNORE INTO pos_settings (setting_key, setting_value, setting_type, category, description, is_active)
         VALUES (?, ?, ?, ?, ?, ?)
     ");
     foreach ($default_pos_settings as $setting) {
@@ -5132,54 +5230,54 @@ try {
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD COLUMN approval_status ENUM('pending', 'approved', 'rejected') DEFAULT 'approved'");
         }
-        
+
         // Check if approved_by column exists
         $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'approved_by'");
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD COLUMN approved_by INT DEFAULT NULL");
         }
-        
+
         // Check if approved_at column exists
         $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'approved_at'");
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD COLUMN approved_at TIMESTAMP NULL");
         }
-        
+
         // Check if rejection_reason column exists
         $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'rejection_reason'");
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD COLUMN rejection_reason TEXT NULL");
         }
-        
+
         // Check if source column exists
         $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'source'");
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD COLUMN source ENUM('purchase', 'manual', 'welcome', 'bonus', 'adjustment') DEFAULT 'manual'");
         }
-        
+
         // Add foreign key constraint for approved_by if it doesn't exist
         $result = $conn->query("
-            SELECT CONSTRAINT_NAME 
-            FROM information_schema.KEY_COLUMN_USAGE 
-            WHERE TABLE_NAME = 'loyalty_points' 
-            AND COLUMN_NAME = 'approved_by' 
+            SELECT CONSTRAINT_NAME
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_NAME = 'loyalty_points'
+            AND COLUMN_NAME = 'approved_by'
             AND CONSTRAINT_NAME != 'PRIMARY'
         ");
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD CONSTRAINT fk_loyalty_points_approved_by FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL");
         }
-        
+
         // Add indexes if they don't exist
         $result = $conn->query("SHOW INDEX FROM loyalty_points WHERE Key_name = 'idx_approval_status'");
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD INDEX idx_approval_status (approval_status)");
         }
-        
+
         $result = $conn->query("SHOW INDEX FROM loyalty_points WHERE Key_name = 'idx_source'");
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD INDEX idx_source (source)");
         }
-        
+
     } catch (PDOException $e) {
         // Log error but don't stop execution
         error_log("Error adding loyalty_points columns: " . $e->getMessage());
@@ -5200,13 +5298,13 @@ try {
     try {
         // Set approval_status to 'approved' for existing records that don't have it set
         $conn->exec("UPDATE loyalty_points SET approval_status = 'approved' WHERE approval_status IS NULL");
-        
+
         // Set source to 'manual' for existing records that don't have it set
         $conn->exec("UPDATE loyalty_points SET source = 'manual' WHERE source IS NULL");
-        
+
         // Set approved_at to created_at for existing approved records
         $conn->exec("UPDATE loyalty_points SET approved_at = created_at WHERE approval_status = 'approved' AND approved_at IS NULL");
-        
+
     } catch (PDOException $e) {
         // Log error but don't stop execution
         error_log("Error updating existing loyalty_points records: " . $e->getMessage());
@@ -5281,7 +5379,7 @@ try {
         $stmt->execute($reward);
     }
 
-    
+
 } catch(PDOException $e) {
     // Store connection error for login page
     $GLOBALS['db_connected'] = false;
@@ -5295,12 +5393,12 @@ function getPaymentMethods($conn) {
     try {
         // Get payment methods from database
         $stmt = $conn->query("
-            SELECT * FROM payment_types 
-            WHERE is_active = 1 
+            SELECT * FROM payment_types
+            WHERE is_active = 1
             ORDER BY sort_order, display_name
         ");
         $payment_methods = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
+
         // Add loyalty points as a payment method if not already present
         $hasLoyaltyPoints = false;
         foreach ($payment_methods as $method) {
@@ -5309,7 +5407,7 @@ function getPaymentMethods($conn) {
                 break;
             }
         }
-        
+
         if (!$hasLoyaltyPoints) {
             $payment_methods[] = [
                 'id' => 999,
@@ -5324,7 +5422,7 @@ function getPaymentMethods($conn) {
                 'sort_order' => 999
             ];
         }
-        
+
         // Ensure cash is present
         $hasCash = false;
         foreach ($payment_methods as $method) {
@@ -5333,7 +5431,7 @@ function getPaymentMethods($conn) {
                 break;
             }
         }
-        
+
         if (!$hasCash) {
             array_unshift($payment_methods, [
                 'id' => 1,
@@ -5348,9 +5446,9 @@ function getPaymentMethods($conn) {
                 'sort_order' => 1
             ]);
         }
-        
+
         return $payment_methods;
-        
+
     } catch (PDOException $e) {
         error_log("Error getting payment methods: " . $e->getMessage());
         return [];
@@ -5363,7 +5461,7 @@ function getPaymentMethods($conn) {
 function getPaymentMethodByName($conn, $name) {
     try {
         $stmt = $conn->prepare("
-            SELECT * FROM payment_types 
+            SELECT * FROM payment_types
             WHERE name = :name AND is_active = 1
         ");
         $stmt->execute([':name' => $name]);
@@ -5393,7 +5491,7 @@ function savePaymentMethod($conn, $data) {
             sort_order = VALUES(sort_order),
             updated_at = CURRENT_TIMESTAMP
         ");
-        
+
         return $stmt->execute([
             ':name' => $data['name'],
             ':display_name' => $data['display_name'],
@@ -5405,7 +5503,7 @@ function savePaymentMethod($conn, $data) {
             ':requires_reconciliation' => $data['requires_reconciliation'] ?? 1,
             ':sort_order' => $data['sort_order'] ?? 0
         ]);
-        
+
     } catch (PDOException $e) {
         error_log("Error saving payment method: " . $e->getMessage());
         return false;
@@ -5418,8 +5516,8 @@ function savePaymentMethod($conn, $data) {
 function getHeldTransactionsCount($conn, $till_id) {
     try {
         $stmt = $conn->prepare("
-            SELECT COUNT(*) as count 
-            FROM held_transactions 
+            SELECT COUNT(*) as count
+            FROM held_transactions
             WHERE till_id = ? AND status = 'held'
         ");
         $stmt->execute([$till_id]);

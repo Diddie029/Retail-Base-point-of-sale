@@ -65,7 +65,8 @@ $stats_query = "
         SUM(total_amount) as total_voided_amount,
         COUNT(CASE WHEN void_type = 'product' THEN 1 END) as product_voids,
         COUNT(CASE WHEN void_type = 'cart' THEN 1 END) as cart_voids,
-        COUNT(CASE WHEN void_type = 'sale' THEN 1 END) as sale_voids
+        COUNT(CASE WHEN void_type = 'sale' THEN 1 END) as sale_voids,
+        COUNT(CASE WHEN void_type = 'held_transaction' THEN 1 END) as held_transaction_voids
     FROM void_transactions vt
     WHERE $where_clause
 ";
@@ -206,6 +207,7 @@ $users = $users_stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <option value="product" <?php echo $void_type === 'product' ? 'selected' : ''; ?>>Product</option>
                                 <option value="cart" <?php echo $void_type === 'cart' ? 'selected' : ''; ?>>Cart</option>
                                 <option value="sale" <?php echo $void_type === 'sale' ? 'selected' : ''; ?>>Sale</option>
+                                <option value="held_transaction" <?php echo $void_type === 'held_transaction' ? 'selected' : ''; ?>>Held Transaction</option>
                             </select>
                         </div>
                         <div class="col-md-2">

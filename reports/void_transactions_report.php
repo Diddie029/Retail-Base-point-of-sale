@@ -88,8 +88,9 @@ $summary_stmt = $conn->prepare("
         COUNT(DISTINCT vt.user_id) as cashiers_involved,
         SUM(vt.total_amount) as total_voided_amount,
         AVG(vt.total_amount) as avg_void_amount,
-        COUNT(CASE WHEN vt.void_type = 'cart' THEN 1 END) as cart_voids,
-        COUNT(CASE WHEN vt.void_type = 'product' THEN 1 END) as product_voids
+    COUNT(CASE WHEN vt.void_type = 'cart' THEN 1 END) as cart_voids,
+    COUNT(CASE WHEN vt.void_type = 'product' THEN 1 END) as product_voids,
+    COUNT(CASE WHEN vt.void_type = 'held_transaction' THEN 1 END) as held_transaction_voids
     FROM void_transactions vt
     WHERE $where_clause
 ");

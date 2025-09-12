@@ -263,6 +263,24 @@ body {
     font-size: 0.75rem;
 }
 
+.btn-rounded {
+    border-radius: 999px;
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+
+.copy-sku {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: transparent;
+    border: 1px dashed #d1d5db;
+    padding: 0.35rem 0.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.copy-sku i { color: var(--secondary-color); }
+
 /* Product Table */
 .product-table {
     background: white;
