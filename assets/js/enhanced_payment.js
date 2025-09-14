@@ -620,6 +620,7 @@ class PaymentProcessor {
             subtotal: subtotal,
             tax: tax,
             items: this.transactionData,
+            quotation_id: window.currentQuotationId || null,
             timestamp: new Date().toISOString(),
             notes: document.getElementById('paymentNotes')?.value || '',
             // Customer information

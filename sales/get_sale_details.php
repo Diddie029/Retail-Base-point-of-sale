@@ -22,9 +22,12 @@ try {
     $sale_query = "
         SELECT 
             s.*,
-            u.username as cashier_name
+            u.username as cashier_name,
+            i.id as invoice_id,
+            i.invoice_number
         FROM sales s
         LEFT JOIN users u ON s.user_id = u.id
+        LEFT JOIN invoices i ON s.id = i.sale_id
         WHERE s.id = ?
     ";
     

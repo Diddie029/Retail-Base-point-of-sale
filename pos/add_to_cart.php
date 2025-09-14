@@ -19,9 +19,20 @@ header('Content-Type: application/json');
 try {
     // Sanitize and validate input
     $product_id = filter_var($_POST['product_id'] ?? null, FILTER_VALIDATE_INT);
-    $quantity = filter_var($_POST['quantity'] ?? 1, FILTER_VALIDATE_INT);
-    
-    if ($product_id === false || $quantity === false) {
+    $quantity_raw = $_POST['quantity'] ?? 1;
+
+    // Handle decimal quantities by converting to integer (floor value)
+    if (is_numeric($quantity_raw)) {
+        $quantity = (int)floor((float)$quantity_raw);
+    } else {
+        $quantity = filter_var($quantity_raw, FILTER_VALIDATE_INT);
+    }
+
+    // Debug logging
+    error_log("add_to_cart.php called with product_id: $product_id, quantity_raw: $quantity_raw, quantity: $quantity");
+
+    if ($product_id === false || $quantity <= 0) {
+        error_log("Invalid input parameters: product_id=$product_id, quantity=$quantity, quantity_raw=$quantity_raw");
         throw new Exception('Invalid input parameters');
     }
     
@@ -36,13 +47,18 @@ try {
 
     // Get product details
     $stmt = $conn->prepare("
-        SELECT p.*, c.name as category_name 
-        FROM products p 
-        LEFT JOIN categories c ON p.category_id = c.id 
+        SELECT p.*, c.name as category_name
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
         WHERE p.id = ? AND p.status = 'active'
     ");
     $stmt->execute([$product_id]);
     $product = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    error_log("Product query result for ID $product_id: " . ($product ? 'found' : 'not found'));
+    if ($product) {
+        error_log("Product details: " . json_encode($product));
+    }
 
     if (!$product) {
         throw new Exception('Product not found or inactive');
@@ -107,6 +123,7 @@ try {
 
 } catch (Exception $e) {
     error_log("Add to cart error: " . $e->getMessage());
+    error_log("Stack trace: " . $e->getTraceAsString());
     http_response_code(400);
     echo json_encode([
         'success' => false,

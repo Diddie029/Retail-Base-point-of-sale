@@ -88,18 +88,32 @@ $total_pages = ceil($total_records / $per_page);
 // Get sales data with pagination
 $sales_query = "
     SELECT 
-        s.*,
-        u.username as cashier_name,
-        COUNT(si.id) as item_count,
-        GROUP_CONCAT(DISTINCT p.name SEPARATOR ', ') as products
-    FROM sales s 
-    LEFT JOIN users u ON s.user_id = u.id
-    LEFT JOIN sale_items si ON s.id = si.sale_id
-    LEFT JOIN products p ON si.product_id = p.id
-    $where_clause
-    GROUP BY s.id
-    ORDER BY s.created_at DESC
-    LIMIT $per_page OFFSET $offset
+        sales_data.*,
+        invoice_data.invoice_id,
+        invoice_data.invoice_number
+    FROM (
+        SELECT 
+            s.*,
+            u.username as cashier_name,
+            COUNT(si.id) as item_count,
+            GROUP_CONCAT(DISTINCT p.name SEPARATOR ', ') as products
+        FROM sales s 
+        LEFT JOIN users u ON s.user_id = u.id
+        LEFT JOIN sale_items si ON s.id = si.sale_id
+        LEFT JOIN products p ON si.product_id = p.id
+        $where_clause
+        GROUP BY s.id
+        ORDER BY s.created_at DESC
+        LIMIT $per_page OFFSET $offset
+    ) as sales_data
+    LEFT JOIN (
+        SELECT 
+            sale_id,
+            id as invoice_id,
+            invoice_number
+        FROM invoices
+    ) as invoice_data ON sales_data.id = invoice_data.sale_id
+    ORDER BY sales_data.created_at DESC
 ";
 
 $stmt = $conn->prepare($sales_query);
@@ -236,6 +250,83 @@ $payment_stats = $stmt->fetchAll();
             color: #111827;
         }
         
+        /* Invoice Button Styles */
+        .invoice-btn {
+            border: none;
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            text-decoration: none;
+            min-width: 100px;
+            justify-content: center;
+        }
+        
+        .invoice-btn-create {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            color: white;
+            box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3);
+        }
+        
+        .invoice-btn-create:hover {
+            background: linear-gradient(135deg, #1d4ed8, #1e40af);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(59, 130, 246, 0.4);
+        }
+        
+        .invoice-btn-view {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+        }
+        
+        .invoice-btn-view:hover {
+            background: linear-gradient(135deg, #059669, #047857);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(16, 185, 129, 0.4);
+        }
+        
+        .invoice-btn:active {
+            transform: translateY(0);
+        }
+        
+        .invoice-status-badge {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3);
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3); }
+            50% { box-shadow: 0 2px 8px rgba(16, 185, 129, 0.5); }
+            100% { box-shadow: 0 2px 4px rgba(16, 185, 129, 0.3); }
+        }
+        
+        .action-buttons-container {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .btn-icon {
+            font-size: 0.9rem;
+        }
+        
         .quick-stats {
             margin-bottom: 2rem;
         }
@@ -269,6 +360,22 @@ $payment_stats = $stmt->fetchAll();
             .table-responsive {
                 border-radius: 12px;
                 overflow: hidden;
+            }
+            
+            .action-buttons-container {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+            
+            .invoice-btn {
+                min-width: 80px;
+                padding: 0.4rem 0.6rem;
+                font-size: 0.7rem;
+            }
+            
+            .invoice-status-badge {
+                font-size: 0.65rem;
+                padding: 0.2rem 0.4rem;
             }
         }
         
@@ -499,14 +606,22 @@ $payment_stats = $stmt->fetchAll();
                             <?php foreach ($sales as $sale): ?>
                             <tr>
                                 <td>
-                                    <strong>#<?= $sale['id'] ?></strong>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <strong>#<?= $sale['id'] ?></strong>
+                                        <?php if ($sale['invoice_id']): ?>
+                                        <span class="invoice-status-badge" title="Invoice #<?= htmlspecialchars($sale['invoice_number']) ?>">
+                                            <i class="bi bi-file-earmark-check btn-icon"></i>
+                                            <span>Invoiced</span>
+                                        </span>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                                 <td>
                                     <div><?= date('M j, Y', strtotime($sale['created_at'])) ?></div>
                                     <small class="text-muted"><?= date('g:i A', strtotime($sale['created_at'])) ?></small>
                                 </td>
                                 <td>
-                                    <div><?= htmlspecialchars($sale['customer_name'] ?: 'Walking Customer') ?></div>
+                                    <div><?= htmlspecialchars($sale['customer_name'] ?? 'Walking Customer') ?></div>
                                     <?php if ($sale['customer_phone']): ?>
                                     <small class="text-muted"><?= htmlspecialchars($sale['customer_phone']) ?></small>
                                     <?php endif; ?>
@@ -553,20 +668,35 @@ $payment_stats = $stmt->fetchAll();
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <?= htmlspecialchars($sale['cashier_name'] ?: 'Unknown') ?>
+                                    <?= htmlspecialchars($sale['cashier_name'] ?? 'Unknown') ?>
                                 </td>
                                 <td>
-                                    <div class="btn-group" role="group">
+                                    <div class="action-buttons-container">
                                         <button class="btn btn-sm view-details-btn" 
                                                 onclick="viewSaleDetails(<?= $sale['id'] ?>)"
                                                 title="View Details">
-                                            <i class="bi bi-eye"></i>
+                                            <i class="bi bi-eye btn-icon"></i>
                                         </button>
+                                        <?php if ($sale['invoice_id']): ?>
+                                        <button class="btn invoice-btn invoice-btn-view" 
+                                                onclick="viewInvoice(<?= $sale['invoice_id'] ?>)"
+                                                title="View Invoice #<?= htmlspecialchars($sale['invoice_number']) ?>">
+                                            <i class="bi bi-file-earmark-check btn-icon"></i>
+                                            <span>View Invoice</span>
+                                        </button>
+                                        <?php else: ?>
+                                        <button class="btn invoice-btn invoice-btn-create" 
+                                                onclick="createInvoice(<?= $sale['id'] ?>)"
+                                                title="Create Invoice">
+                                            <i class="bi bi-file-earmark-plus btn-icon"></i>
+                                            <span>Create Invoice</span>
+                                        </button>
+                                        <?php endif; ?>
                                         <?php if ($role === 'Admin'): ?>
                                         <button class="btn btn-sm view-details-btn text-danger" 
                                                 onclick="refundSale(<?= $sale['id'] ?>)"
                                                 title="Refund Sale">
-                                            <i class="bi bi-arrow-return-left"></i>
+                                            <i class="bi bi-arrow-return-left btn-icon"></i>
                                         </button>
                                         <?php endif; ?>
                                     </div>
@@ -645,6 +775,41 @@ $payment_stats = $stmt->fetchAll();
         </div>
     </div>
 
+    <!-- Create Invoice Confirmation Modal -->
+    <div class="modal fade" id="createInvoiceModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create Invoice</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Invoice Creation:</strong> This will create a formal invoice from the selected sale. The invoice will be marked as "Paid" since the sale has already been completed.
+                    </div>
+                    <p>Are you sure you want to create an invoice for Sale #<span id="invoiceSaleId"></span>?</p>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="confirmInvoiceCreation">
+                        <label class="form-check-label" for="confirmInvoiceCreation">
+                            I understand that this will create a formal invoice document
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="bi bi-x-circle btn-icon"></i>
+                        Cancel
+                    </button>
+                    <button type="button" class="btn invoice-btn invoice-btn-create" id="confirmCreateInvoice" disabled>
+                        <i class="bi bi-file-earmark-plus btn-icon"></i>
+                        Create Invoice
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     
@@ -710,6 +875,7 @@ $payment_stats = $stmt->fetchAll();
                                     <tr><th>Customer:</th><td>${data.sale.customer_name || 'Walking Customer'}</td></tr>
                                     <tr><th>Phone:</th><td>${data.sale.customer_phone || 'N/A'}</td></tr>
                                     <tr><th>Cashier:</th><td>${data.sale.cashier_name}</td></tr>
+                                    ${data.sale.invoice_id ? `<tr><th>Invoice:</th><td><span class="badge bg-success">#${data.sale.invoice_number}</span></td></tr>` : ''}
                                 </table>
                             </div>
                             <div class="col-md-6">
@@ -790,6 +956,97 @@ $payment_stats = $stmt->fetchAll();
             const params = new URLSearchParams(window.location.search);
             params.set('export', 'csv');
             window.location.href = `export_sales.php?${params.toString()}`;
+        }
+        
+        // View invoice
+        function viewInvoice(invoiceId) {
+            window.open(`../quotations/invoices.php?id=${invoiceId}`, '_blank');
+        }
+        
+        // Create invoice from sale
+        function createInvoice(saleId) {
+            document.getElementById('invoiceSaleId').textContent = saleId;
+            document.getElementById('confirmInvoiceCreation').checked = false;
+            document.getElementById('confirmCreateInvoice').disabled = true;
+            
+            const modal = new bootstrap.Modal(document.getElementById('createInvoiceModal'));
+            modal.show();
+        }
+        
+        // Handle invoice creation confirmation
+        document.getElementById('confirmInvoiceCreation').addEventListener('change', function() {
+            document.getElementById('confirmCreateInvoice').disabled = !this.checked;
+        });
+        
+        // Confirm create invoice
+        document.getElementById('confirmCreateInvoice').addEventListener('click', async function() {
+            const saleId = document.getElementById('invoiceSaleId').textContent;
+            const button = this;
+            const originalText = button.innerHTML;
+            
+            // Show loading state
+            button.innerHTML = '<i class="bi bi-hourglass-split"></i> Creating...';
+            button.disabled = true;
+            
+            try {
+                const response = await fetch('create_invoice.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sale_id: saleId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Close modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('createInvoiceModal'));
+                    modal.hide();
+                    
+                    // Show success message
+                    showNotification('Invoice created successfully! Invoice #' + data.invoice_number, 'success');
+                    
+                    // Optionally redirect to invoice or refresh page
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } else {
+                    showNotification('Error creating invoice: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Network error occurred while creating invoice', 'error');
+            } finally {
+                // Reset button
+                button.innerHTML = originalText;
+                button.disabled = false;
+            }
+        });
+        
+        // Show notification
+        function showNotification(message, type) {
+            const alertClass = type === 'success' ? 'alert-success' : 'alert-danger';
+            const icon = type === 'success' ? 'bi-check-circle' : 'bi-exclamation-triangle';
+            
+            const notification = document.createElement('div');
+            notification.className = `alert ${alertClass} alert-dismissible fade show position-fixed`;
+            notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+            notification.innerHTML = `
+                <i class="bi ${icon}"></i>
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.remove();
+                }
+            }, 5000);
         }
         
         // Refund sale (Admin only)

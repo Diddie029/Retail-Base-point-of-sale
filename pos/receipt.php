@@ -46,7 +46,7 @@ if (!$sale) {
 
 // Get sale items
 $stmt = $conn->prepare("
-    SELECT si.*, p.name as product_name, p.sku
+    SELECT si.*, p.sku
     FROM sale_items si
     LEFT JOIN products p ON si.product_id = p.id
     WHERE si.sale_id = :sale_id
@@ -388,8 +388,8 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
                         <a href="../dashboard/dashboard.php" class="btn btn-outline-primary btn-sm me-2">
                             <i class="bi bi-speedometer2"></i> Dashboard
                         </a>
-                        <a href="sale.php" class="btn btn-success btn-sm">
-                            <i class="bi bi-plus-circle"></i> New Sale
+                        <a href="../quotations/invoice.php?action=create_from_sale&sale_id=<?php echo $sale_id; ?>" class="btn btn-warning btn-sm">
+                            <i class="bi bi-receipt"></i> Create Invoice
                         </a>
                     </div>
                 </div>
@@ -409,20 +409,8 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
                         <?php endif; ?>
 
                         <div class="print-section">
-                            <button onclick="printReceipt()" class="btn btn-primary btn-print">
-                                <i class="bi bi-printer"></i> Print Receipt
-                            </button>
-                            <button onclick="emailReceipt()" class="btn btn-outline-primary">
-                                <i class="bi bi-envelope"></i> Email Receipt
-                            </button>
-                            <button onclick="shareReceipt()" class="btn btn-outline-secondary">
-                                <i class="bi bi-share"></i> Share
-                            </button>
                             <a href="../quotations/invoice.php?action=create_from_sale&sale_id=<?php echo $sale_id; ?>" class="btn btn-warning">
                                 <i class="bi bi-receipt"></i> Create Invoice
-                            </a>
-                            <a href="sale.php" class="btn btn-success">
-                                <i class="bi bi-plus-circle"></i> New Sale
                             </a>
                         </div>
 
@@ -460,7 +448,7 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
                                     </div>
                                     <div class="receipt-info-item">
                                         <div class="receipt-info-label">Cashier</div>
-                                        <div class="receipt-info-value"><?php echo htmlspecialchars($sale['cashier_name']); ?></div>
+                                        <div class="receipt-info-value"><?php echo htmlspecialchars($sale['cashier_name'] ?? 'Unknown'); ?></div>
                                     </div>
                                 </div>
 
@@ -478,7 +466,7 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
                                         <div class="item-row">
                                             <div class="item-details">
                                                 <div class="item-name">
-                                                    <?php echo htmlspecialchars($item['product_name'] ?: $item['product_name']); ?>
+                                                    <?php echo htmlspecialchars($item['product_name'] ?? 'Product'); ?>
                                                     <?php if ($item['is_auto_bom']): ?>
                                                         <span class="badge bg-info">Auto BOM</span>
                                                     <?php endif; ?>
@@ -575,48 +563,7 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
             }
         }
 
-        function printReceipt() {
-            // Prevent navigation by handling print in a controlled way
-            try {
-                window.print();
-            } catch (error) {
-                console.error('Print error:', error);
-                alert('Unable to print. Please try using your browser\'s print function (Ctrl+P).');
-            }
-            // Ensure we stay on the current page
-            return false;
-        }
 
-        function shareReceipt() {
-            if (navigator.share) {
-                navigator.share({
-                    title: 'Receipt #<?php echo $formatted_receipt_number; ?>',
-                    text: 'Sale receipt from <?php echo htmlspecialchars($settings['company_name'] ?? 'Store'); ?>',
-                    url: window.location.href
-                });
-            } else {
-                // Fallback for browsers that don't support Web Share API
-                const url = window.location.href;
-                navigator.clipboard.writeText(url).then(() => {
-                    alert('Receipt link copied to clipboard!');
-                }).catch(() => {
-                    prompt('Copy this link to share the receipt:', url);
-                });
-            }
-        }
-
-        // Auto-focus print dialog if success parameter is present
-        <?php if ($success): ?>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Small delay to allow page to fully load
-            setTimeout(() => {
-                const shouldPrint = confirm('Would you like to print the receipt now?');
-                if (shouldPrint) {
-                    printReceipt();
-                }
-            }, 1000);
-        });
-        <?php endif; ?>
     </script>
 </body>
 </html>

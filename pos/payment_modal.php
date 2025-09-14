@@ -788,6 +788,7 @@ document.addEventListener('DOMContentLoaded', function() {
             tax: window.paymentTotals.tax,
             items: window.cartData,
             split_payments: paymentSummary.payments,
+            quotation_id: window.currentQuotationId || null,
             notes: document.getElementById('paymentNotes')?.value || '',
             // Customer information (if available)
             customer_id: window.selectedCustomer?.id || null,

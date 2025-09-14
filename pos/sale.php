@@ -1122,6 +1122,87 @@ try {
             font-size: 0.9rem;
             font-weight: 500;
         }
+        
+        /* Enhanced Button Styles */
+        .quotation-btn {
+            background: linear-gradient(135deg, #0d6efd, #0b5ed7);
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem 0.5rem;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(13, 110, 253, 0.3);
+        }
+        
+        .quotation-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #0b5ed7, #0a58ca);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(13, 110, 253, 0.4);
+        }
+        
+        .quotation-btn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(13, 110, 253, 0.3);
+        }
+        
+        .quotation-btn:disabled {
+            background: #6c757d;
+            color: #fff;
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .payment-btn {
+            background: linear-gradient(135deg, #198754, #157347);
+            border: none;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem 0.5rem;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 4px rgba(25, 135, 84, 0.3);
+        }
+        
+        .payment-btn:hover:not(:disabled) {
+            background: linear-gradient(135deg, #157347, #146c43);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(25, 135, 84, 0.4);
+        }
+        
+        .payment-btn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(25, 135, 84, 0.3);
+        }
+        
+        .payment-btn:disabled {
+            background: #6c757d;
+            color: #fff;
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        /* Button Icons */
+        .quotation-btn i,
+        .payment-btn i {
+            font-size: 1rem;
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 576px) {
+            .quotation-btn,
+            .payment-btn {
+                padding: 0.6rem 0.4rem;
+                font-size: 0.8rem;
+            }
+            
+            .quotation-btn i,
+            .payment-btn i {
+                font-size: 0.9rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1443,9 +1524,24 @@ try {
                             </button>
                         </div>
                     </div>
-                            <button class="btn btn-success payment-btn" onclick="processPayment()" <?php echo ($cart_count == 0 || !$selected_till) ? 'disabled' : ''; ?>>
-                                <i class="bi bi-credit-card"></i> Process Payment
-                        </button>
+                            
+                            <!-- Sale of Quotation and Process Payment Buttons -->
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <button class="btn btn-outline-primary w-100 btn-sm quotation-btn" onclick="openQuotationModal()" <?php echo !$selected_till ? 'disabled' : ''; ?>>
+                                        <i class="bi bi-file-earmark-text me-1"></i> 
+                                        <span class="d-none d-sm-inline">Sale of Quotation</span>
+                                        <span class="d-inline d-sm-none">Quotation</span>
+                                    </button>
+                                </div>
+                                <div class="col-6">
+                                    <button class="btn btn-success w-100 btn-sm payment-btn" onclick="processPayment()" <?php echo ($cart_count == 0 || !$selected_till) ? 'disabled' : ''; ?>>
+                                        <i class="bi bi-credit-card me-1"></i> 
+                                        <span class="d-none d-sm-inline">Process Payment</span>
+                                        <span class="d-inline d-sm-none">Payment</span>
+                                    </button>
+                                </div>
+                            </div>
                     </div>
                     </div>
                         </div>
@@ -1493,6 +1589,111 @@ try {
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="button" class="btn btn-primary" id="selectCustomerBtn" disabled>Select Customer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quotation Selection Modal -->
+    <div class="modal fade" id="quotationModal" tabindex="-1" aria-labelledby="quotationModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title" id="quotationModalLabel">
+                        <i class="bi bi-file-earmark-text me-2"></i>Sale of Quotation
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Quotation Number Input -->
+                    <div class="mb-4">
+                        <label for="quotationNumber" class="form-label fw-bold">
+                            <i class="bi bi-hash me-1"></i>Quotation Number
+                        </label>
+                        <div class="input-group">
+                            <span class="input-group-text">
+                                <i class="bi bi-file-earmark-text"></i>
+                            </span>
+                            <input type="text" class="form-control form-control-lg" id="quotationNumber" 
+                                   placeholder="Enter quotation number (e.g., QUO-2024-001)" 
+                                   autocomplete="off">
+                            <button class="btn btn-outline-primary" type="button" onclick="searchQuotation()">
+                                <i class="bi bi-search"></i> Search
+                            </button>
+                        </div>
+                        <div class="form-text">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Enter the quotation number to convert it into a sale. The quotation will be automatically approved when converted.
+                        </div>
+                    </div>
+
+                    <!-- Quotation Details -->
+                    <div id="quotationDetails" style="display: none;">
+                        <div class="card border-info">
+                            <div class="card-header bg-light">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-file-earmark-check me-2"></i>Quotation Details
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <p><strong>Quotation #:</strong> <span id="quotationNumberDisplay"></span></p>
+                                        <p><strong>Customer:</strong> <span id="quotationCustomer"></span></p>
+                                        <p><strong>Date:</strong> <span id="quotationDate"></span></p>
+                                        <p><strong>Status:</strong> <span id="quotationStatus" class="badge"></span></p>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <p><strong>Subtotal:</strong> <span id="quotationSubtotal"></span></p>
+                                        <p><strong>Tax:</strong> <span id="quotationTax"></span></p>
+                                        <p><strong>Total:</strong> <span id="quotationTotal" class="fw-bold text-primary"></span></p>
+                                    </div>
+                                </div>
+                                
+                                <!-- Quotation Items -->
+                                <div class="mt-3">
+                                    <h6>Items:</h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr>
+                                                    <th>Product</th>
+                                                    <th>Qty</th>
+                                                    <th>Price</th>
+                                                    <th>Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="quotationItems">
+                                                <!-- Items will be populated here -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Error Message -->
+                    <div id="quotationError" class="alert alert-danger" style="display: none;">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <span id="quotationErrorMessage"></span>
+                    </div>
+
+                    <!-- Loading Spinner -->
+                    <div id="quotationLoading" class="text-center" style="display: none;">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Searching for quotation...</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        <i class="bi bi-x-circle me-1"></i>Cancel
+                    </button>
+                    <button type="button" class="btn btn-success" id="convertQuotationBtn" onclick="convertQuotationToSale()" disabled>
+                        <i class="bi bi-cart-plus me-1"></i>Add to Cart
+                    </button>
                 </div>
             </div>
         </div>
@@ -2086,21 +2287,25 @@ try {
             // Create unique key for this API call
             const callKey = `${productId}-${quantity}-${Date.now()}`;
 
+            // Ensure quantity is an integer
+            const quantityInt = Math.floor(parseFloat(quantity) || 1);
+
             // Prevent duplicate calls for the same product and quantity
-            if (pendingApiCalls.has(`${productId}-${quantity}`)) {
+            if (pendingApiCalls.has(`${productId}-${quantityInt}`)) {
                 console.log('Duplicate API call prevented');
                 return;
             }
 
-            pendingApiCalls.add(`${productId}-${quantity}`);
+            pendingApiCalls.add(`${productId}-${quantityInt}`);
 
             try {
+                console.log('addToCartAsync called with:', { productId, quantity, quantityInt, fallbackCart });
                 const response = await fetch('add_to_cart.php', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
                     },
-                    body: `product_id=${productId}&quantity=${quantity}`
+                    body: `product_id=${productId}&quantity=${quantityInt}`
                 });
 
                 if (!response.ok) {
@@ -2564,6 +2769,222 @@ try {
                 clearCartAsync();
             }
         }
+
+        // Quotation functionality
+        function openQuotationModal() {
+            const modal = new bootstrap.Modal(document.getElementById('quotationModal'));
+            modal.show();
+            
+            // Clear previous data
+            document.getElementById('quotationNumber').value = '';
+            document.getElementById('quotationDetails').style.display = 'none';
+            document.getElementById('quotationError').style.display = 'none';
+            document.getElementById('quotationLoading').style.display = 'none';
+            document.getElementById('convertQuotationBtn').disabled = true;
+            
+            // Focus on input
+            setTimeout(() => {
+                document.getElementById('quotationNumber').focus();
+            }, 300);
+        }
+
+        function searchQuotation() {
+            const quotationNumber = document.getElementById('quotationNumber').value.trim();
+            
+            if (!quotationNumber) {
+                showQuotationError('Please enter a quotation number');
+                return;
+            }
+            
+            // Show loading
+            document.getElementById('quotationLoading').style.display = 'block';
+            document.getElementById('quotationDetails').style.display = 'none';
+            document.getElementById('quotationError').style.display = 'none';
+            document.getElementById('convertQuotationBtn').disabled = true;
+            
+            // Search for quotation
+            fetch('search_quotation.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    quotation_number: quotationNumber
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('quotationLoading').style.display = 'none';
+                
+                if (data.success) {
+                    // Allow any quotation to be converted (it will be auto-approved)
+                    displayQuotationDetails(data.quotation);
+                    document.getElementById('convertQuotationBtn').disabled = false;
+                } else {
+                    showQuotationError(data.error || 'Quotation not found');
+                }
+            })
+            .catch(error => {
+                document.getElementById('quotationLoading').style.display = 'none';
+                showQuotationError('Error searching for quotation. Please try again.');
+                console.error('Quotation search error:', error);
+            });
+        }
+
+        function displayQuotationDetails(quotation) {
+            // Display quotation info
+            document.getElementById('quotationNumberDisplay').textContent = quotation.quotation_number;
+            document.getElementById('quotationCustomer').textContent = quotation.customer_name || 'Walk-in Customer';
+            document.getElementById('quotationDate').textContent = new Date(quotation.created_at).toLocaleDateString();
+            
+            // Status badge
+            const statusBadge = document.getElementById('quotationStatus');
+            statusBadge.textContent = quotation.status.toUpperCase();
+            
+            // Color code the status badge
+            if (quotation.status === 'approved') {
+                statusBadge.className = 'badge bg-success';
+            } else if (quotation.status === 'draft') {
+                statusBadge.className = 'badge bg-warning';
+            } else if (quotation.status === 'sent') {
+                statusBadge.className = 'badge bg-info';
+            } else if (quotation.status === 'rejected') {
+                statusBadge.className = 'badge bg-danger';
+            } else if (quotation.status === 'expired') {
+                statusBadge.className = 'badge bg-secondary';
+            } else {
+                statusBadge.className = 'badge bg-primary';
+            }
+            
+            // Financial info
+            const currencySymbol = window.POSConfig.currencySymbol;
+            document.getElementById('quotationSubtotal').textContent = currencySymbol + ' ' + parseFloat(quotation.subtotal).toFixed(2);
+            document.getElementById('quotationTax').textContent = currencySymbol + ' ' + parseFloat(quotation.tax_amount || 0).toFixed(2);
+            document.getElementById('quotationTotal').textContent = currencySymbol + ' ' + parseFloat(quotation.final_amount).toFixed(2);
+            
+            // Display items
+            const itemsContainer = document.getElementById('quotationItems');
+            itemsContainer.innerHTML = '';
+            
+            if (quotation.items && quotation.items.length > 0) {
+                quotation.items.forEach(item => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${item.product_name}</td>
+                        <td>${item.quantity}</td>
+                        <td>${currencySymbol} ${parseFloat(item.unit_price).toFixed(2)}</td>
+                        <td>${currencySymbol} ${parseFloat(item.total_price).toFixed(2)}</td>
+                    `;
+                    itemsContainer.appendChild(row);
+                });
+            }
+            
+            // Show details
+            document.getElementById('quotationDetails').style.display = 'block';
+        }
+
+        function showQuotationError(message) {
+            document.getElementById('quotationErrorMessage').textContent = message;
+            document.getElementById('quotationError').style.display = 'block';
+        }
+
+        function convertQuotationToSale() {
+            const quotationNumber = document.getElementById('quotationNumber').value.trim();
+            
+            if (!quotationNumber) {
+                showQuotationError('Please enter a quotation number');
+                return;
+            }
+            
+            // Show loading on button
+            const button = document.getElementById('convertQuotationBtn');
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Adding to Cart...';
+            button.disabled = true;
+            
+            // Convert quotation to sale
+            fetch('convert_quotation_to_sale.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    quotation_number: quotationNumber
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Store quotation info for later use
+                    window.currentQuotationId = data.quotation_id;
+                    window.currentQuotationNumber = data.quotation_number;
+                    
+                    // Clear the cart first
+                    clearCartAsync().then(() => {
+                        // Add items to cart sequentially to avoid race conditions
+                        if (data.items && data.items.length > 0) {
+                            let currentIndex = 0;
+
+                            const addNextItem = () => {
+                                if (currentIndex >= data.items.length) {
+                                    // All items have been added
+                                    showQuickFeedback(`Quotation ${data.quotation_number} items added to cart!`, 'success');
+
+                                    // Close modal
+                                    const modal = bootstrap.Modal.getInstance(document.getElementById('quotationModal'));
+                                    modal.hide();
+
+                                    // Update cart display with current cart state
+                                    updateCartDisplay(window.cartData || []);
+
+                                    return;
+                                }
+
+                                const item = data.items[currentIndex];
+                                currentIndex++;
+
+                                // Add item to cart - this will trigger the async call
+                                addToCart(item.product_id, item.quantity);
+
+                                // Schedule next item after a short delay to prevent overwhelming the server
+                                setTimeout(addNextItem, 100);
+                            };
+
+                            // Start adding items
+                            addNextItem();
+                        } else {
+                            showQuotationError('No items found in quotation');
+                        }
+                    }).catch(error => {
+                        console.error('Error clearing cart:', error);
+                        showQuotationError('Error clearing cart. Please try again.');
+                    });
+                } else {
+                    showQuotationError(data.error || 'Error converting quotation to sale');
+                }
+            })
+            .catch(error => {
+                showQuotationError('Error converting quotation. Please try again.');
+                console.error('Quotation conversion error:', error);
+            })
+            .finally(() => {
+                // Reset button
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
+        }
+
+        // Allow Enter key to search quotation
+        document.addEventListener('DOMContentLoaded', function() {
+            const quotationInput = document.getElementById('quotationNumber');
+            if (quotationInput) {
+                quotationInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        searchQuotation();
+                    }
+                });
+            }
+        });
 
         // Process payment
         function processPayment() {

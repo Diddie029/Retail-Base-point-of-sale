@@ -56,7 +56,8 @@ $stats = [
     'sent' => count(array_filter($allQuotations, fn($q) => $q['quotation_status'] === 'sent')),
     'approved' => count(array_filter($allQuotations, fn($q) => $q['quotation_status'] === 'approved')),
     'rejected' => count(array_filter($allQuotations, fn($q) => $q['quotation_status'] === 'rejected')),
-    'expired' => count(array_filter($allQuotations, fn($q) => $q['quotation_status'] === 'expired'))
+    'expired' => count(array_filter($allQuotations, fn($q) => $q['quotation_status'] === 'expired')),
+    'converted' => count(array_filter($allQuotations, fn($q) => $q['quotation_status'] === 'converted'))
 ];
 
 // Calculate amounts and conversion rates
@@ -407,6 +408,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             color: #374151;
         }
 
+        .status-converted {
+            background: #e0f2fe;
+            color: #0369a1;
+        }
+
         .btn-primary {
             background: var(--primary-color);
             border: none;
@@ -677,6 +683,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         <option value="approved" <?php echo ($filters['status'] ?? '') === 'approved' ? 'selected' : ''; ?>>Approved</option>
                         <option value="rejected" <?php echo ($filters['status'] ?? '') === 'rejected' ? 'selected' : ''; ?>>Rejected</option>
                         <option value="expired" <?php echo ($filters['status'] ?? '') === 'expired' ? 'selected' : ''; ?>>Expired</option>
+                        <option value="converted" <?php echo ($filters['status'] ?? '') === 'converted' ? 'selected' : ''; ?>>Converted</option>
                     </select>
                 </div>
                 <div class="col-md-3">
@@ -742,7 +749,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                         <strong>#<?php echo htmlspecialchars($quotation['quotation_number']); ?></strong>
                                     </td>
                                     <td><?php echo date('M j, Y', strtotime($quotation['created_at'])); ?></td>
-                                    <td><?php echo htmlspecialchars($quotation['customer_name'] ?: 'Walk-in Customer'); ?></td>
+                                    <td><?php echo htmlspecialchars($quotation['customer_name'] ?? 'Walk-in Customer'); ?></td>
                                     <td>
                                         <span class="status-badge status-<?php echo $quotation['quotation_status']; ?>">
                                             <?php echo ucfirst($quotation['quotation_status']); ?>
@@ -759,6 +766,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                                class="btn btn-sm btn-outline-primary" title="View">
                                                 <i class="bi bi-eye"></i>
                                             </a>
+                                            <?php if ($quotation['quotation_status'] !== 'converted'): ?>
                                             <a href="quotation.php?quotation_id=<?php echo $quotation['id']; ?>&action=edit"
                                                class="btn btn-sm btn-outline-secondary" title="Edit">
                                                 <i class="bi bi-pencil"></i>
@@ -801,6 +809,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                                     </li>
                                                 </ul>
                                             </div>
+                                            <?php endif; ?>
                                         </div>
                                     </td>
                                 </tr>

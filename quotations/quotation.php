@@ -285,6 +285,11 @@ $final_amount = $quotation['final_amount'];
             color: #374151;
         }
 
+        .status-converted {
+            background: #e0f2fe;
+            color: #0369a1;
+        }
+
         .btn-print {
             background: var(--primary-color);
             border: none;
@@ -313,6 +318,84 @@ $final_amount = $quotation['final_amount'];
         .btn-secondary:hover {
             background: #4b5563;
             transform: translateY(-1px);
+        }
+
+        /* Activities Timeline */
+        .activities-timeline {
+            position: relative;
+            padding-left: 2rem;
+        }
+
+        .activities-timeline::before {
+            content: '';
+            position: absolute;
+            left: 1rem;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #e2e8f0;
+        }
+
+        .activity-item {
+            position: relative;
+            padding-bottom: 1.5rem;
+            padding-left: 1rem;
+        }
+
+        .activity-item:last-child {
+            padding-bottom: 0;
+        }
+
+        .activity-item::before {
+            content: '';
+            position: absolute;
+            left: -2.5rem;
+            top: 0.5rem;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 50%;
+            background: white;
+            border: 3px solid #e2e8f0;
+            z-index: 1;
+        }
+
+        .activity-icon {
+            position: absolute;
+            left: -2.5rem;
+            top: 0.25rem;
+            width: 1.5rem;
+            height: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: white;
+            border: 2px solid #e2e8f0;
+            z-index: 2;
+        }
+
+        .activity-content {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 1rem;
+            border: 1px solid #e2e8f0;
+        }
+
+        .activity-title {
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 0.25rem;
+        }
+
+        .activity-description {
+            color: #6b7280;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .activity-time {
+            font-size: 0.75rem;
+            color: #9ca3af;
         }
 
         @media print {
@@ -401,7 +484,7 @@ $final_amount = $quotation['final_amount'];
                                     <h6><i class="bi bi-person"></i> Customer Information</h6>
                                     <div class="info-row">
                                         <span class="info-label">Name:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($quotation['customer_name'] ?: 'Walk-in Customer'); ?></span>
+                                        <span class="info-value"><?php echo htmlspecialchars($quotation['customer_name'] ?? 'Walk-in Customer'); ?></span>
                                     </div>
                                     <?php if (!empty($quotation['customer_email'])): ?>
                                     <div class="info-row">
@@ -437,7 +520,57 @@ $final_amount = $quotation['final_amount'];
                                         <span class="info-label">Created By:</span>
                                         <span class="info-value"><?php echo htmlspecialchars($quotation['created_by']); ?></span>
                                     </div>
+                                    <?php if ($quotation['quotation_status'] === 'converted'): ?>
+                                    <div class="info-row">
+                                        <span class="info-label">Converted Date:</span>
+                                        <span class="info-value"><?php echo date('M j, Y H:i', strtotime($quotation['updated_at'] ?? $quotation['created_at'])); ?></span>
+                                    </div>
+                                    <?php endif; ?>
                                 </div>
+
+                                <?php if ($quotation['quotation_status'] === 'converted'): ?>
+                                <div class="info-section">
+                                    <h6><i class="bi bi-receipt"></i> Sale Information</h6>
+                                    <div class="info-row">
+                                        <span class="info-label">Status:</span>
+                                        <span class="info-value">
+                                            <span class="badge bg-success">Converted to Sale</span>
+                                        </span>
+                                    </div>
+                                    <div class="info-row">
+                                        <span class="info-label">Receipt Number:</span>
+                                        <span class="info-value">
+                                            <?php
+                                            // Query for the sale that was created from this quotation
+                                            $stmt = $conn->prepare("
+                                                SELECT s.id, s.receipt_id, s.sale_date, s.final_amount, u.username as cashier_name
+                                                FROM sales s
+                                                JOIN users u ON s.user_id = u.id
+                                                WHERE s.quotation_id = :quotation_id
+                                                ORDER BY s.created_at DESC
+                                                LIMIT 1
+                                            ");
+                                            $stmt->execute([':quotation_id' => $quotation_id]);
+                                            $sale = $stmt->fetch(PDO::FETCH_ASSOC);
+                                            
+                                            if ($sale) {
+                                                // Display receipt ID if available, otherwise show sale ID
+                                                $receipt_display = !empty($sale['receipt_id']) ? $sale['receipt_id'] : '#' . str_pad($sale['id'], 6, '0', STR_PAD_LEFT);
+                                                echo '<strong>' . htmlspecialchars($receipt_display) . '</strong>';
+                                                echo '<br><small class="text-muted">Sale ID: ' . $sale['id'] . ' | Processed on ' . date('M j, Y H:i', strtotime($sale['sale_date'])) . ' by ' . htmlspecialchars($sale['cashier_name']) . '</small>';
+                                            } else {
+                                                echo '<em class="text-muted">Receipt not found</em>';
+                                            }
+                                            ?>
+                                        </span>
+                                    </div>
+                                    <div class="mt-3">
+                                        <button class="btn btn-primary btn-sm" onclick="viewReceipt()">
+                                            <i class="bi bi-receipt"></i> View Receipt
+                                        </button>
+                                    </div>
+                                </div>
+                                <?php endif; ?>
                             </div>
 
                             <!-- Quotation Items -->
@@ -530,6 +663,57 @@ $final_amount = $quotation['final_amount'];
                                     </small>
                                 </div>
                             </div>
+
+                            <!-- Quotation Activities -->
+                            <div class="quotation-activities mt-4">
+                                <h6 style="color: var(--primary-color); font-weight: 600; margin-bottom: 1rem;">
+                                    <i class="bi bi-clock-history"></i> Quotation Activities
+                                </h6>
+                                <div class="activities-timeline">
+                                    <div class="activity-item">
+                                        <div class="activity-icon">
+                                            <i class="bi bi-plus-circle text-primary"></i>
+                                        </div>
+                                        <div class="activity-content">
+                                            <div class="activity-title">Quotation Created</div>
+                                            <div class="activity-description">
+                                                Quotation <?php echo htmlspecialchars($quotation['quotation_number']); ?> was created by <?php echo htmlspecialchars($quotation['created_by']); ?>
+                                            </div>
+                                            <div class="activity-time"><?php echo date('M j, Y \a\t H:i', strtotime($quotation['created_at'])); ?></div>
+                                        </div>
+                                    </div>
+
+                                    <?php if ($quotation['quotation_status'] !== 'draft'): ?>
+                                    <div class="activity-item">
+                                        <div class="activity-icon">
+                                            <i class="bi bi-send text-info"></i>
+                                        </div>
+                                        <div class="activity-content">
+                                            <div class="activity-title">Status Changed to <?php echo ucfirst($quotation['quotation_status']); ?></div>
+                                            <div class="activity-description">
+                                                Quotation status was updated to <?php echo ucfirst($quotation['quotation_status']); ?>
+                                            </div>
+                                            <div class="activity-time"><?php echo date('M j, Y \a\t H:i', strtotime($quotation['updated_at'] ?? $quotation['created_at'])); ?></div>
+                                        </div>
+                                    </div>
+                                    <?php endif; ?>
+
+                                    <?php if ($quotation['quotation_status'] === 'converted'): ?>
+                                    <div class="activity-item">
+                                        <div class="activity-icon">
+                                            <i class="bi bi-check-circle text-success"></i>
+                                        </div>
+                                        <div class="activity-content">
+                                            <div class="activity-title">Converted to Sale</div>
+                                            <div class="activity-description">
+                                                Quotation was successfully converted to a sale transaction
+                                            </div>
+                                            <div class="activity-time"><?php echo date('M j, Y \a\t H:i', strtotime($quotation['updated_at'] ?? $quotation['created_at'])); ?></div>
+                                        </div>
+                                    </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Action Buttons -->
@@ -537,9 +721,11 @@ $final_amount = $quotation['final_amount'];
                             <button onclick="window.print()" class="btn btn-print me-2">
                                 <i class="bi bi-printer"></i> Print Quotation
                             </button>
+                            <?php if ($quotation['quotation_status'] !== 'converted'): ?>
                             <a href="quotation.php?action=edit&amp;quotation_id=<?php echo $quotation_id; ?>" class="btn btn-warning me-2">
                                 <i class="bi bi-pencil-square"></i> Edit Quotation
                             </a>
+                            <?php endif; ?>
                             <button onclick="emailQuotation()" class="btn btn-secondary me-2">
                                 <i class="bi bi-envelope"></i> Email Quotation
                             </button>
@@ -596,6 +782,17 @@ $final_amount = $quotation['final_amount'];
             // This would integrate with a PDF generation library
             alert('PDF download functionality will be implemented with a PDF generation library like TCPDF or Dompdf.');
         }
+
+        function viewReceipt() {
+            const quotationId = <?php echo $quotation_id; ?>;
+            <?php if ($sale): ?>
+            // Redirect to receipt page
+            window.open(`../pos/receipt.php?sale_id=<?php echo $sale['id']; ?>`, '_blank');
+            <?php else: ?>
+            alert('Receipt not found. The sale may not have been processed yet.');
+            <?php endif; ?>
+        }
+
     </script>
 </body>
 </html>

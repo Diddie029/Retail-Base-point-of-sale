@@ -41,7 +41,6 @@ $can_manage_currency = hasPermission('manage_settings', $permissions) || hasPerm
 $can_manage_system = hasPermission('manage_settings', $permissions) || hasPermission('configure_system_settings', $permissions);
 $can_manage_inventory = hasPermission('manage_settings', $permissions) || hasPermission('configure_inventory_settings', $permissions);
 $can_manage_appearance = hasPermission('manage_settings', $permissions) || hasPermission('manage_theme_settings', $permissions);
-$can_manage_email = hasPermission('manage_settings', $permissions) || hasPermission('configure_email_settings', $permissions);
 $can_manage_security = hasPermission('manage_settings', $permissions) || hasPermission('configure_security_settings', $permissions);
 $can_manage_backup = hasPermission('manage_settings', $permissions) || hasPermission('configure_backup_settings', $permissions);
 $can_manage_receipts = hasPermission('manage_settings', $permissions) || hasPermission('configure_receipt_settings', $permissions);
@@ -60,7 +59,6 @@ $defaults = [
     'company_name' => 'POS System',
     'company_address' => '',
     'company_phone' => '',
-    'company_email' => '',
     'company_website' => '',
     'company_logo' => '',
     'currency_symbol' => 'KES',
@@ -110,7 +108,6 @@ $defaults = [
     'invoice_start_number' => '1',
     'invoice_default_payment_terms' => 'Due within 30 days',
     'invoice_default_status' => 'draft',
-    'invoice_auto_send_email' => '0',
     'invoice_include_terms' => '1',
     'invoice_terms_text' => 'Payment is due within the specified terms. Late payments may incur additional charges.',
     'invoice_show_discount' => '1',
@@ -146,32 +143,6 @@ $defaults = [
     'bom_cost_calculation_method' => 'standard',
     'bom_default_waste_percentage' => '5.0',
 
-    
-    // Email Templates
-    'email_verification_subject' => 'Email Verification - {company_name}',
-    'email_verification_body' => 'Email Verification
-
-Hello {first_name} {last_name},
-
-Thank you for registering with {company_name}. To complete your registration, please verify your email address using the verification code below:
-
-Verification Code: {otp_code}
-
-This code will expire in 15 minutes.
-
-If you didn\'t request this verification, please ignore this email.
-
-Best regards,
-{company_name} Team',
-    
-    // SMTP Settings
-    'smtp_host' => 'smtp.gmail.com',
-    'smtp_port' => '587',
-    'smtp_username' => '',
-    'smtp_password' => '',
-    'smtp_encryption' => 'tls',
-    'smtp_from_email' => '',
-    'smtp_from_name' => 'POS System',
 
     // Receipt Settings
     'receipt_header' => '',
@@ -462,7 +433,6 @@ $valid_tabs = [
     'system' => $can_manage_system,
     'inventory' => $can_manage_inventory,
     'appearance' => $can_manage_appearance,
-    'email' => $can_manage_email,
     'security' => $can_manage_security,
     'receipt' => $can_manage_receipts,
     'quotation' => $can_manage_quotations,
@@ -488,9 +458,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = "Company name is required.";
     }
     
-    if (isset($_POST['company_email']) && !empty($_POST['company_email']) && !filter_var($_POST['company_email'], FILTER_VALIDATE_EMAIL)) {
-        $errors[] = "Invalid email address.";
-    }
     
     if (isset($_POST['tax_rate'])) {
         $tax_rate = floatval($_POST['tax_rate']);
@@ -742,51 +709,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             
-            // Sanitize SMTP settings
-            if (isset($_POST['smtp_host'])) {
-                // Sanitize SMTP settings
-                $smtp_settings = [
-                    'smtp_host' => filter_var(trim($_POST['smtp_host'] ?? ''), FILTER_SANITIZE_STRING),
-                    'smtp_port' => filter_var(trim($_POST['smtp_port'] ?? ''), FILTER_SANITIZE_NUMBER_INT),
-                    'smtp_username' => filter_var(trim($_POST['smtp_username'] ?? ''), FILTER_SANITIZE_EMAIL),
-                    'smtp_password' => trim($_POST['smtp_password'] ?? ''), // Don't sanitize password
-                    'smtp_encryption' => filter_var(trim($_POST['smtp_encryption'] ?? 'tls'), FILTER_SANITIZE_STRING),
-                    'smtp_from_email' => filter_var(trim($_POST['smtp_from_email'] ?? ''), FILTER_SANITIZE_EMAIL),
-                    'smtp_from_name' => filter_var(trim($_POST['smtp_from_name'] ?? ''), FILTER_SANITIZE_STRING),
-                    'email_verification_subject' => filter_var(trim($_POST['email_verification_subject'] ?? ''), FILTER_SANITIZE_STRING),
-                    'email_verification_body' => filter_var(trim($_POST['email_verification_body'] ?? ''), FILTER_SANITIZE_STRING)
-                ];
-                
-                // Validate email addresses
-                if (!empty($smtp_settings['smtp_username']) && !filter_var($smtp_settings['smtp_username'], FILTER_VALIDATE_EMAIL)) {
-                    $errors[] = "Invalid SMTP username email format.";
-                }
-                
-                if (!empty($smtp_settings['smtp_from_email']) && !filter_var($smtp_settings['smtp_from_email'], FILTER_VALIDATE_EMAIL)) {
-                    $errors[] = "Invalid from email address format.";
-                }
-                
-                // Validate port number
-                if (!empty($smtp_settings['smtp_port']) && (!is_numeric($smtp_settings['smtp_port']) || $smtp_settings['smtp_port'] < 1 || $smtp_settings['smtp_port'] > 65535)) {
-                    $errors[] = "SMTP port must be a number between 1 and 65535.";
-                }
-                
-                // Validate encryption method
-                if (!in_array($smtp_settings['smtp_encryption'], ['tls', 'ssl', 'none'])) {
-                    $errors[] = "Invalid encryption method selected.";
-                }
-                
-                // Debug: Log SMTP settings being processed
-                error_log("SMTP Settings being processed: " . print_r([
-                    'smtp_host' => $smtp_settings['smtp_host'],
-                    'smtp_port' => $smtp_settings['smtp_port'],
-                    'smtp_username' => $smtp_settings['smtp_username'],
-                    'smtp_password' => !empty($smtp_settings['smtp_password']) ? '***hidden***' : 'not set',
-                    'smtp_encryption' => $smtp_settings['smtp_encryption'],
-                    'smtp_from_email' => $smtp_settings['smtp_from_email'],
-                    'smtp_from_name' => $smtp_settings['smtp_from_name']
-                ], true));
-            }
             
             // Handle file upload for company logo
             if (isset($_FILES['company_logo']) && $_FILES['company_logo']['error'] == UPLOAD_ERR_OK) {
@@ -811,12 +733,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Update or insert settings
             foreach($defaults as $key => $default) {
                 if(isset($_POST[$key])) {
-                    // Use sanitized values for SMTP settings
-                    if (isset($smtp_settings) && array_key_exists($key, $smtp_settings)) {
-                        $value = $smtp_settings[$key];
-                    } else {
                         $value = trim($_POST[$key]);
-                    }
                     
                     // Check if setting exists
                     $check = $conn->prepare("SELECT COUNT(*) FROM settings WHERE setting_key = :key");
@@ -842,17 +759,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $conn->commit();
             
-            // Check if SMTP settings were updated
-            $smtp_updated = false;
-            if (isset($_POST['smtp_host'])) {
-                $smtp_updated = true;
-            }
-            
-            if ($smtp_updated) {
-                $_SESSION['success'] = "Email settings updated successfully! SMTP configuration has been saved.";
-            } else {
                 $_SESSION['success'] = "Settings updated successfully!";
-            }
             
             header("Location: adminsetting.php?tab=" . $active_tab);
             exit();
@@ -1006,7 +913,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             height: auto;
         }
         
-        /* Email Settings Enhancements */
         .section-subtitle {
             font-size: 0.95rem;
             margin-top: 0.5rem;
@@ -1161,40 +1067,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         
-        /* SMTP Status Blinking Animation */
-        .smtp-connected {
-            animation: blinkSuccess 2s ease-in-out 3;
-        }
-        
-        @keyframes blinkSuccess {
-            0%, 100% { 
-                background-color: #d1e7dd; 
-                border-color: #badbcc;
-                color: #0f5132;
-            }
-            50% { 
-                background-color: #a3d9a4; 
-                border-color: #75b798;
-                color: #0a3622;
-                transform: scale(1.02);
-            }
-        }
-        
-        .smtp-status-icon {
-            display: inline-block;
-            margin-right: 8px;
-        }
-        
-        .smtp-status-icon.connected {
-            color: #198754;
-            animation: pulse 1.5s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
         
         /* Test Email Modal Enhancements */
         .modal-content {
@@ -1339,12 +1211,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                         Appearance
                     </a>
                     <?php endif; ?>
-                    <?php if ($can_manage_email): ?>
-                    <a href="?tab=email" class="nav-link <?php echo $active_tab == 'email' ? 'active' : ''; ?>">
-                        <i class="bi bi-envelope me-2"></i>
-                        Email Settings
-                    </a>
-                    <?php endif; ?>
                     <?php if ($can_manage_security): ?>
                     <a href="?tab=security" class="nav-link <?php echo $active_tab == 'security' ? 'active' : ''; ?>">
                         <i class="bi bi-shield-check me-2"></i>
@@ -1410,15 +1276,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 </div>
                             </div>
                             
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="company_email" class="form-label">Email Address</label>
-                                    <input type="email" class="form-control" id="company_email" name="company_email" 
-                                           value="<?php echo htmlspecialchars($settings['company_email']); ?>" 
-                                           placeholder="contact@company.com">
-                                    <div class="form-text">Primary contact email address.</div>
-                                </div>
-                            </div>
                         </div>
                         
                         <div class="form-group">
@@ -2385,451 +2242,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
                 <?php endif; ?>
 
-                <!-- Email Settings Tab -->
-                <?php if ($active_tab == 'email' && $can_manage_email): ?>
-                <div class="data-section">
-                    <div class="section-header">
-                        <h3 class="section-title">
-                            <i class="bi bi-envelope me-2"></i>
-                            Email Settings
-                        </h3>
-                        <p class="section-subtitle text-muted">Configure SMTP settings for sending emails from the system</p>
-                    </div>
-
-                    <!-- SMTP Status Indicator -->
-                    <div class="row mb-4">
-                        <div class="col-12">
-                            <div class="alert alert-light border" id="smtpStatusAlert">
-                                <div class="d-flex align-items-center">
-                                    <div class="spinner-border spinner-border-sm me-3" role="status" id="smtpStatusSpinner">
-                                        <span class="visually-hidden">Loading...</span>
-                                    </div>
-                                    <i class="bi bi-check-circle-fill smtp-status-icon" id="smtpStatusIcon" style="display: none;"></i>
-                                    <div>
-                                        <strong>SMTP Status:</strong> <span id="smtpStatusText">Please configure your SMTP settings</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <form method="POST" action="" class="settings-form" id="emailForm">
-                        <!-- SMTP Server Configuration -->
-                        <div class="card mb-4">
-                            <div class="card-header bg-primary text-white">
-                                <h5 class="mb-0">
-                                    <i class="bi bi-server me-2"></i>
-                                    SMTP Server Configuration
-                                </h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <label for="smtp_host" class="form-label fw-semibold">
-                                                <i class="bi bi-globe me-1"></i>SMTP Host *
-                                            </label>
-                                            <input type="text" class="form-control form-control-lg" id="smtp_host" name="smtp_host"
-                                                   value="<?php echo htmlspecialchars($settings['smtp_host'] ?? 'smtp.gmail.com'); ?>"
-                                                   required placeholder="smtp.gmail.com">
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>SMTP server hostname or IP address
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <label for="smtp_port" class="form-label fw-semibold">
-                                                <i class="bi bi-hash me-1"></i>SMTP Port *
-                                            </label>
-                                            <input type="number" class="form-control form-control-lg" id="smtp_port" name="smtp_port"
-                                                   value="<?php echo htmlspecialchars($settings['smtp_port'] ?? '587'); ?>"
-                                                   required placeholder="587" min="1" max="65535">
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>587 for TLS, 465 for SSL, 25 for non-encrypted
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Authentication Settings -->
-                        <div class="card mb-4">
-                            <div class="card-header bg-success text-white">
-                                <h5 class="mb-0">
-                                    <i class="bi bi-shield-lock me-2"></i>
-                                    Authentication Settings
-                                </h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <label for="smtp_username" class="form-label fw-semibold">
-                                                <i class="bi bi-person me-1"></i>SMTP Username
-                                            </label>
-                                            <input type="text" class="form-control form-control-lg" id="smtp_username" name="smtp_username"
-                                                   value="<?php echo htmlspecialchars($settings['smtp_username'] ?? ''); ?>"
-                                                   placeholder="your-email@gmail.com">
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>Username for SMTP authentication (usually your email)
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <label for="smtp_password" class="form-label fw-semibold">
-                                                <i class="bi bi-key me-1"></i>SMTP Password
-                                            </label>
-                                            <div class="input-group input-group-lg">
-                                                <input type="password" class="form-control" id="smtp_password" name="smtp_password"
-                                                       value="<?php echo htmlspecialchars($settings['smtp_password'] ?? ''); ?>"
-                                                       placeholder="Enter your SMTP password">
-                                                <button class="btn btn-outline-secondary" type="button" id="toggleSmtpPassword" title="Toggle password visibility">
-                                                    <i class="bi bi-eye" id="smtpPasswordIcon"></i>
-                                                </button>
-                                            </div>
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>Password for SMTP authentication
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Security & Sender Settings -->
-                        <div class="card mb-4">
-                            <div class="card-header bg-warning text-dark">
-                                <h5 class="mb-0">
-                                    <i class="bi bi-gear me-2"></i>
-                                    Security & Sender Settings
-                                </h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <label for="smtp_encryption" class="form-label fw-semibold">
-                                                <i class="bi bi-shield-check me-1"></i>Encryption Method
-                                            </label>
-                                            <select class="form-select form-select-lg" id="smtp_encryption" name="smtp_encryption">
-                                                <option value="tls" <?php echo ($settings['smtp_encryption'] ?? 'tls') == 'tls' ? 'selected' : ''; ?>>
-                                                    <i class="bi bi-shield-lock me-1"></i>TLS (Recommended)
-                                                </option>
-                                                <option value="ssl" <?php echo ($settings['smtp_encryption'] ?? 'tls') == 'ssl' ? 'selected' : ''; ?>>
-                                                    <i class="bi bi-shield me-1"></i>SSL
-                                                </option>
-                                                <option value="none" <?php echo ($settings['smtp_encryption'] ?? 'tls') == 'none' ? 'selected' : ''; ?>>
-                                                    <i class="bi bi-shield-exclamation me-1"></i>None (Not Recommended)
-                                                </option>
-                                            </select>
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>Encryption method for SMTP connection
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <label for="smtp_from_email" class="form-label fw-semibold">
-                                                <i class="bi bi-envelope me-1"></i>From Email Address
-                                            </label>
-                                            <input type="email" class="form-control form-control-lg" id="smtp_from_email" name="smtp_from_email"
-                                                   value="<?php echo htmlspecialchars($settings['smtp_from_email'] ?? ''); ?>"
-                                                   placeholder="noreply@yourcompany.com">
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>Email address used as sender (From field)
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="row">
-                                    <div class="col-12">
-                                        <div class="form-group mb-3">
-                                            <label for="smtp_from_name" class="form-label fw-semibold">
-                                                <i class="bi bi-person-badge me-1"></i>From Name
-                                            </label>
-                                            <input type="text" class="form-control form-control-lg" id="smtp_from_name" name="smtp_from_name"
-                                                   value="<?php echo htmlspecialchars($settings['smtp_from_name'] ?? 'POS System'); ?>"
-                                                   placeholder="Your Company Name">
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>Name displayed as sender in emails
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Action Buttons -->
-                        <div class="card">
-                            <div class="card-body">
-                                <div class="row">
-                                    <!-- Save Settings Section -->
-                                    <div class="col-md-6 action-buttons-section">
-                                        <h6 class="text-muted mb-3">
-                                            <i class="bi bi-gear me-2"></i>Configuration
-                                        </h6>
-                                        <div class="d-flex gap-2">
-                                            <button type="submit" class="btn btn-primary btn-lg">
-                                                <i class="bi bi-save me-2"></i>
-                                                Save Settings
-                                            </button>
-                                            <button type="reset" class="btn btn-outline-secondary btn-lg">
-                                                <i class="bi bi-arrow-clockwise me-2"></i>
-                                                Reset
-                                            </button>
-                                        </div>
-                                        <div class="text-muted small mt-2">
-                                            <i class="bi bi-info-circle me-1"></i>
-                                            Save your SMTP configuration
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- Test Email Section -->
-                                    <div class="col-md-6 action-buttons-section">
-                                        <h6 class="text-muted mb-3">
-                                            <i class="bi bi-send me-2"></i>Testing
-                                        </h6>
-                                        <div class="d-flex gap-2">
-                                            <button type="button" class="btn btn-info btn-lg" onclick="openTestEmailModal()">
-                                                <i class="bi bi-envelope me-2"></i>
-                                                Test Email
-                                            </button>
-                                        </div>
-                                        <div class="text-muted small mt-2">
-                                            <i class="bi bi-info-circle me-1"></i>
-                                            Send a test email to verify configuration
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </form>
-
-                    <!-- Test Email Template Section -->
-                    <div class="card mt-4">
-                        <div class="card-header bg-info text-white">
-                            <h5 class="mb-0">
-                                <i class="bi bi-envelope-check me-2"></i>
-                                Test Email Template
-                            </h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="alert alert-info">
-                                <i class="bi bi-lightbulb me-2"></i>
-                                <strong>Simple Test Email:</strong> Use this to test if your SMTP configuration is working correctly.
-                            </div>
-                            
-                            <!-- Test Email Message Area -->
-                            <div id="testEmailMessageArea" style="display: none;">
-                                <div id="testEmailAlert" class="alert" role="alert">
-                                    <div class="d-flex align-items-start">
-                                        <i id="testEmailIcon" class="me-2" style="font-size: 1.2rem; margin-top: 2px;"></i>
-                                        <div>
-                                            <strong id="testEmailTitle"></strong>
-                                            <p id="testEmailMessage" class="mb-0"></p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="row">
-                                <div class="col-md-8">
-                                    <div class="form-group mb-3">
-                                        <label for="test_email_address" class="form-label fw-semibold">
-                                            <i class="bi bi-envelope me-1"></i>Test Email Address
-                                        </label>
-                                        <input type="email" class="form-control form-control-lg" id="test_email_address_simple" 
-                                               placeholder="test@example.com">
-                                        <div class="form-text">
-                                            <i class="bi bi-info-circle me-1"></i>Enter the email address where you want to receive the test email
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-md-4 d-flex align-items-end">
-                                    <button type="button" class="btn btn-info btn-lg w-100" id="sendTestEmailBtn" onclick="sendSimpleTestEmail()">
-                                        <i class="bi bi-send me-2"></i>
-                                        Send Test Email
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <div class="mt-3">
-                                <h6 class="text-muted">Test Email Preview:</h6>
-                                <div class="border rounded p-3 bg-light">
-                                    <div class="fw-bold">Subject:</div>
-                                    <div class="mb-2">SMTP Configuration Test - <?php echo date('Y-m-d H:i:s'); ?></div>
-                                    
-                                    <div class="fw-bold">Message:</div>
-                                    <div class="text-muted">
-                                        <p class="mb-1">✅ <strong>SMTP Test Successful!</strong></p>
-                                        <p class="mb-1">If you receive this email, your SMTP configuration is working correctly.</p>
-                                        <p class="mb-0">Test sent on: <?php echo date('F j, Y \a\t g:i A'); ?></p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Test Email Modal -->
-                    <div class="modal fade" id="testEmailModal" tabindex="-1" aria-labelledby="testEmailModalLabel" aria-hidden="true">
-                        <div class="modal-dialog">
-                            <div class="modal-content">
-                                <div class="modal-header">
-                                    <h5 class="modal-title" id="testEmailModalLabel">
-                                        <i class="bi bi-send me-2"></i>Test Email Configuration
-                                    </h5>
-                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                </div>
-                                <div class="modal-body">
-                                    <div class="alert alert-info">
-                                        <i class="bi bi-info-circle me-2"></i>
-                                        <strong>Test Email:</strong> Enter an email address to send a test email using your current SMTP configuration. Make sure your SMTP settings are configured first.
-                                    </div>
-                                    
-                                    <form id="testEmailForm">
-                                        <div class="form-group mb-3">
-                                            <label for="test_email_address" class="form-label fw-semibold">
-                                                <i class="bi bi-envelope me-1"></i>Test Email Address *
-                                            </label>
-                                            <input type="email" class="form-control form-control-lg" id="test_email_address" 
-                                                   name="test_email_address" placeholder="test@example.com" required>
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>Enter the email address where you want to receive the test email
-                                            </div>
-                                        </div>
-                                        
-                                        <div class="form-group mb-3">
-                                            <label for="test_email_subject" class="form-label fw-semibold">
-                                                <i class="bi bi-tag me-1"></i>Test Subject (Optional)
-                                            </label>
-                                            <input type="text" class="form-control form-control-lg" id="test_email_subject" 
-                                                   name="test_email_subject" placeholder="SMTP Test Email" 
-                                                   value="SMTP Configuration Test - <?php echo date('Y-m-d H:i:s'); ?>">
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>Subject line for the test email
-                                            </div>
-                                        </div>
-                                    </form>
-                                </div>
-                                <div class="modal-footer">
-                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
-                                        <i class="bi bi-x me-1"></i>Cancel
-                                    </button>
-                                    <button type="button" class="btn btn-info" onclick="sendTestEmail()">
-                                        <i class="bi bi-send me-1"></i>Send Test Email
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Email Templates Section -->
-                    <div class="mt-5">
-                        <h4 class="mb-3">
-                            <i class="bi bi-file-earmark-text me-2"></i>
-                            Email Templates
-                        </h4>
-
-                        <div class="row">
-                            <div class="col-md-4">
-                                <div class="card">
-                                    <div class="card-body text-center">
-                                        <i class="bi bi-person-plus text-success" style="font-size: 2rem;"></i>
-                                        <h6 class="mt-2">Signup Verification</h6>
-                                        <p class="text-muted small">Email sent when user registers</p>
-                                        <button class="btn btn-sm btn-outline-primary" onclick="editTemplate('signup_verification')">
-                                            <i class="bi bi-pencil"></i> Edit
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="col-md-4">
-                                <div class="card">
-                                    <div class="card-body text-center">
-                                        <i class="bi bi-key text-warning" style="font-size: 2rem;"></i>
-                                        <h6 class="mt-2">Password Reset</h6>
-                                        <p class="text-muted small">Email for password recovery</p>
-                                        <button class="btn btn-sm btn-outline-primary" onclick="editTemplate('password_reset')">
-                                            <i class="bi bi-pencil"></i> Edit
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="col-md-4">
-                                <div class="card">
-                                    <div class="card-body text-center">
-                                        <i class="bi bi-check-circle text-info" style="font-size: 2rem;"></i>
-                                        <h6 class="mt-2">Welcome Email</h6>
-                                        <p class="text-muted small">Sent after successful registration</p>
-                                        <button class="btn btn-sm btn-outline-primary" onclick="editTemplate('welcome_email')">
-                                            <i class="bi bi-pencil"></i> Edit
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="row mt-3">
-                            <div class="col-md-4">
-                                <div class="card">
-                                    <div class="card-body text-center">
-                                        <i class="bi bi-envelope-check text-primary" style="font-size: 2rem;"></i>
-                                        <h6 class="mt-2">Email Verification</h6>
-                                        <p class="text-muted small">OTP verification email</p>
-                                        <button class="btn btn-sm btn-outline-primary" onclick="editTemplate('email_verification')">
-                                            <i class="bi bi-pencil"></i> Edit
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Short Codes Reference -->
-                    <div class="mt-4">
-                        <h5 class="mb-3">
-                            <i class="bi bi-code-slash me-2"></i>
-                            Available Short Codes
-                        </h5>
-                        <div class="card">
-                            <div class="card-body">
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <h6>User Information:</h6>
-                                        <ul class="list-unstyled">
-                                            <li><code>{username}</code> - User's username</li>
-                                            <li><code>{email}</code> - User's email address</li>
-                                            <li><code>{first_name}</code> - User's first name</li>
-                                            <li><code>{last_name}</code> - User's last name</li>
-                                            <li><code>{full_name}</code> - User's full name</li>
-                                        </ul>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <h6>System Information:</h6>
-                                        <ul class="list-unstyled">
-                                            <li><code>{company_name}</code> - Company name</li>
-                                            <li><code>{site_url}</code> - Website URL</li>
-                                            <li><code>{current_year}</code> - Current year</li>
-                                            <li><code>{reset_link}</code> - Password reset link</li>
-                                            <li><code>{verification_link}</code> - Email verification link</li>
-                                            <li><code>{otp_code}</code> - 6-digit verification code</li>
-                                        </ul>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <?php endif; ?>
 
                 <!-- Security Settings Tab -->
                 <?php if ($active_tab == 'security' && $can_manage_security): ?>
@@ -3957,537 +3369,11 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 });
                 
-                // Listen for successful form submission
-                document.getElementById('emailForm').addEventListener('submit', function(e) {
-                    // Check if this is an email form submission
-                    const smtpHost = document.getElementById('smtp_host').value;
-                    if (smtpHost) {
-                        // Store the form data for testing after save
-                        sessionStorage.setItem('smtpTestAfterSave', 'true');
-                        
-                        // Show settings saved animation after a short delay
-                        setTimeout(() => {
-                            showSettingsSaved();
-                        }, 500);
-                    }
-                });
                 });
             });
         });
 
-        // Show SMTP connected animation
-        function showSMTPConnected() {
-            const statusAlert = document.getElementById('smtpStatusAlert');
-            const statusText = document.getElementById('smtpStatusText');
-            const statusSpinner = document.getElementById('smtpStatusSpinner');
-            const statusIcon = document.getElementById('smtpStatusIcon');
-            
-            if (statusAlert && statusText && statusIcon) {
-                // Update status to connected
-                statusAlert.className = 'alert alert-success border smtp-connected';
-                statusText.textContent = 'Settings Saved - Ready to send emails';
-                statusSpinner.style.display = 'none';
-                statusIcon.style.display = 'inline-block';
-                statusIcon.classList.add('connected');
-                
-                // Remove blinking animation after 6 seconds
-                setTimeout(() => {
-                    statusAlert.classList.remove('smtp-connected');
-                }, 6000);
-            }
-        }
 
-        // Show settings saved animation
-        function showSettingsSaved() {
-            const statusAlert = document.getElementById('smtpStatusAlert');
-            const statusText = document.getElementById('smtpStatusText');
-            const statusSpinner = document.getElementById('smtpStatusSpinner');
-            const statusIcon = document.getElementById('smtpStatusIcon');
-            
-            if (statusAlert && statusText && statusIcon) {
-                // Update status to saved
-                statusAlert.className = 'alert alert-success border smtp-connected';
-                statusText.textContent = 'Settings Saved - Ready to send emails';
-                statusSpinner.style.display = 'none';
-                statusIcon.style.display = 'inline-block';
-                statusIcon.classList.add('connected');
-                
-                // Remove blinking animation after 6 seconds
-                setTimeout(() => {
-                    statusAlert.classList.remove('smtp-connected');
-                }, 6000);
-            }
-        }
-
-        // Test SMTP connection and show connected animation
-        function testSMTPConnection() {
-            const smtpHost = document.getElementById('smtp_host').value;
-            const smtpPort = document.getElementById('smtp_port').value;
-            const smtpUsername = document.getElementById('smtp_username').value;
-            const smtpPassword = document.getElementById('smtp_password').value;
-            const smtpFromEmail = document.getElementById('smtp_from_email').value;
-
-            if (!smtpHost || !smtpPort || !smtpUsername || !smtpPassword || !smtpFromEmail) {
-                return;
-            }
-
-            // Show loading state
-            const statusAlert = document.getElementById('smtpStatusAlert');
-            const statusText = document.getElementById('smtpStatusText');
-            const statusSpinner = document.getElementById('smtpStatusSpinner');
-            const statusIcon = document.getElementById('smtpStatusIcon');
-            
-            statusAlert.className = 'alert alert-info border';
-            statusText.textContent = 'Testing SMTP connection...';
-            statusSpinner.style.display = 'inline-block';
-            statusIcon.style.display = 'none';
-
-            // Create form data for connection test
-            const formData = new FormData();
-            formData.append('action', 'test_connection');
-            formData.append('smtp_host', smtpHost);
-            formData.append('smtp_port', smtpPort);
-            formData.append('smtp_username', smtpUsername);
-            formData.append('smtp_password', smtpPassword);
-            formData.append('smtp_encryption', document.getElementById('smtp_encryption').value);
-            formData.append('smtp_from_email', smtpFromEmail);
-            formData.append('smtp_from_name', document.getElementById('smtp_from_name').value);
-
-            // Test connection
-            fetch('test_email.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Show connected animation
-                    showSMTPConnected();
-                } else {
-                    // Show error state
-                    statusAlert.className = 'alert alert-danger border';
-                    statusText.textContent = 'Connection failed: ' + (data.message || 'Unknown error');
-                    statusSpinner.style.display = 'none';
-                    statusIcon.style.display = 'none';
-                }
-            })
-            .catch(error => {
-                console.error('Connection test error:', error);
-                statusAlert.className = 'alert alert-danger border';
-                statusText.textContent = 'Connection test failed';
-                statusSpinner.style.display = 'none';
-                statusIcon.style.display = 'none';
-            });
-        }
-
-        // Check SMTP status
-        function checkSMTPStatus() {
-            const smtpHost = document.getElementById('smtp_host').value;
-            const smtpPort = document.getElementById('smtp_port').value;
-            const smtpUsername = document.getElementById('smtp_username').value;
-            const smtpPassword = document.getElementById('smtp_password').value;
-            const smtpFromEmail = document.getElementById('smtp_from_email').value;
-            
-            console.log('SMTP Status Check:', {
-                smtpHost: smtpHost,
-                smtpPort: smtpPort,
-                smtpUsername: smtpUsername,
-                smtpPassword: smtpPassword ? '***hidden***' : 'empty',
-                smtpFromEmail: smtpFromEmail
-            });
-            
-            const statusAlert = document.getElementById('smtpStatusAlert');
-            const statusText = document.getElementById('smtpStatusText');
-            const statusSpinner = document.getElementById('smtpStatusSpinner');
-            const statusIcon = document.getElementById('smtpStatusIcon');
-            
-            // Always hide spinner first
-            if (statusSpinner) {
-                statusSpinner.style.display = 'none';
-            }
-            
-            // Check if all required fields are filled
-            // Note: Password field might be empty for security reasons even if saved
-            const requiredFields = [smtpHost, smtpPort, smtpUsername, smtpFromEmail];
-            const allFieldsFilled = requiredFields.every(field => field && field.trim() !== '');
-            
-            // If password is empty but other fields are filled, consider it configured
-            // Also check if any field has been modified from defaults (indicating user has configured)
-            const hasCustomHost = smtpHost && smtpHost !== 'smtp.gmail.com';
-            const hasCustomPort = smtpPort && smtpPort !== '587';
-            const hasUsername = smtpUsername && smtpUsername.trim() !== '';
-            const hasFromEmail = smtpFromEmail && smtpFromEmail.trim() !== '';
-            const hasPassword = smtpPassword && smtpPassword.trim() !== '';
-            
-            const isConfigured = hasCustomHost || (hasUsername && hasFromEmail && (hasPassword || hasCustomPort));
-            
-            console.log('Field analysis:', {
-                hasCustomHost,
-                hasCustomPort,
-                hasUsername,
-                hasFromEmail,
-                hasPassword,
-                allFieldsFilled,
-                isConfigured
-            });
-            
-            if (isConfigured) {
-                statusAlert.className = 'alert alert-success border';
-                statusText.textContent = 'Settings Saved - Ready to send emails';
-                if (statusIcon) {
-                    statusIcon.style.display = 'inline-block';
-                    statusIcon.classList.add('connected');
-                }
-                console.log('Status updated to: Settings Saved');
-            } else {
-                statusAlert.className = 'alert alert-warning border';
-                statusText.textContent = 'Please configure your SMTP settings';
-                if (statusIcon) {
-                    statusIcon.style.display = 'none';
-                    statusIcon.classList.remove('connected');
-                }
-                console.log('Status updated to: Please configure');
-            }
-        }
-
-        // Email settings functions
-        function openTestEmailModal() {
-            console.log('openTestEmailModal called');
-            
-            // Open the test email modal directly - no need to check SMTP settings first
-            const modalElement = document.getElementById('testEmailModal');
-            if (modalElement) {
-                const modal = new bootstrap.Modal(modalElement);
-                modal.show();
-                console.log('Test email modal opened successfully');
-            } else {
-                console.error('Modal element not found');
-                alert('Test email modal not found. Please refresh the page.');
-            }
-        }
-
-        // Display test email message
-        function showTestEmailMessage(success, message, email) {
-            const messageArea = document.getElementById('testEmailMessageArea');
-            const alert = document.getElementById('testEmailAlert');
-            const icon = document.getElementById('testEmailIcon');
-            const title = document.getElementById('testEmailTitle');
-            const messageText = document.getElementById('testEmailMessage');
-            
-            // Show the message area
-            messageArea.style.display = 'block';
-            
-            if (success) {
-                alert.className = 'alert alert-success';
-                icon.className = 'bi bi-check-circle-fill me-2';
-                title.textContent = 'Test Email Sent Successfully!';
-                messageText.innerHTML = `Test email has been sent to <strong>${email}</strong>. If you receive this email, your SMTP configuration is working correctly.`;
-            } else {
-                alert.className = 'alert alert-danger';
-                icon.className = 'bi bi-exclamation-triangle-fill me-2';
-                title.textContent = 'Test Email Failed';
-                messageText.textContent = message;
-            }
-            
-            // Scroll to message
-            messageArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            // Auto-hide success messages after 10 seconds
-            if (success) {
-                setTimeout(() => {
-                    messageArea.style.display = 'none';
-                }, 10000);
-            }
-        }
-        
-        // Simple test email function
-        function sendSimpleTestEmail() {
-            console.log('sendSimpleTestEmail called');
-            
-            const testEmailAddress = document.getElementById('test_email_address_simple').value;
-            
-            if (!testEmailAddress) {
-                showTestEmailMessage(false, 'Please enter a test email address.');
-                return;
-            }
-
-            // Validate email format
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(testEmailAddress)) {
-                showTestEmailMessage(false, 'Please enter a valid email address.');
-                return;
-            }
-
-            // Hide any previous messages
-            document.getElementById('testEmailMessageArea').style.display = 'none';
-
-            // Show loading state
-            const sendBtn = document.getElementById('sendTestEmailBtn');
-            const originalText = sendBtn.innerHTML;
-            sendBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Sending...';
-            sendBtn.disabled = true;
-
-            // Create form data and send using our new endpoint
-            const formData = new FormData();
-            formData.append('test_email_address', testEmailAddress);
-
-            // Send test email request
-            console.log('Sending simple test email request...');
-            fetch('send_test_email.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                console.log('Response received:', response);
-                return response.json();
-            })
-            .then(data => {
-                console.log('Response data:', data);
-                if (data.success) {
-                    showTestEmailMessage(true, data.message, testEmailAddress);
-                } else {
-                    showTestEmailMessage(false, data.message || 'Unknown error occurred');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showTestEmailMessage(false, 'Network error occurred while sending test email');
-            })
-            .finally(() => {
-                sendBtn.innerHTML = originalText;
-                sendBtn.disabled = false;
-            });
-        }
-
-        function sendTestEmail() {
-            console.log('sendTestEmail called');
-            
-            const testEmailAddress = document.getElementById('test_email_address').value;
-            const testEmailSubject = document.getElementById('test_email_subject').value;
-            
-            console.log('Test email values:', { testEmailAddress, testEmailSubject });
-            
-            if (!testEmailAddress) {
-                alert('Please enter a test email address.');
-                return;
-            }
-
-            // Validate email format
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(testEmailAddress)) {
-                alert('Please enter a valid email address.');
-                return;
-            }
-
-            // Get SMTP settings from form
-            const smtpHost = document.getElementById('smtp_host').value;
-            const smtpPort = document.getElementById('smtp_port').value;
-            const smtpUsername = document.getElementById('smtp_username').value;
-            const smtpPassword = document.getElementById('smtp_password').value;
-            const smtpEncryption = document.getElementById('smtp_encryption').value;
-            const smtpFromEmail = document.getElementById('smtp_from_email').value;
-            const smtpFromName = document.getElementById('smtp_from_name').value;
-
-            // Validate SMTP settings before sending
-            if (!smtpHost || !smtpPort || !smtpUsername || !smtpPassword || !smtpFromEmail) {
-                alert('Please configure your SMTP settings before sending a test email.');
-                return;
-            }
-
-            // Show loading state
-            const sendBtn = document.querySelector('button[onclick="sendTestEmail()"]');
-            const originalText = sendBtn.innerHTML;
-            sendBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Sending...';
-            sendBtn.disabled = true;
-
-            // Create form data
-            const formData = new FormData();
-            formData.append('action', 'test_email');
-            formData.append('smtp_host', smtpHost);
-            formData.append('smtp_port', smtpPort);
-            formData.append('smtp_username', smtpUsername);
-            formData.append('smtp_password', smtpPassword);
-            formData.append('smtp_encryption', smtpEncryption);
-            formData.append('smtp_from_email', smtpFromEmail);
-            formData.append('smtp_from_name', smtpFromName);
-            formData.append('test_email_address', testEmailAddress);
-            formData.append('test_email_subject', testEmailSubject);
-
-            // Send test email request
-            console.log('Sending test email request...');
-            fetch('test_email.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => {
-                console.log('Response received:', response);
-                return response.json();
-            })
-            .then(data => {
-                console.log('Response data:', data);
-                if (data.success) {
-                    alert('Test email sent successfully to ' + testEmailAddress + '!');
-                    // Close the modal
-                    const modal = bootstrap.Modal.getInstance(document.getElementById('testEmailModal'));
-                    modal.hide();
-                } else {
-                    alert('Failed to send test email: ' + (data.message || 'Unknown error'));
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('An error occurred while sending test email');
-            })
-            .finally(() => {
-                sendBtn.innerHTML = originalText;
-                sendBtn.disabled = false;
-            });
-        }
-
-        function editTemplate(templateType) {
-            // Open template editor modal
-            const modalHtml = `
-                <div class="modal fade" id="templateModal" tabindex="-1">
-                    <div class="modal-dialog modal-lg">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title">Edit ${templateType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                            </div>
-                            <div class="modal-body">
-                                <form id="templateForm">
-                                    <div class="mb-3">
-                                        <label class="form-label">Subject Line</label>
-                                        <input type="text" class="form-control" id="templateSubject" placeholder="Enter email subject">
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Email Body (HTML)</label>
-                                        <textarea class="form-control" id="templateBody" rows="15" placeholder="Enter email content with HTML"></textarea>
-                                    </div>
-                                    <div class="alert alert-info">
-                                        <small><strong>Available short codes:</strong> {username}, {email}, {company_name}, {site_url}, {reset_link}, {verification_link}</small>
-                                    </div>
-                                </form>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                <button type="button" class="btn btn-primary" onclick="saveTemplate('${templateType}')">Save Template</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            // Remove existing modal if present
-            const existingModal = document.getElementById('templateModal');
-            if (existingModal) {
-                existingModal.remove();
-            }
-
-            // Add modal to body
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-
-            // Load existing template content
-            loadTemplateContent(templateType);
-
-            // Show modal
-            const modal = new bootstrap.Modal(document.getElementById('templateModal'));
-            modal.show();
-        }
-
-        function loadTemplateContent(templateType) {
-            // This would typically load from the database
-            // For now, show default content
-            let subject = '';
-            let body = '';
-
-            switch(templateType) {
-                case 'signup_verification':
-                    subject = 'Verify Your Email - POS System';
-                    body = `Welcome to POS System!
-
-Thank you for registering. Please verify your email address to complete your registration.
-
-Click the link below to verify your email:
-{verification_link}
-
-If you didn't create an account, please ignore this email.
-
-Best regards,
-{company_name}`;
-                    break;
-                case 'password_reset':
-                    subject = 'Password Reset - POS System';
-                    body = `Password Reset Request
-
-Hi {username},
-
-You have requested to reset your password for your POS System account.
-
-Click the link below to reset your password:
-{reset_link}
-
-This link will expire in 1 hour.
-
-If you didn't request this password reset, please ignore this email.
-
-Best regards,
-{company_name}`;
-                    break;
-                case 'welcome_email':
-                    subject = 'Welcome to POS System';
-                    body = `Welcome to POS System, {username}!
-
-Your account has been successfully verified and activated.
-
-You can now log in to your POS System account.
-
-If you have any questions, please contact our support team.
-
-Happy selling!
-
-Best regards,
-{company_name}`;
-                    break;
-                case 'email_verification':
-                    subject = 'Email Verification - {company_name}';
-                    body = `Email Verification
-
-Hello {first_name} {last_name},
-
-Thank you for registering with {company_name}. To complete your registration, please verify your email address using the verification code below:
-
-Verification Code: {otp_code}
-
-This code will expire in 15 minutes.
-
-If you didn't request this verification, please ignore this email.
-
-Best regards,
-{company_name} Team`;
-                    break;
-            }
-
-            document.getElementById('templateSubject').value = subject;
-            document.getElementById('templateBody').value = body;
-        }
-
-        function saveTemplate(templateType) {
-            const subject = document.getElementById('templateSubject').value;
-            const body = document.getElementById('templateBody').value;
-
-            if (!subject.trim() || !body.trim()) {
-                alert('Please fill in both subject and body.');
-                return;
-            }
-
-            // Here you would typically save to database
-            alert('Template saved successfully! (Note: Database integration needed for persistence)');
-
-            // Close modal
-            const modal = bootstrap.Modal.getInstance(document.getElementById('templateModal'));
-            modal.hide();
-        }
 
         function clearSecurityLogs() {
             if (!confirm('Are you sure you want to clear security logs older than 30 days? This action cannot be undone.')) {
@@ -4982,60 +3868,17 @@ Best regards,
                 updateTransactionIdPreview();
             }
 
-            // Check SMTP status on page load with a small delay to ensure DOM is loaded
-            setTimeout(() => {
-                checkSMTPStatus();
-            }, 100);
-            
-            // Check if we just successfully saved SMTP settings
-            if (window.location.href.indexOf('tab=email') > -1) {
+            // Check if we just successfully saved settings
+            if (window.location.href.indexOf('tab=') > -1) {
                 // Check for success message in the page
                 const successAlert = document.querySelector('.alert-success');
-                if (successAlert && successAlert.textContent.includes('Email settings')) {
-                    // Trigger settings saved animation after a short delay
-                    setTimeout(() => {
-                        showSettingsSaved();
-                    }, 500);
+                if (successAlert) {
+                    // Settings saved successfully
                 }
                 
-                // Check if we should test connection after save
-                if (sessionStorage.getItem('smtpTestAfterSave') === 'true') {
-                    sessionStorage.removeItem('smtpTestAfterSave');
-                    // Test connection and show connected animation
-                    setTimeout(() => {
-                        testSMTPConnection();
-                    }, 1000);
-                }
             }
 
-            // Add event listeners to update SMTP status when fields change
-            const smtpFields = ['smtp_host', 'smtp_port', 'smtp_username', 'smtp_password', 'smtp_from_email'];
-            smtpFields.forEach(fieldId => {
-                const field = document.getElementById(fieldId);
-                if (field) {
-                    field.addEventListener('input', checkSMTPStatus);
-                    field.addEventListener('change', checkSMTPStatus);
-                }
-            });
 
-            // Password visibility toggle for SMTP password
-            const toggleSmtpPassword = document.getElementById('toggleSmtpPassword');
-            const smtpPasswordInput = document.getElementById('smtp_password');
-            const smtpPasswordIcon = document.getElementById('smtpPasswordIcon');
-
-            if (toggleSmtpPassword && smtpPasswordInput && smtpPasswordIcon) {
-                toggleSmtpPassword.addEventListener('click', function() {
-                    if (smtpPasswordInput.type === 'password') {
-                        smtpPasswordInput.type = 'text';
-                        smtpPasswordIcon.classList.remove('bi-eye');
-                        smtpPasswordIcon.classList.add('bi-eye-slash');
-                    } else {
-                        smtpPasswordInput.type = 'password';
-                        smtpPasswordIcon.classList.remove('bi-eye-slash');
-                        smtpPasswordIcon.classList.add('bi-eye');
-                    }
-                });
-            }
 
             // Quotation number preview functionality (only if quotation tab is active)
             if (document.getElementById('quotation_prefix') && document.getElementById('quotation_number_length')) {

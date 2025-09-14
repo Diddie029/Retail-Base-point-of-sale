@@ -81,13 +81,16 @@ try {
         // Generate transaction ID
         $transaction_id = generateTransactionId();
         
+        // Generate receipt ID first
+        $receipt_id = generateSequentialReceiptId($conn);
+        
         // Create sale record
         $stmt = $conn->prepare("
             INSERT INTO sales (
-                user_id, till_id, customer_id, customer_name, customer_phone, customer_email,
+                user_id, till_id, quotation_id, receipt_id, customer_id, customer_name, customer_phone, customer_email,
                 total_amount, discount, tax_amount, final_amount,
                 payment_method, split_payment, notes, sale_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         ");
 
         $customer_id = $paymentData['customer_id'] ?? null;
@@ -102,9 +105,13 @@ try {
         // Determine payment method for sales record
         $primaryPaymentMethod = $isSplitPayment ? 'split_payment' : $paymentData['method'];
 
+        $quotation_id = $paymentData['quotation_id'] ?? null;
+        
         $stmt->execute([
             $user_id,
             $_SESSION['selected_till_id'],
+            $quotation_id,
+            $receipt_id,
             $customer_id,
             $customer_name,
             $customer_phone,
@@ -119,6 +126,19 @@ try {
         ]);
 
         $sale_id = $conn->lastInsertId();
+
+        // Check if this sale came from a quotation and update quotation status
+        if (isset($paymentData['quotation_id']) && !empty($paymentData['quotation_id'])) {
+            $quotation_id = $paymentData['quotation_id'];
+            $update_quotation = "
+                UPDATE quotations 
+                SET quotation_status = 'converted', 
+                    updated_at = NOW() 
+                WHERE id = :quotation_id
+            ";
+            $stmt = $conn->prepare($update_quotation);
+            $stmt->execute([':quotation_id' => $quotation_id]);
+        }
 
         // Create sale items
         $stmt = $conn->prepare("
@@ -386,14 +406,19 @@ try {
             }
         }
 
+        // Update quotation status to 'converted' if this sale was created from a quotation
+        if ($quotation_id) {
+            $stmt = $conn->prepare("UPDATE quotations SET quotation_status = 'converted', updated_at = NOW() WHERE id = ?");
+            $stmt->execute([$quotation_id]);
+        }
+
         // Clear cart from session
         unset($_SESSION['cart']);
 
         // Commit transaction
         $conn->commit();
 
-        // Generate sequential receipt ID
-        $receipt_id = generateSequentialReceiptId($conn);
+        // Receipt ID was already generated and stored above
 
         // Return success response with cart totals
         echo json_encode([

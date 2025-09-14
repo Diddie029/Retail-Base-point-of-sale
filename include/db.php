@@ -17,7 +17,6 @@ try {
         CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
             username VARCHAR(50) NOT NULL UNIQUE,
-            email VARCHAR(100) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
             role ENUM('Admin', 'Cashier') NOT NULL,
             role_id INT DEFAULT NULL,
@@ -249,7 +248,6 @@ try {
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
             contact_person VARCHAR(100),
-            email VARCHAR(100),
             phone VARCHAR(20),
             address TEXT,
             payment_terms VARCHAR(100),
@@ -304,7 +302,6 @@ try {
             till_id INT DEFAULT NULL,
             customer_name VARCHAR(255) DEFAULT 'Walking Customer',
             customer_phone VARCHAR(20) DEFAULT '',
-            customer_email VARCHAR(255) DEFAULT '',
             customer_address TEXT,
             customer_id_number VARCHAR(50) DEFAULT '',
             total_amount DECIMAL(10, 2) NOT NULL,
@@ -324,6 +321,21 @@ try {
     try {
         $conn->exec("ALTER TABLE sales ADD COLUMN till_id INT DEFAULT NULL AFTER user_id");
         $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (till_id) REFERENCES register_tills(id)");
+    } catch (PDOException $e) {
+        // Column might already exist, ignore error
+    }
+
+    // Add quotation_id column to existing sales table if it doesn't exist
+    try {
+        $conn->exec("ALTER TABLE sales ADD COLUMN quotation_id INT DEFAULT NULL AFTER till_id");
+        $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE SET NULL");
+    } catch (PDOException $e) {
+        // Column might already exist, ignore error
+    }
+
+    // Add receipt_id column to existing sales table if it doesn't exist
+    try {
+        $conn->exec("ALTER TABLE sales ADD COLUMN receipt_id VARCHAR(50) DEFAULT NULL AFTER quotation_id");
     } catch (PDOException $e) {
         // Column might already exist, ignore error
     }
@@ -374,7 +386,6 @@ try {
             customer_number VARCHAR(20) UNIQUE NOT NULL COMMENT 'Unique customer identifier',
             first_name VARCHAR(100) NOT NULL,
             last_name VARCHAR(100) NOT NULL,
-            email VARCHAR(255) UNIQUE,
             phone VARCHAR(20),
             mobile VARCHAR(20),
             address TEXT,
@@ -969,10 +980,8 @@ try {
     // Create password_reset_attempts table for rate limiting
     $conn->exec("CREATE TABLE IF NOT EXISTS password_reset_attempts (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        email VARCHAR(100) NOT NULL,
         ip_address VARCHAR(45) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_email_time (email, created_at),
         INDEX idx_ip_time (ip_address, created_at)
     )");
 
@@ -1003,26 +1012,14 @@ try {
         INDEX idx_created_at (created_at)
     )");
 
-    // Create email_verifications table for OTP verification
-    $conn->exec("CREATE TABLE IF NOT EXISTS email_verifications (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        otp_code VARCHAR(6) NOT NULL,
-        expires_at TIMESTAMP NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        INDEX idx_user_id (user_id),
-        INDEX idx_otp_code (otp_code),
-        INDEX idx_expires_at (expires_at)
-    )");
 
     // Create login_attempts table for security monitoring
     $conn->exec("CREATE TABLE IF NOT EXISTS login_attempts (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        identifier VARCHAR(100) NOT NULL, -- username or email
+        identifier VARCHAR(100) NOT NULL, -- username
         ip_address VARCHAR(45) NOT NULL,
         user_agent TEXT,
-        attempt_type ENUM('username', 'email') DEFAULT 'email',
+        attempt_type ENUM('username') DEFAULT 'username',
         success TINYINT(1) DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_identifier_time (identifier, created_at),
@@ -1384,11 +1381,10 @@ try {
             CREATE TABLE IF NOT EXISTS expiry_alerts (
                 id INT PRIMARY KEY AUTO_INCREMENT,
                 product_expiry_id INT NOT NULL,
-                alert_type ENUM('email', 'sms', 'dashboard', 'system') NOT NULL,
+                alert_type ENUM('sms', 'dashboard', 'system') NOT NULL,
                 alert_days_before INT NOT NULL,
                 alert_date DATETIME NOT NULL,
                 recipient_user_id INT,
-                recipient_email VARCHAR(255),
                 recipient_phone VARCHAR(20),
                 alert_message TEXT,
                 sent_status ENUM('pending', 'sent', 'failed') DEFAULT 'pending',
@@ -1407,14 +1403,11 @@ try {
                 id INT PRIMARY KEY AUTO_INCREMENT,
                 user_id INT NOT NULL,
                 alert_days_before INT DEFAULT 30,
-                alert_types VARCHAR(255) DEFAULT 'email,dashboard' COMMENT 'Comma-separated alert types',
-                enable_email_alerts TINYINT(1) DEFAULT 1,
+                alert_types VARCHAR(255) DEFAULT 'dashboard' COMMENT 'Comma-separated alert types',
                 enable_sms_alerts TINYINT(1) DEFAULT 0,
                 enable_dashboard_alerts TINYINT(1) DEFAULT 1,
                 enable_system_alerts TINYINT(1) DEFAULT 1,
-                email_frequency ENUM('immediate', 'daily', 'weekly') DEFAULT 'daily',
                 sms_frequency ENUM('immediate', 'daily', 'weekly') DEFAULT 'immediate',
-                last_email_sent DATETIME,
                 last_sms_sent DATETIME,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1491,7 +1484,6 @@ try {
         // Add expiry tracker permissions
         $expiry_permissions = [
             ['manage_expiry_tracker', 'Manage expiry tracker system'],
-            ['view_expiry_alerts', 'View expiry alerts and notifications'],
             ['handle_expired_items', 'Handle expired items and take actions'],
             ['configure_expiry_alerts', 'Configure expiry alert settings']
         ];
@@ -1631,10 +1623,6 @@ try {
 
     // Add verification and OTP fields to users table
     $verificationFields = [
-        'email_verified' => "ALTER TABLE users ADD COLUMN email_verified TINYINT(1) DEFAULT 0",
-        'verification_token' => "ALTER TABLE users ADD COLUMN verification_token VARCHAR(255) DEFAULT NULL",
-        'verification_token_expiry' => "ALTER TABLE users ADD COLUMN verification_token_expiry DATETIME DEFAULT NULL",
-        'otp_code' => "ALTER TABLE users ADD COLUMN otp_code VARCHAR(6) DEFAULT NULL",
         'otp_expiry' => "ALTER TABLE users ADD COLUMN otp_expiry DATETIME DEFAULT NULL",
         'reset_token' => "ALTER TABLE users ADD COLUMN reset_token VARCHAR(255) DEFAULT NULL",
         'reset_token_expiry' => "ALTER TABLE users ADD COLUMN reset_token_expiry DATETIME DEFAULT NULL"
@@ -1654,7 +1642,7 @@ try {
     $enhancedUserFields = [
         'first_name' => "ALTER TABLE users ADD COLUMN first_name VARCHAR(100) DEFAULT NULL AFTER username",
         'last_name' => "ALTER TABLE users ADD COLUMN last_name VARCHAR(100) DEFAULT NULL AFTER first_name",
-        'phone' => "ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT NULL AFTER email",
+        'phone' => "ALTER TABLE users ADD COLUMN phone VARCHAR(20) DEFAULT NULL AFTER username",
         'address' => "ALTER TABLE users ADD COLUMN address TEXT DEFAULT NULL AFTER phone",
         'avatar' => "ALTER TABLE users ADD COLUMN avatar VARCHAR(500) DEFAULT NULL AFTER address",
         'status' => "ALTER TABLE users ADD COLUMN status ENUM('active', 'inactive', 'suspended') DEFAULT 'active' AFTER avatar",
@@ -1925,7 +1913,6 @@ try {
         ['manage_customer_memberships', 'Manage customer membership status and benefits', 'Customer Management'],
 
         // Customer Communication
-        ['send_customer_notifications', 'Send notifications and communications to customers', 'Customer Management'],
         ['manage_customer_communications', 'Manage customer communication preferences and history', 'Customer Management'],
         ['export_customer_data', 'Export customer data for external use', 'Customer Management'],
         ['import_customers', 'Import customer data from external sources', 'Customer Management'],
@@ -1994,9 +1981,6 @@ try {
 
         // User Communication
         ['send_user_notifications', 'Send notifications and messages to users', 'User Management'],
-        ['manage_user_email_settings', 'Manage user email preferences and settings', 'User Management'],
-        ['send_password_reset_emails', 'Send password reset emails to users', 'User Management'],
-        ['send_account_activation_emails', 'Send account activation emails', 'User Management'],
         ['manage_user_announcements', 'Send announcements and system messages to users', 'User Management'],
 
         // User Compliance and Audit
@@ -2301,7 +2285,6 @@ try {
 
         // Return Documentation & Communication
         ['manage_return_attachments', 'Manage return documentation and attachments', 'Returns Management'],
-        ['send_return_notifications', 'Send return status notifications to customers', 'Returns Management'],
         ['generate_return_documentation', 'Generate return receipts and documentation', 'Returns Management'],
         ['manage_return_correspondence', 'Manage customer correspondence regarding returns', 'Returns Management'],
 
@@ -2413,7 +2396,6 @@ try {
         // Supplier Communication
         ['communicate_with_suppliers', 'Send messages and communications to suppliers', 'Supplier Management'],
         ['manage_supplier_messages', 'Manage supplier communication history', 'Supplier Management'],
-        ['send_supplier_notifications', 'Send automated notifications to suppliers', 'Supplier Management'],
         ['schedule_supplier_meetings', 'Schedule and manage supplier meetings', 'Supplier Management'],
         ['track_supplier_interactions', 'Track all supplier interactions and communications', 'Supplier Management'],
         ['manage_supplier_feedback', 'Manage supplier feedback and surveys', 'Supplier Management'],
@@ -2500,12 +2482,9 @@ try {
         ['configure_payment_methods', 'Configure accepted payment methods', 'System Settings'],
         ['manage_barcode_settings', 'Configure barcode generation and scanning settings', 'System Settings'],
 
-        // Email and Communication Settings
-        ['configure_email_settings', 'Configure SMTP and email delivery settings', 'System Settings'],
+        // Communication Settings
         ['manage_notification_settings', 'Manage system notification preferences', 'System Settings'],
         ['configure_sms_settings', 'Configure SMS gateway and messaging settings', 'System Settings'],
-        ['test_email_configuration', 'Test email configuration and delivery', 'System Settings'],
-        ['manage_communication_templates', 'Manage email and SMS templates', 'System Settings'],
 
         // Security and Authentication Settings
         ['configure_security_settings', 'Configure system security and authentication settings', 'System Settings'],
@@ -2845,7 +2824,6 @@ try {
         ['company_name', 'POS System'],
         ['company_address', ''],
         ['company_phone', ''],
-        ['company_email', ''],
         ['company_website', ''],
         ['company_logo', ''],
         ['currency_symbol', 'KES'],
@@ -2866,13 +2844,6 @@ try {
         ['default_payment_method', 'cash'],
         ['allow_negative_stock', '0'],
         ['barcode_type', 'CODE128'],
-        ['smtp_host', 'smtp.gmail.com'],
-        ['smtp_port', '587'],
-        ['smtp_username', ''],
-        ['smtp_password', ''],
-        ['smtp_encryption', 'tls'],
-        ['smtp_from_email', ''],
-        ['smtp_from_name', 'POS System'],
         ['sku_prefix', 'LIZ'],
         ['sku_format', 'SKU000001'],
         ['sku_length', '6'],
@@ -2886,14 +2857,12 @@ try {
         ['order_number_separator', '-'],
         ['default_order_currency', 'KES'],
         ['order_approval_required', '0'],
-        ['order_notification_email', ''],
         ['order_auto_approval', '1'],
         ['order_reminder_days', '3'],
         ['order_expiry_days', '30'],
         ['order_auto_approve', '1'],
         ['order_require_approval', '0'],
         ['order_notification_sms', '0'],
-        ['order_notification_email', '1'],
         ['order_show_cost_price', '1'],
         ['order_show_profit_margin', '0'],
         ['order_allow_partial_receipt', '1'],
@@ -2904,7 +2873,6 @@ try {
         ['return_number_separator', '-'],
         ['return_auto_approval', '0'],
         ['return_approval_required', '1'],
-        ['return_notification_email', ''],
         ['return_allow_attachments', '1'],
         ['return_max_attachment_size', '5242880'],
         ['return_allowed_file_types', 'jpg,jpeg,png,pdf,doc,docx'],
@@ -2913,7 +2881,6 @@ try {
         // Add expiry tracker settings
         ['expiry_alert_enabled', '1'],
         ['expiry_default_alert_days', '30'],
-        ['expiry_email_template', 'Product {product_name} (Batch: {batch_number}) will expire on {expiry_date}. Please take necessary action.'],
         ['expiry_sms_template', '{product_name} expires {expiry_date}. Action required.'],
         ['expiry_auto_disposal', '0'],
         ['expiry_disposal_method', 'incineration'],
@@ -3128,7 +3095,6 @@ try {
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
             contact_person VARCHAR(100),
-            email VARCHAR(100),
             phone VARCHAR(20),
             address TEXT,
             tax_id VARCHAR(50),
@@ -4389,7 +4355,6 @@ try {
             quotation_number VARCHAR(50) UNIQUE NOT NULL,
             customer_id INT,
             customer_name VARCHAR(255),
-            customer_email VARCHAR(255),
             customer_phone VARCHAR(50),
             customer_address TEXT,
             user_id INT NOT NULL,
@@ -4397,7 +4362,7 @@ try {
             tax_amount DECIMAL(10,2) DEFAULT 0.00,
             discount_amount DECIMAL(10,2) DEFAULT 0.00,
             final_amount DECIMAL(10,2) DEFAULT 0.00,
-            quotation_status ENUM('draft', 'sent', 'approved', 'rejected', 'expired') DEFAULT 'draft',
+            quotation_status ENUM('draft', 'sent', 'approved', 'rejected', 'expired', 'converted') DEFAULT 'draft',
             valid_until DATE,
             notes TEXT,
             terms TEXT,
@@ -4411,6 +4376,14 @@ try {
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     ");
+
+    // Update quotation_status ENUM to include 'converted' if needed
+    try {
+        $conn->exec("ALTER TABLE quotations MODIFY COLUMN quotation_status ENUM('draft', 'sent', 'approved', 'rejected', 'expired', 'converted') DEFAULT 'draft'");
+    } catch (Exception $e) {
+        // ENUM might already be updated, continue silently
+        error_log("Quotation status ENUM update: " . $e->getMessage());
+    }
 
     // Create quotation_items table
     $conn->exec("
@@ -5795,7 +5768,6 @@ $conn->exec("
         sale_id INT DEFAULT NULL COMMENT 'Original sale ID if converted from receipt',
         customer_id INT DEFAULT NULL,
         customer_name VARCHAR(255) NOT NULL,
-        customer_email VARCHAR(255) DEFAULT '',
         customer_phone VARCHAR(20) DEFAULT '',
         customer_address TEXT,
         subtotal DECIMAL(10,2) DEFAULT 0,
