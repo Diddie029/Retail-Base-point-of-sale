@@ -4,6 +4,8 @@ session_start();
 // require_once __DIR__ . '/../includes/bootstrap.php';
 // pos_guard_redirect_if_not_installed();
 
+include '../include/db.php';
+
 if(isset($_SESSION['user_id'])) {
     // Get user's role redirect URL
     $user_id = $_SESSION['user_id'];

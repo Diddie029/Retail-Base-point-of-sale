@@ -66,16 +66,30 @@ try {
         $total_voided_amount = 0;
         
         foreach ($cart as $item) {
-            $item_total = $item['price'] * $item['quantity'];
+            $product_id = $item['product_id'] ?? $item['id'] ?? null;
+            $quantity = isset($item['quantity']) ? (float)$item['quantity'] : 1;
+            $unit_price = isset($item['price']) ? (float)$item['price'] : null;
+
+            if ($product_id) {
+                $pstmt = $conn->prepare("SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?");
+                $pstmt->execute([$product_id]);
+                $prod = $pstmt->fetch(PDO::FETCH_ASSOC);
+                if ($prod) {
+                    $unit_price = (float)getCurrentProductPrice($prod);
+                }
+            }
+
+            $unit_price = $unit_price ?? 0;
+            $item_total = $unit_price * $quantity;
             $total_voided_amount += $item_total;
-            
+
             $stmt->execute([
                 $user_id,
                 $till_id,
-                $item['id'],
-                $item['name'],
-                $item['quantity'],
-                $item['price'],
+                $product_id,
+                $item['name'] ?? $item['product_name'] ?? '',
+                $quantity,
+                $unit_price,
                 $item_total,
                 $void_reason
             ]);

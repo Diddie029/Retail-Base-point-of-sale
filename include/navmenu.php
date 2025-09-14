@@ -37,16 +37,20 @@ if ($isAdmin) {
         $prioritySections[] = $sectionKey; // All sections are priority for admin
     }
     
-    // Ensure critical sections are always visible for admin (hardcoded fallback)
-    $showSections['dashboard'] = true;
-    $showSections['pos'] = true;
-    $showSections['reports'] = true;
-    
+        // Ensure critical sections are always visible for admin (hardcoded fallback)
+        $showSections['dashboard'] = true;
+        $showSections['pos'] = true;
+        $showSections['quotations'] = true;
+        $showSections['reports'] = true;
+
     if (!in_array('dashboard', $prioritySections)) {
         $prioritySections[] = 'dashboard';
     }
     if (!in_array('pos', $prioritySections)) {
         $prioritySections[] = 'pos';
+    }
+    if (!in_array('quotations', $prioritySections)) {
+        $prioritySections[] = 'quotations';
     }
     if (!in_array('reports', $prioritySections)) {
         $prioritySections[] = 'reports';
@@ -97,6 +101,9 @@ if ($isAdmin) {
         },
         'admin' => function($perms){
             return hasPermission('manage_users', $perms) || hasPermission('manage_settings', $perms) || hasPermission('manage_backup', $perms) || hasPermission('view_security_logs', $perms);
+        },
+        'quotations' => function($perms){
+            return hasPermission('process_sales', $perms) || hasPermission('manage_quotations', $perms) || hasPermission('create_quotations', $perms) || hasPermission('view_quotations', $perms);
         }
     ];
 
@@ -148,6 +155,7 @@ if ($isAdmin) {
         // Ensure critical sections are always visible for admin users
         $showSections['dashboard'] = true;
         $showSections['pos'] = true;
+        $showSections['quotations'] = true;
         $showSections['reports'] = true;
         
         if (!in_array('dashboard', $prioritySections)) {
@@ -155,6 +163,9 @@ if ($isAdmin) {
         }
         if (!in_array('pos', $prioritySections)) {
             $prioritySections[] = 'pos';
+        }
+        if (!in_array('quotations', $prioritySections)) {
+            $prioritySections[] = 'quotations';
         }
         if (!in_array('reports', $prioritySections)) {
             $prioritySections[] = 'reports';
@@ -164,6 +175,7 @@ if ($isAdmin) {
         $showSections = [
             'dashboard' => hasPermission('view_dashboard', $permissions) || hasPermission('view_reports', $permissions) || hasPermission('view_analytics', $permissions),
             'pos' => hasPermission('process_sales', $permissions),
+            'quotations' => hasPermission('process_sales', $permissions) || hasPermission('manage_quotations', $permissions) || hasPermission('create_quotations', $permissions) || hasPermission('view_quotations', $permissions),
             'customer_crm' => hasPermission('view_customers', $permissions) || hasPermission('manage_customers', $permissions) || hasPermission('manage_loyalty', $permissions),
             'inventory' => hasPermission('manage_inventory', $permissions) || hasPermission('manage_categories', $permissions) || hasPermission('manage_product_brands', $permissions) || hasPermission('manage_product_suppliers', $permissions),
             'expiry' => hasPermission('view_expiry_alerts', $permissions) || hasPermission('manage_expiry_tracker', $permissions),
@@ -214,18 +226,22 @@ if ($totalVisibleSections == 0 && (
     // Ensure critical sections are always visible for admin (emergency fallback)
     $showSections['dashboard'] = true;
     $showSections['pos'] = true;
+    $showSections['quotations'] = true;
     $showSections['reports'] = true;
-    
+
     if (!in_array('dashboard', $prioritySections)) {
         $prioritySections[] = 'dashboard';
     }
     if (!in_array('pos', $prioritySections)) {
         $prioritySections[] = 'pos';
     }
+    if (!in_array('quotations', $prioritySections)) {
+        $prioritySections[] = 'quotations';
+    }
     if (!in_array('reports', $prioritySections)) {
         $prioritySections[] = 'reports';
     }
-    
+
     // Recalculate visible sections
     $visibleSections = array_filter($showSections);
     $totalVisibleSections = count($visibleSections);
@@ -262,6 +278,7 @@ if ($totalVisibleSections == 0 && (
             </a>
         </div>
         <?php endif; ?>
+
 
         <!-- Dynamic Navigation Sections -->
         <?php include 'dynamic_navigation.php'; ?>

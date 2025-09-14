@@ -45,6 +45,8 @@ $can_manage_email = hasPermission('manage_settings', $permissions) || hasPermiss
 $can_manage_security = hasPermission('manage_settings', $permissions) || hasPermission('configure_security_settings', $permissions);
 $can_manage_backup = hasPermission('manage_settings', $permissions) || hasPermission('configure_backup_settings', $permissions);
 $can_manage_receipts = hasPermission('manage_settings', $permissions) || hasPermission('configure_receipt_settings', $permissions);
+$can_manage_quotations = hasPermission('manage_settings', $permissions) || hasPermission('configure_quotation_settings', $permissions);
+$can_manage_invoices = hasPermission('manage_settings', $permissions) || hasPermission('configure_invoice_settings', $permissions);
 
 // Get system settings
 $settings = [];
@@ -105,6 +107,14 @@ $defaults = [
     'invoice_separator' => '-',
     'invoice_format' => 'prefix-date-number',
     'invoice_auto_generate' => '1',
+    'invoice_start_number' => '1',
+    'invoice_default_payment_terms' => 'Due within 30 days',
+    'invoice_default_status' => 'draft',
+    'invoice_auto_send_email' => '0',
+    'invoice_include_terms' => '1',
+    'invoice_terms_text' => 'Payment is due within the specified terms. Late payments may incur additional charges.',
+    'invoice_show_discount' => '1',
+    'invoice_show_tax_breakdown' => '1',
 
     // Product Number Settings
     'auto_generate_product_number' => '1',
@@ -170,6 +180,14 @@ Best regards,
     'receipt_show_discount' => '1',
     'receipt_footer' => '',
     'receipt_thanks_message' => 'Thank you for your business!',
+
+    // Quotation Settings
+    'quotation_prefix' => 'QUO',
+    'quotation_number_length' => '6',
+    'quotation_start_number' => '1',
+    'quotation_valid_days' => '30',
+    'quotation_terms' => '',
+    'quotation_notes' => '',
     'receipt_width' => '80',
     'receipt_font_size' => '12',
     'auto_print_receipt' => '0',
@@ -179,9 +197,6 @@ Best regards,
     'receipt_number_length' => '6',
     'receipt_number_separator' => '-',
     'receipt_number_format' => 'prefix-date-number',
-    'allow_receipt_reprint' => '1',
-    'max_reprint_attempts' => '3',
-    'require_password_for_reprint' => '0',
     'transaction_id_prefix' => 'TXN',
     'transaction_id_length' => '6',
     'transaction_id_format' => 'prefix-random'
@@ -425,6 +440,17 @@ function generateTransactionIdPreview($settings) {
     }
 }
 
+// Function to generate quotation number preview
+function generateQuotationNumberPreview($settings) {
+    $prefix = $settings['quotation_prefix'] ?? 'QUO';
+    $length = intval($settings['quotation_number_length'] ?? 6);
+    
+    // Generate sample number
+    $sampleNumber = str_pad('1', $length, '0', STR_PAD_LEFT);
+    
+    return $prefix . $sampleNumber;
+}
+
 
 // Active tab
 $active_tab = isset($_GET['tab']) ? $_GET['tab'] : 'company';
@@ -438,7 +464,9 @@ $valid_tabs = [
     'appearance' => $can_manage_appearance,
     'email' => $can_manage_email,
     'security' => $can_manage_security,
-    'receipt' => $can_manage_receipts
+    'receipt' => $can_manage_receipts,
+    'quotation' => $can_manage_quotations,
+    'invoice' => $can_manage_invoices
 ];
 
 if (!isset($valid_tabs[$active_tab]) || !$valid_tabs[$active_tab]) {
@@ -564,6 +592,28 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    if (isset($_POST['invoice_start_number'])) {
+        $invoice_start_number = intval($_POST['invoice_start_number']);
+        if ($invoice_start_number < 1) {
+            $errors[] = "Invoice start number must be at least 1.";
+        }
+    }
+
+    if (isset($_POST['invoice_default_payment_terms'])) {
+        $invoice_default_payment_terms = trim($_POST['invoice_default_payment_terms']);
+        if (strlen($invoice_default_payment_terms) > 100) {
+            $errors[] = "Default payment terms cannot exceed 100 characters.";
+        }
+    }
+
+    if (isset($_POST['invoice_terms_text'])) {
+        $invoice_terms_text = trim($_POST['invoice_terms_text']);
+        if (strlen($invoice_terms_text) > 500) {
+            $errors[] = "Invoice terms text cannot exceed 500 characters.";
+        }
+    }
+
+
 
     // Customer Number Settings Validation
     if (isset($_POST['customer_number_prefix'])) {
@@ -629,12 +679,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if (isset($_POST['max_reprint_attempts'])) {
-        $max_reprint = intval($_POST['max_reprint_attempts']);
-        if ($max_reprint < 1 || $max_reprint > 10) {
-            $errors[] = "Maximum reprint attempts must be between 1 and 10.";
-        }
-    }
 
     // Transaction ID settings validation
     if (isset($_POST['transaction_id_prefix'])) {
@@ -653,13 +697,45 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Transaction ID length must be between 3 and 10 digits.";
         }
     }
+
+    // Quotation Settings Validation
+    if (isset($_POST['quotation_prefix'])) {
+        $quotation_prefix = trim($_POST['quotation_prefix']);
+        if (strlen($quotation_prefix) > 10) {
+            $errors[] = "Quotation prefix cannot exceed 10 characters.";
+        }
+        if (!preg_match('/^[A-Za-z0-9_-]*$/', $quotation_prefix)) {
+            $errors[] = "Quotation prefix can only contain letters, numbers, hyphens, and underscores.";
+        }
+    }
+
+    if (isset($_POST['quotation_number_length'])) {
+        $quotation_length = intval($_POST['quotation_number_length']);
+        if ($quotation_length < 3 || $quotation_length > 10) {
+            $errors[] = "Quotation number length must be between 3 and 10 digits.";
+        }
+    }
+
+    if (isset($_POST['quotation_start_number'])) {
+        $quotation_start = intval($_POST['quotation_start_number']);
+        if ($quotation_start < 1) {
+            $errors[] = "Quotation start number must be at least 1.";
+        }
+    }
+
+    if (isset($_POST['quotation_valid_days'])) {
+        $quotation_valid_days = intval($_POST['quotation_valid_days']);
+        if ($quotation_valid_days < 1 || $quotation_valid_days > 365) {
+            $errors[] = "Quotation validity days must be between 1 and 365.";
+        }
+    }
     
     if (empty($errors)) {
         try {
             $conn->beginTransaction();
             
             // Handle checkbox values
-            $checkbox_fields = ['enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_customer_number', 'receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'auto_close_print_window', 'auto_generate_receipt_number', 'allow_receipt_reprint', 'require_password_for_reprint'];
+            $checkbox_fields = ['enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_customer_number', 'receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'auto_close_print_window', 'auto_generate_receipt_number'];
             foreach($checkbox_fields as $field) {
                 if (!isset($_POST[$field])) {
                     $_POST[$field] = '0';
@@ -1002,6 +1078,88 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         .form-group.mb-3 {
             margin-bottom: 1.5rem !important;
         }
+
+        /* Enhanced Card Styling */
+        .card {
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1) !important;
+        }
+
+        /* Gradient Backgrounds */
+        .bg-gradient-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .bg-gradient-success {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        .bg-gradient-info {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        }
+
+        .bg-gradient-warning {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        }
+
+        /* Card Header Styling */
+        .card-header {
+            border-radius: 12px 12px 0 0 !important;
+            border: none;
+            padding: 1.25rem 1.5rem;
+        }
+
+        .card-header h5, .card-header h6 {
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        /* Preview Section Styling */
+        .alert-light {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+        }
+
+        .font-weight-bold {
+            font-weight: 700 !important;
+        }
+
+        /* Status Icons */
+        .text-success {
+            color: #28a745 !important;
+        }
+
+        .text-primary {
+            color: #007bff !important;
+        }
+
+        /* Form Controls Enhancement */
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+
+        .form-check-input:checked {
+            background-color: #667eea;
+            border-color: #667eea;
+        }
+
+        /* Responsive Adjustments */
+        @media (max-width: 768px) {
+            .card-body {
+                padding: 1rem;
+            }
+            
+            .card-header {
+                padding: 1rem;
+            }
+        }
         
         /* SMTP Status Blinking Animation */
         .smtp-connected {
@@ -1197,6 +1355,18 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <a href="?tab=receipt" class="nav-link <?php echo $active_tab == 'receipt' ? 'active' : ''; ?>">
                         <i class="bi bi-receipt me-2"></i>
                         Receipt Settings
+                    </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_quotations): ?>
+                    <a href="?tab=quotation" class="nav-link <?php echo $active_tab == 'quotation' ? 'active' : ''; ?>">
+                        <i class="bi bi-file-text me-2"></i>
+                        Quotation Settings
+                    </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_invoices): ?>
+                    <a href="?tab=invoice" class="nav-link <?php echo $active_tab == 'invoice' ? 'active' : ''; ?>">
+                        <i class="bi bi-file-earmark-text me-2"></i>
+                        Invoice Settings
                     </a>
                     <?php endif; ?>
                 </div>
@@ -1769,78 +1939,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
                         </div>
 
-                        <!-- Invoice Number Settings Section -->
-                        <div class="form-group mt-5">
-                            <h5 class="mb-3 text-primary">
-                                <i class="bi bi-file-earmark-text me-2"></i>
-                                Invoice Number Settings
-                            </h5>
-                        </div>
-
-                        <div class="form-group">
-                            <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="invoice_auto_generate" name="invoice_auto_generate" value="1"
-                                       <?php echo (isset($settings['invoice_auto_generate']) && $settings['invoice_auto_generate'] == '1') ? 'checked' : ''; ?>>
-                                <label class="form-check-label" for="invoice_auto_generate">
-                                    Auto-generate Invoice Numbers
-                                </label>
-                            </div>
-                            <div class="form-text">Automatically generate invoice numbers when creating purchase invoices.</div>
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="invoice_prefix" class="form-label">Invoice Number Prefix</label>
-                                    <input type="text" class="form-control" id="invoice_prefix" name="invoice_prefix"
-                                           value="<?php echo htmlspecialchars($settings['invoice_prefix'] ?? 'INV'); ?>"
-                                           placeholder="INV" maxlength="10">
-                                    <div class="form-text">Prefix for all invoice numbers (e.g., INV, PUR, BILL).</div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="invoice_length" class="form-label">Invoice Number Length</label>
-                                    <input type="number" min="3" max="10" class="form-control" id="invoice_length" name="invoice_length"
-                                           value="<?php echo htmlspecialchars($settings['invoice_length'] ?? '6'); ?>"
-                                           placeholder="6">
-                                    <div class="form-text">Number of digits in the invoice number (3-10).</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="invoice_separator" class="form-label">Invoice Number Separator</label>
-                                    <input type="text" class="form-control" id="invoice_separator" name="invoice_separator"
-                                           value="<?php echo htmlspecialchars($settings['invoice_separator'] ?? '-'); ?>"
-                                           placeholder="-" maxlength="5">
-                                    <div class="form-text">Separator between prefix and numbers (e.g., -, _, space).</div>
-                                </div>
-                            </div>
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="invoice_format" class="form-label">Invoice Number Format</label>
-                                    <select class="form-control" id="invoice_format" name="invoice_format">
-                                        <option value="prefix-date-number" <?php echo ($settings['invoice_format'] ?? 'prefix-date-number') == 'prefix-date-number' ? 'selected' : ''; ?>>Prefix-Date-Number (INV-20241201-000001)</option>
-                                        <option value="prefix-number" <?php echo ($settings['invoice_format'] ?? 'prefix-date-number') == 'prefix-number' ? 'selected' : ''; ?>>Prefix-Number (INV-000001)</option>
-                                        <option value="date-prefix-number" <?php echo ($settings['invoice_format'] ?? 'prefix-date-number') == 'date-prefix-number' ? 'selected' : ''; ?>>Date-Prefix-Number (20241201-INV-000001)</option>
-                                        <option value="number-only" <?php echo ($settings['invoice_format'] ?? 'prefix-date-number') == 'number-only' ? 'selected' : ''; ?>>Number Only (000001)</option>
-                                    </select>
-                                    <div class="form-text">Format for generating invoice numbers.</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="invoice_number_preview" class="form-label">Invoice Number Preview</label>
-                            <div class="alert alert-info">
-                                <i class="bi bi-eye me-2"></i>
-                                <strong>Preview:</strong>
-                                <span id="invoiceNumberPreview"><?php echo generateInvoiceNumberPreview($settings); ?></span>
-                            </div>
-                        </div>
 
                         <!-- Product Number Settings Section -->
                         <div class="form-group mt-5">
@@ -3183,12 +3281,45 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <div class="form-text">Choose how receipt numbers are formatted</div>
                                 </div>
 
+                                <!-- Receipt Preview Section -->
                                 <div class="form-group mb-3">
-                                    <label class="form-label fw-semibold">Receipt Number Preview</label>
-                                    <div class="alert alert-info">
+                                    <div class="card border-0 shadow-sm">
+                                        <div class="card-header bg-gradient-info text-white">
+                                            <h6 class="mb-0">
                                         <i class="bi bi-eye me-2"></i>
-                                        <strong>Preview:</strong>
-                                        <span id="receiptNumberPreview"><?php echo generateReceiptNumberPreview($settings); ?></span>
+                                                Receipt Preview & Status
+                                            </h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <div class="text-center">
+                                                        <h6 class="text-muted mb-2">Receipt Number Preview</h6>
+                                                        <div class="alert alert-light border-0 mb-0">
+                                                            <h4 class="mb-0 text-primary font-weight-bold" id="receiptNumberPreview">
+                                                                <?php echo generateReceiptNumberPreview($settings); ?>
+                                                            </h4>
+                                                            <small class="text-muted">Preview of how receipt numbers will appear</small>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="text-center">
+                                                        <h6 class="text-muted mb-2">Settings Status</h6>
+                                                        <div class="alert alert-light border-0 mb-0">
+                                                            <div class="d-flex align-items-center justify-content-center mb-2">
+                                                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                                                <span class="small">Receipt numbering configured</span>
+                                                            </div>
+                                                            <div class="d-flex align-items-center justify-content-center">
+                                                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                                                <span class="small">Print settings configured</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -3288,12 +3419,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </div>
                         </div>
 
-                        <!-- Printing & Reprint Settings -->
+                        <!-- Printing Settings -->
                         <div class="card mb-4">
                             <div class="card-header bg-info text-white">
                                 <h5 class="mb-0">
                                     <i class="bi bi-printer me-2"></i>
-                                    Printing & Reprint Settings
+                                    Printing Settings
                                 </h5>
                             </div>
                             <div class="card-body">
@@ -3322,47 +3453,8 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <div class="form-text">Automatically close print window after printing</div>
                                         </div>
                                     </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" id="allow_receipt_reprint" name="allow_receipt_reprint" value="1"
-                                                       <?php echo (isset($settings['allow_receipt_reprint']) && $settings['allow_receipt_reprint'] == '1') ? 'checked' : ''; ?>>
-                                                <label class="form-check-label fw-semibold" for="allow_receipt_reprint">
-                                                    <i class="bi bi-arrow-repeat me-1"></i>Allow Receipt Reprint
-                                                </label>
-                                            </div>
-                                            <div class="form-text">Allow reprinting of existing receipts</div>
-                                        </div>
-                                    </div>
                                 </div>
 
-                                <div class="row">
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <label for="max_reprint_attempts" class="form-label fw-semibold">
-                                                <i class="bi bi-arrow-repeat me-1"></i>Max Reprint Attempts
-                                            </label>
-                                            <input type="number" class="form-control" id="max_reprint_attempts" name="max_reprint_attempts" 
-                                                   value="<?php echo htmlspecialchars($settings['max_reprint_attempts'] ?? '3'); ?>" 
-                                                   min="1" max="10" placeholder="3">
-                                            <div class="form-text">
-                                                <i class="bi bi-info-circle me-1"></i>Maximum times a receipt can be reprinted
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <div class="form-group mb-3">
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" id="require_password_for_reprint" name="require_password_for_reprint" value="1"
-                                                       <?php echo (isset($settings['require_password_for_reprint']) && $settings['require_password_for_reprint'] == '1') ? 'checked' : ''; ?>>
-                                                <label class="form-check-label fw-semibold" for="require_password_for_reprint">
-                                                    <i class="bi bi-key me-1"></i>Require Password for Reprint
-                                                </label>
-                                            </div>
-                                            <div class="form-text">Require password verification for reprints</div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                         </div>
 
@@ -3372,6 +3464,356 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <button type="submit" class="btn btn-primary btn-lg">
                                     <i class="bi bi-save me-2"></i>
                                     Save Receipt Settings
+                                </button>
+                                <button type="reset" class="btn btn-outline-secondary btn-lg">
+                                    <i class="bi bi-arrow-clockwise me-2"></i>
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <?php endif; ?>
+
+                <!-- Quotation Settings Tab -->
+                <?php if ($active_tab == 'quotation' && $can_manage_quotations): ?>
+                <div class="data-section">
+                    <div class="section-header">
+                        <h3 class="section-title">
+                            <i class="bi bi-file-text me-2"></i>
+                            Quotation Settings
+                        </h3>
+                        <p class="section-subtitle text-muted">Configure quotation numbering and display options</p>
+                    </div>
+                    
+                    <form method="POST" action="" class="settings-form" id="quotationForm">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="quotation_prefix" class="form-label">Quotation Number Prefix</label>
+                                    <input type="text" class="form-control" id="quotation_prefix" name="quotation_prefix" 
+                                           value="<?php echo htmlspecialchars($settings['quotation_prefix'] ?? 'QUO'); ?>" 
+                                           maxlength="10" placeholder="QUO">
+                                    <div class="form-text">Prefix for quotation numbers (e.g., QUO, QTN, QUOTE)</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="quotation_number_length" class="form-label">Number Length</label>
+                                    <input type="number" class="form-control" id="quotation_number_length" name="quotation_number_length" 
+                                           value="<?php echo htmlspecialchars($settings['quotation_number_length'] ?? '6'); ?>" 
+                                           min="3" max="10">
+                                    <div class="form-text">Number of digits for quotation numbers (e.g., 6 = QUO000001)</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="quotation_start_number" class="form-label">Starting Number</label>
+                                    <input type="number" class="form-control" id="quotation_start_number" name="quotation_start_number" 
+                                           value="<?php echo htmlspecialchars($settings['quotation_start_number'] ?? '1'); ?>" 
+                                           min="1">
+                                    <div class="form-text">Starting number for new quotations</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="quotation_valid_days" class="form-label">Default Validity (Days)</label>
+                                    <input type="number" class="form-control" id="quotation_valid_days" name="quotation_valid_days" 
+                                           value="<?php echo htmlspecialchars($settings['quotation_valid_days'] ?? '30'); ?>" 
+                                           min="1" max="365">
+                                    <div class="form-text">Default number of days quotations are valid</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="quotation_terms" class="form-label">Default Terms & Conditions</label>
+                            <textarea class="form-control" id="quotation_terms" name="quotation_terms" rows="4" 
+                                      placeholder="Enter default terms and conditions for quotations..."><?php echo htmlspecialchars($settings['quotation_terms'] ?? ''); ?></textarea>
+                            <div class="form-text">Default terms that will appear on all quotations</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="quotation_notes" class="form-label">Default Notes</label>
+                            <textarea class="form-control" id="quotation_notes" name="quotation_notes" rows="3" 
+                                      placeholder="Enter default notes for quotations..."><?php echo htmlspecialchars($settings['quotation_notes'] ?? ''); ?></textarea>
+                            <div class="form-text">Default notes that will appear on all quotations</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label class="form-label">Number Preview</label>
+                                    <div class="preview-box">
+                                        <div class="preview-number" id="quotationNumberPreview">
+                                            <?php echo generateQuotationNumberPreview($settings); ?>
+                                        </div>
+                                        <small class="text-muted">Preview of how quotation numbers will appear</small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label class="form-label">Settings Status</label>
+                                    <div class="status-indicators">
+                                        <div class="status-item">
+                                            <i class="bi bi-check-circle text-success me-2"></i>
+                                            <span>Quotation numbering configured</span>
+                                        </div>
+                                        <div class="status-item">
+                                            <i class="bi bi-check-circle text-success me-2"></i>
+                                            <span>Default terms set</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-actions">
+                            <div class="d-flex gap-3">
+                                <button type="submit" class="btn btn-primary btn-lg">
+                                    <i class="bi bi-save me-2"></i>
+                                    Save Quotation Settings
+                                </button>
+                                <button type="reset" class="btn btn-outline-secondary btn-lg">
+                                    <i class="bi bi-arrow-clockwise me-2"></i>
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <?php endif; ?>
+
+                <!-- Invoice Settings Tab -->
+                <?php if ($active_tab == 'invoice' && $can_manage_invoices): ?>
+                <div class="data-section">
+                    <div class="section-header">
+                        <h3 class="section-title">
+                            <i class="bi bi-file-earmark-text me-2"></i>
+                            Invoice Settings
+                        </h3>
+                        <p class="section-subtitle text-muted">Configure invoice generation, formatting, and display options</p>
+                    </div>
+                    
+                    <form method="POST" action="" class="settings-form" id="invoiceForm">
+                        <!-- Invoice Number Settings Section -->
+                        <div class="form-group mt-5">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-header bg-gradient-primary text-white">
+                                    <h5 class="mb-0">
+                                        <i class="bi bi-file-earmark-text me-2"></i>
+                                        Invoice Settings
+                                    </h5>
+                                </div>
+                                <div class="card-body">
+
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="invoice_auto_generate" name="invoice_auto_generate" value="1"
+                                       <?php echo (isset($settings['invoice_auto_generate']) && $settings['invoice_auto_generate'] == '1') ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="invoice_auto_generate">
+                                    Auto-generate Invoice Numbers
+                                </label>
+                            </div>
+                            <div class="form-text">Automatically generate invoice numbers when creating invoices.</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="invoice_prefix" class="form-label">Invoice Number Prefix</label>
+                                    <input type="text" class="form-control" id="invoice_prefix" name="invoice_prefix"
+                                           value="<?php echo htmlspecialchars($settings['invoice_prefix'] ?? 'INV'); ?>"
+                                           placeholder="INV" maxlength="10">
+                                    <div class="form-text">Prefix for all invoice numbers (e.g., INV, PUR, BILL).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="invoice_length" class="form-label">Invoice Number Length</label>
+                                    <input type="number" min="3" max="10" class="form-control" id="invoice_length" name="invoice_length"
+                                           value="<?php echo htmlspecialchars($settings['invoice_length'] ?? '6'); ?>"
+                                           placeholder="6">
+                                    <div class="form-text">Number of digits in the invoice number (3-10).</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="invoice_separator" class="form-label">Invoice Number Separator</label>
+                                    <input type="text" class="form-control" id="invoice_separator" name="invoice_separator"
+                                           value="<?php echo htmlspecialchars($settings['invoice_separator'] ?? '-'); ?>"
+                                           placeholder="-" maxlength="5">
+                                    <div class="form-text">Separator between prefix and numbers (e.g., -, _, space).</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="invoice_format" class="form-label">Invoice Number Format</label>
+                                    <select class="form-control" id="invoice_format" name="invoice_format">
+                                        <option value="prefix-date-number" <?php echo ($settings['invoice_format'] ?? 'prefix-date-number') == 'prefix-date-number' ? 'selected' : ''; ?>>Prefix-Date-Number (INV-20241201-000001)</option>
+                                        <option value="prefix-number" <?php echo ($settings['invoice_format'] ?? 'prefix-date-number') == 'prefix-number' ? 'selected' : ''; ?>>Prefix-Number (INV-000001)</option>
+                                        <option value="date-prefix-number" <?php echo ($settings['invoice_format'] ?? 'prefix-date-number') == 'date-prefix-number' ? 'selected' : ''; ?>>Date-Prefix-Number (20241201-INV-000001)</option>
+                                        <option value="number-only" <?php echo ($settings['invoice_format'] ?? 'prefix-date-number') == 'number-only' ? 'selected' : ''; ?>>Number Only (000001)</option>
+                                    </select>
+                                    <div class="form-text">Format for generating invoice numbers.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Additional Invoice Settings -->
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="invoice_start_number" class="form-label">Starting Invoice Number</label>
+                                    <input type="number" min="1" class="form-control" id="invoice_start_number" name="invoice_start_number"
+                                           value="<?php echo htmlspecialchars($settings['invoice_start_number'] ?? '1'); ?>"
+                                           placeholder="1">
+                                    <div class="form-text">Starting number for invoice sequence.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="invoice_default_status" class="form-label">Default Invoice Status</label>
+                                    <select class="form-control" id="invoice_default_status" name="invoice_default_status">
+                                        <option value="draft" <?php echo ($settings['invoice_default_status'] ?? 'draft') == 'draft' ? 'selected' : ''; ?>>Draft</option>
+                                        <option value="sent" <?php echo ($settings['invoice_default_status'] ?? 'draft') == 'sent' ? 'selected' : ''; ?>>Sent</option>
+                                        <option value="paid" <?php echo ($settings['invoice_default_status'] ?? 'draft') == 'paid' ? 'selected' : ''; ?>>Paid</option>
+                                    </select>
+                                    <div class="form-text">Default status for new invoices.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="invoice_default_payment_terms" class="form-label">Default Payment Terms</label>
+                            <input type="text" class="form-control" id="invoice_default_payment_terms" name="invoice_default_payment_terms"
+                                   value="<?php echo htmlspecialchars($settings['invoice_default_payment_terms'] ?? 'Due within 30 days'); ?>"
+                                   placeholder="Due within 30 days" maxlength="100">
+                            <div class="form-text">Default payment terms for new invoices.</div>
+                        </div>
+
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Currency Settings:</strong> Invoice currency symbol and position are inherited from the main 
+                            <a href="?tab=currency" class="alert-link">Currency & Tax settings</a> 
+                            (<?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> 
+                            <?php echo ($settings['currency_position'] ?? 'before') == 'before' ? 'before' : 'after'; ?> amount).
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="invoice_include_terms" name="invoice_include_terms" value="1"
+                                       <?php echo (isset($settings['invoice_include_terms']) && $settings['invoice_include_terms'] == '1') ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="invoice_include_terms">
+                                    Include Terms & Conditions
+                                </label>
+                            </div>
+                            <div class="form-text">Include terms and conditions section on invoices.</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="invoice_terms_text" class="form-label">Terms & Conditions Text</label>
+                            <textarea class="form-control" id="invoice_terms_text" name="invoice_terms_text" rows="3"
+                                      placeholder="Payment is due within the specified terms. Late payments may incur additional charges."
+                                      maxlength="500"><?php echo htmlspecialchars($settings['invoice_terms_text'] ?? 'Payment is due within the specified terms. Late payments may incur additional charges.'); ?></textarea>
+                            <div class="form-text">Terms and conditions text to display on invoices (max 500 characters).</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="invoice_show_discount" name="invoice_show_discount" value="1"
+                                               <?php echo (isset($settings['invoice_show_discount']) && $settings['invoice_show_discount'] == '1') ? 'checked' : ''; ?>>
+                                        <label class="form-check-label" for="invoice_show_discount">
+                                            Show Discount Column
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Display discount column on invoice items.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="invoice_show_tax_breakdown" name="invoice_show_tax_breakdown" value="1"
+                                               <?php echo (isset($settings['invoice_show_tax_breakdown']) && $settings['invoice_show_tax_breakdown'] == '1') ? 'checked' : ''; ?>>
+                                        <label class="form-check-label" for="invoice_show_tax_breakdown">
+                                            Show Tax Breakdown
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Display detailed tax breakdown on invoices.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="invoice_auto_send_email" name="invoice_auto_send_email" value="1"
+                                       <?php echo (isset($settings['invoice_auto_send_email']) && $settings['invoice_auto_send_email'] == '1') ? 'checked' : ''; ?>>
+                                <label class="form-check-label" for="invoice_auto_send_email">
+                                    Auto-send Invoice Email
+                                </label>
+                            </div>
+                            <div class="form-text">Automatically send invoice via email when created (requires email configuration).</div>
+                        </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Invoice Preview Section -->
+                        <div class="form-group mt-4">
+                            <div class="card border-0 shadow-sm">
+                                <div class="card-header bg-gradient-success text-white">
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-eye me-2"></i>
+                                        Invoice Preview & Status
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <div class="text-center">
+                                                <h6 class="text-muted mb-2">Invoice Number Preview</h6>
+                                                <div class="alert alert-light border-0 mb-0">
+                                                    <h4 class="mb-0 text-primary font-weight-bold" id="invoiceNumberPreview">
+                                                        <?php echo generateInvoiceNumberPreview($settings); ?>
+                                                    </h4>
+                                                    <small class="text-muted">Preview of how invoice numbers will appear</small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <div class="text-center">
+                                                <h6 class="text-muted mb-2">Settings Status</h6>
+                                                <div class="alert alert-light border-0 mb-0">
+                                                    <div class="d-flex align-items-center justify-content-center mb-2">
+                                                        <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                                        <span class="small">Invoice numbering configured</span>
+                                                    </div>
+                                                    <div class="d-flex align-items-center justify-content-center">
+                                                        <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                                        <span class="small">Default terms set</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-actions">
+                            <div class="d-flex gap-3">
+                                <button type="submit" class="btn btn-primary btn-lg">
+                                    <i class="bi bi-save me-2"></i>
+                                    Save Invoice Settings
                                 </button>
                                 <button type="reset" class="btn btn-outline-secondary btn-lg">
                                     <i class="bi bi-arrow-clockwise me-2"></i>
@@ -4140,389 +4582,405 @@ Best regards,
             // Initial preview update
             updateSKUPreview();
 
-            // Order Number Preview Functionality
-            function updateOrderNumberPreview() {
-                const prefix = document.getElementById('order_number_prefix').value || 'ORD';
-                const separator = document.getElementById('order_number_separator').value || '-';
-                const length = parseInt(document.getElementById('order_number_length').value) || 6;
-                const format = document.getElementById('order_number_format').value || 'prefix-date-number';
+            // Order Number Preview Functionality (only if order tab is active)
+            if (document.getElementById('order_number_prefix')) {
+                function updateOrderNumberPreview() {
+                    const prefix = document.getElementById('order_number_prefix').value || 'ORD';
+                    const separator = document.getElementById('order_number_separator').value || '-';
+                    const length = parseInt(document.getElementById('order_number_length').value) || 6;
+                    const format = document.getElementById('order_number_format').value || 'prefix-date-number';
 
-                // Generate sample number
-                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
-                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                    // Generate sample number
+                    let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-                let preview = '';
-                switch(format) {
-                    case 'prefix-date-number':
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
-                        break;
-                    case 'prefix-number':
-                        preview = prefix + separator + sampleNumber;
-                        break;
-                    case 'date-prefix-number':
-                        preview = currentDate + separator + prefix + separator + sampleNumber;
-                        break;
-                    case 'number-only':
-                        preview = sampleNumber;
-                        break;
-                    default:
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                    let preview = '';
+                    switch(format) {
+                        case 'prefix-date-number':
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                            break;
+                        case 'prefix-number':
+                            preview = prefix + separator + sampleNumber;
+                            break;
+                        case 'date-prefix-number':
+                            preview = currentDate + separator + prefix + separator + sampleNumber;
+                            break;
+                        case 'number-only':
+                            preview = sampleNumber;
+                            break;
+                        default:
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                    }
+
+                    document.getElementById('orderNumberPreview').textContent = preview;
                 }
 
-                document.getElementById('orderNumberPreview').textContent = preview;
+                // Add event listeners for order number preview updates
+                const orderNumberInputs = ['order_number_prefix', 'order_number_separator', 'order_number_length', 'order_number_format'];
+                orderNumberInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateOrderNumberPreview);
+                        input.addEventListener('change', updateOrderNumberPreview);
+                    }
+                });
+
+                // Initial order number preview update
+                updateOrderNumberPreview();
             }
 
-            // Add event listeners for order number preview updates
-            const orderNumberInputs = ['order_number_prefix', 'order_number_separator', 'order_number_length', 'order_number_format'];
-            orderNumberInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateOrderNumberPreview);
-                    input.addEventListener('change', updateOrderNumberPreview);
-                }
-            });
+            // Invoice Number Preview Functionality (only if invoice tab is active)
+            if (document.getElementById('invoice_prefix')) {
+                function updateInvoiceNumberPreview() {
+                    const prefix = document.getElementById('invoice_prefix').value || 'INV';
+                    const separator = document.getElementById('invoice_separator').value || '-';
+                    const length = parseInt(document.getElementById('invoice_length').value) || 6;
+                    const format = document.getElementById('invoice_format').value || 'prefix-date-number';
 
-            // Initial order number preview update
-            updateOrderNumberPreview();
+                    // Generate sample number
+                    let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-            // Invoice Number Preview Functionality
-            function updateInvoiceNumberPreview() {
-                const prefix = document.getElementById('invoice_prefix').value || 'INV';
-                const separator = document.getElementById('invoice_separator').value || '-';
-                const length = parseInt(document.getElementById('invoice_length').value) || 6;
-                const format = document.getElementById('invoice_format').value || 'prefix-date-number';
+                    let preview = '';
+                    switch(format) {
+                        case 'prefix-date-number':
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                            break;
+                        case 'prefix-number':
+                            preview = prefix + separator + sampleNumber;
+                            break;
+                        case 'date-prefix-number':
+                            preview = currentDate + separator + prefix + separator + sampleNumber;
+                            break;
+                        case 'number-only':
+                            preview = sampleNumber;
+                            break;
+                        default:
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                    }
 
-                // Generate sample number
-                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
-                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-                let preview = '';
-                switch(format) {
-                    case 'prefix-date-number':
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
-                        break;
-                    case 'prefix-number':
-                        preview = prefix + separator + sampleNumber;
-                        break;
-                    case 'date-prefix-number':
-                        preview = currentDate + separator + prefix + separator + sampleNumber;
-                        break;
-                    case 'number-only':
-                        preview = sampleNumber;
-                        break;
-                    default:
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                    document.getElementById('invoiceNumberPreview').textContent = preview;
                 }
 
-                document.getElementById('invoiceNumberPreview').textContent = preview;
+                // Add event listeners for invoice number preview updates
+                const invoiceNumberInputs = ['invoice_prefix', 'invoice_separator', 'invoice_length', 'invoice_format'];
+                invoiceNumberInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateInvoiceNumberPreview);
+                        input.addEventListener('change', updateInvoiceNumberPreview);
+                    }
+                });
+
+                // Initial invoice number preview update
+                updateInvoiceNumberPreview();
             }
 
-            // Add event listeners for invoice number preview updates
-            const invoiceNumberInputs = ['invoice_prefix', 'invoice_separator', 'invoice_length', 'invoice_format'];
-            invoiceNumberInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateInvoiceNumberPreview);
-                    input.addEventListener('change', updateInvoiceNumberPreview);
-                }
-            });
+            // BOM Number Preview Functionality (only if BOM tab is active)
+            if (document.getElementById('bom_number_prefix')) {
+                function updateBOMNumberPreview() {
+                    const prefix = document.getElementById('bom_number_prefix').value || 'BOM';
+                    const separator = document.getElementById('bom_number_separator').value || '-';
+                    const length = parseInt(document.getElementById('bom_number_length').value) || 6;
+                    const format = document.getElementById('bom_number_format').value || 'prefix-date-number';
 
-            // Initial invoice number preview update
-            updateInvoiceNumberPreview();
+                    // Generate sample number
+                    let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-            // BOM Number Preview Functionality
-            function updateBOMNumberPreview() {
-                const prefix = document.getElementById('bom_number_prefix').value || 'BOM';
-                const separator = document.getElementById('bom_number_separator').value || '-';
-                const length = parseInt(document.getElementById('bom_number_length').value) || 6;
-                const format = document.getElementById('bom_number_format').value || 'prefix-date-number';
+                    let preview = '';
+                    switch(format) {
+                        case 'prefix-date-number':
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                            break;
+                        case 'prefix-number':
+                            preview = prefix + separator + sampleNumber;
+                            break;
+                        case 'date-prefix-number':
+                            preview = currentDate + separator + prefix + separator + sampleNumber;
+                            break;
+                        case 'number-only':
+                            preview = sampleNumber;
+                            break;
+                        default:
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                    }
 
-                // Generate sample number
-                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
-                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-                let preview = '';
-                switch(format) {
-                    case 'prefix-date-number':
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
-                        break;
-                    case 'prefix-number':
-                        preview = prefix + separator + sampleNumber;
-                        break;
-                    case 'date-prefix-number':
-                        preview = currentDate + separator + prefix + separator + sampleNumber;
-                        break;
-                    case 'number-only':
-                        preview = sampleNumber;
-                        break;
-                    default:
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                    document.getElementById('bomNumberPreview').textContent = preview;
                 }
 
-                document.getElementById('bomNumberPreview').textContent = preview;
+                // Add event listeners for BOM number preview updates
+                const bomNumberInputs = ['bom_number_prefix', 'bom_number_separator', 'bom_number_length', 'bom_number_format'];
+                bomNumberInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateBOMNumberPreview);
+                        input.addEventListener('change', updateBOMNumberPreview);
+                    }
+                });
+
+                // Initial BOM number preview update
+                updateBOMNumberPreview();
             }
 
-            // Add event listeners for BOM number preview updates
-            const bomNumberInputs = ['bom_number_prefix', 'bom_number_separator', 'bom_number_length', 'bom_number_format'];
-            bomNumberInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateBOMNumberPreview);
-                    input.addEventListener('change', updateBOMNumberPreview);
-                }
-            });
+            // Customer Number Preview Functionality (only if customer tab is active)
+            if (document.getElementById('customer_number_prefix')) {
+                function updateCustomerNumberPreview() {
+                    const prefix = document.getElementById('customer_number_prefix').value || 'CUST';
+                    const separator = document.getElementById('customer_number_separator').value || '-';
+                    const length = parseInt(document.getElementById('customer_number_length').value) || 6;
+                    const format = document.getElementById('customer_number_format').value || 'prefix-date-number';
 
-            // Initial BOM number preview update
-            updateBOMNumberPreview();
+                    // Generate sample number
+                    let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-            // Customer Number Preview Functionality
-            function updateCustomerNumberPreview() {
-                const prefix = document.getElementById('customer_number_prefix').value || 'CUST';
-                const separator = document.getElementById('customer_number_separator').value || '-';
-                const length = parseInt(document.getElementById('customer_number_length').value) || 6;
-                const format = document.getElementById('customer_number_format').value || 'prefix-date-number';
+                    let preview = '';
+                    switch(format) {
+                        case 'prefix-date-number':
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                            break;
+                        case 'prefix-number':
+                            preview = prefix + separator + sampleNumber;
+                            break;
+                        case 'date-prefix-number':
+                            preview = currentDate + separator + prefix + separator + sampleNumber;
+                            break;
+                        case 'number-only':
+                            preview = sampleNumber;
+                            break;
+                        default:
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                    }
 
-                // Generate sample number
-                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
-                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-                let preview = '';
-                switch(format) {
-                    case 'prefix-date-number':
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
-                        break;
-                    case 'prefix-number':
-                        preview = prefix + separator + sampleNumber;
-                        break;
-                    case 'date-prefix-number':
-                        preview = currentDate + separator + prefix + separator + sampleNumber;
-                        break;
-                    case 'number-only':
-                        preview = sampleNumber;
-                        break;
-                    default:
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                    document.getElementById('customerNumberPreview').textContent = preview;
                 }
 
-                document.getElementById('customerNumberPreview').textContent = preview;
+                // Add event listeners for customer number preview updates
+                const customerNumberInputs = ['customer_number_prefix', 'customer_number_separator', 'customer_number_length', 'customer_number_format'];
+                customerNumberInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateCustomerNumberPreview);
+                        input.addEventListener('change', updateCustomerNumberPreview);
+                    }
+                });
+
+                // Initial customer number preview update
+                updateCustomerNumberPreview();
             }
 
-            // Add event listeners for customer number preview updates
-            const customerNumberInputs = ['customer_number_prefix', 'customer_number_separator', 'customer_number_length', 'customer_number_format'];
-            customerNumberInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateCustomerNumberPreview);
-                    input.addEventListener('change', updateCustomerNumberPreview);
-                }
-            });
+            // Product Number Preview Functionality (only if product tab is active)
+            if (document.getElementById('product_number_prefix')) {
+                function updateProductNumberPreview() {
+                    const prefix = document.getElementById('product_number_prefix').value || 'PRD';
+                    const separator = document.getElementById('product_number_separator').value || '-';
+                    const length = parseInt(document.getElementById('product_number_length').value) || 6;
+                    const format = document.getElementById('product_number_format').value || 'prefix-number';
 
-            // Initial customer number preview update
-            updateCustomerNumberPreview();
+                    // Generate sample number
+                    let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-            // Product Number Preview Functionality
-            function updateProductNumberPreview() {
-                const prefix = document.getElementById('product_number_prefix').value || 'PRD';
-                const separator = document.getElementById('product_number_separator').value || '-';
-                const length = parseInt(document.getElementById('product_number_length').value) || 6;
-                const format = document.getElementById('product_number_format').value || 'prefix-number';
+                    let preview = '';
+                    switch(format) {
+                        case 'prefix-date-number':
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                            break;
+                        case 'prefix-number':
+                            preview = prefix + separator + sampleNumber;
+                            break;
+                        case 'date-prefix-number':
+                            preview = currentDate + separator + prefix + separator + sampleNumber;
+                            break;
+                        case 'number-only':
+                            preview = sampleNumber;
+                            break;
+                        default:
+                            preview = prefix + separator + sampleNumber;
+                    }
 
-                // Generate sample number
-                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
-                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-                let preview = '';
-                switch(format) {
-                    case 'prefix-date-number':
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
-                        break;
-                    case 'prefix-number':
-                        preview = prefix + separator + sampleNumber;
-                        break;
-                    case 'date-prefix-number':
-                        preview = currentDate + separator + prefix + separator + sampleNumber;
-                        break;
-                    case 'number-only':
-                        preview = sampleNumber;
-                        break;
-                    default:
-                        preview = prefix + separator + sampleNumber;
+                    document.getElementById('productNumberPreview').textContent = preview;
                 }
 
-                document.getElementById('productNumberPreview').textContent = preview;
+                // Add event listeners for product number preview updates
+                const productNumberInputs = ['product_number_prefix', 'product_number_separator', 'product_number_length', 'product_number_format'];
+                productNumberInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateProductNumberPreview);
+                        input.addEventListener('change', updateProductNumberPreview);
+                    }
+                });
+
+                // Initial product number preview update
+                updateProductNumberPreview();
             }
 
-            // Add event listeners for product number preview updates
-            const productNumberInputs = ['product_number_prefix', 'product_number_separator', 'product_number_length', 'product_number_format'];
-            productNumberInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateProductNumberPreview);
-                    input.addEventListener('change', updateProductNumberPreview);
+            // Production Order Preview Functionality (only if production order tab is active)
+            if (document.getElementById('bom_production_order_prefix')) {
+                function updateProductionOrderPreview() {
+                    const prefix = document.getElementById('bom_production_order_prefix').value || 'PROD';
+                    const length = parseInt(document.getElementById('bom_production_order_length').value) || 6;
+
+                    // Generate sample number
+                    let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+                    const preview = prefix + '-' + currentDate + '-' + sampleNumber;
+                    document.getElementById('productionOrderPreview').textContent = preview;
                 }
-            });
 
-            // Initial product number preview update
-            updateProductNumberPreview();
+                // Add event listeners for production order preview updates
+                const productionOrderInputs = ['bom_production_order_prefix', 'bom_production_order_length'];
+                productionOrderInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateProductionOrderPreview);
+                        input.addEventListener('change', updateProductionOrderPreview);
+                    }
+                });
 
-            // Production Order Preview Functionality
-            function updateProductionOrderPreview() {
-                const prefix = document.getElementById('bom_production_order_prefix').value || 'PROD';
-                const length = parseInt(document.getElementById('bom_production_order_length').value) || 6;
-
-                // Generate sample number
-                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
-                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-                const preview = prefix + '-' + currentDate + '-' + sampleNumber;
-                document.getElementById('productionOrderPreview').textContent = preview;
+                // Initial production order preview update
+                updateProductionOrderPreview();
             }
 
-            // Add event listeners for production order preview updates
-            const productionOrderInputs = ['bom_production_order_prefix', 'bom_production_order_length'];
-            productionOrderInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateProductionOrderPreview);
-                    input.addEventListener('change', updateProductionOrderPreview);
-                }
-            });
+            // Receipt Number Preview Functionality (only if receipt tab is active)
+            if (document.getElementById('receipt_number_prefix')) {
+                function updateReceiptNumberPreview() {
+                    const prefix = document.getElementById('receipt_number_prefix').value || 'RCP';
+                    const separator = document.getElementById('receipt_number_separator').value || '-';
+                    const length = parseInt(document.getElementById('receipt_number_length').value) || 6;
+                    const format = document.getElementById('receipt_number_format').value || 'prefix-date-number';
 
-            // Initial production order preview update
-            updateProductionOrderPreview();
+                    // Generate sample number (pad with zeros)
+                    let sampleNumber = '1'.padStart(length, '0');
+                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-            // Receipt Number Preview Functionality
-            function updateReceiptNumberPreview() {
-                const prefix = document.getElementById('receipt_number_prefix').value || 'RCP';
-                const separator = document.getElementById('receipt_number_separator').value || '-';
-                const length = parseInt(document.getElementById('receipt_number_length').value) || 6;
-                const format = document.getElementById('receipt_number_format').value || 'prefix-date-number';
+                    let preview = '';
+                    switch(format) {
+                        case 'prefix-date-number':
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                            break;
+                        case 'prefix-number':
+                            preview = prefix + separator + sampleNumber;
+                            break;
+                        case 'date-prefix-number':
+                            preview = currentDate + separator + prefix + separator + sampleNumber;
+                            break;
+                        case 'number-only':
+                            preview = sampleNumber;
+                            break;
+                        default:
+                            preview = prefix + separator + currentDate + separator + sampleNumber;
+                    }
 
-                // Generate sample number (pad with zeros)
-                let sampleNumber = '1'.padStart(length, '0');
-                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-                let preview = '';
-                switch(format) {
-                    case 'prefix-date-number':
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
-                        break;
-                    case 'prefix-number':
-                        preview = prefix + separator + sampleNumber;
-                        break;
-                    case 'date-prefix-number':
-                        preview = currentDate + separator + prefix + separator + sampleNumber;
-                        break;
-                    case 'number-only':
-                        preview = sampleNumber;
-                        break;
-                    default:
-                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                    document.getElementById('receiptNumberPreview').textContent = preview;
                 }
 
-                document.getElementById('receiptNumberPreview').textContent = preview;
+                // Add event listeners for receipt number preview updates
+                const receiptNumberInputs = ['receipt_number_prefix', 'receipt_number_separator', 'receipt_number_length', 'receipt_number_format'];
+                receiptNumberInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateReceiptNumberPreview);
+                        input.addEventListener('change', updateReceiptNumberPreview);
+                    }
+                });
+
+                // Initial receipt number preview update
+                updateReceiptNumberPreview();
             }
 
-            // Add event listeners for receipt number preview updates
-            const receiptNumberInputs = ['receipt_number_prefix', 'receipt_number_separator', 'receipt_number_length', 'receipt_number_format'];
-            receiptNumberInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateReceiptNumberPreview);
-                    input.addEventListener('change', updateReceiptNumberPreview);
-                }
-            });
+            // Transaction ID Preview Functionality (only if transaction tab is active)
+            if (document.getElementById('transaction_id_prefix')) {
+                function updateTransactionIdPreview() {
+                    const prefix = document.getElementById('transaction_id_prefix').value || 'TXN';
+                    const length = parseInt(document.getElementById('transaction_id_length').value) || 6;
+                    const format = document.getElementById('transaction_id_format').value || 'prefix-random';
 
-            // Initial receipt number preview update
-            updateReceiptNumberPreview();
+                    // Define character sets based on format
+                    let characters = '';
+                    switch(format) {
+                        case 'prefix-random':
+                        case 'random-only':
+                        case 'prefix-date-random':
+                            characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                            break;
+                        case 'prefix-mixed':
+                        case 'mixed-only':
+                        case 'prefix-date-mixed':
+                            characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+                            break;
+                        case 'prefix-lowercase':
+                        case 'lowercase-only':
+                        case 'prefix-date-lowercase':
+                            characters = '0123456789abcdefghijklmnopqrstuvwxyz';
+                            break;
+                        case 'prefix-numbers':
+                        case 'numbers-only':
+                        case 'prefix-date-numbers':
+                            characters = '0123456789';
+                            break;
+                        case 'prefix-letters':
+                        case 'letters-only':
+                        case 'prefix-date-letters':
+                            characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+                            break;
+                        default:
+                            characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+                    }
 
-            // Transaction ID Preview Functionality
-            function updateTransactionIdPreview() {
-                const prefix = document.getElementById('transaction_id_prefix').value || 'TXN';
-                const length = parseInt(document.getElementById('transaction_id_length').value) || 6;
-                const format = document.getElementById('transaction_id_format').value || 'prefix-random';
+                    // Generate sample random string
+                    let randomString = '';
+                    for (let i = 0; i < length; i++) {
+                        randomString += characters.charAt(Math.floor(Math.random() * characters.length));
+                    }
+                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-                // Define character sets based on format
-                let characters = '';
-                switch(format) {
-                    case 'prefix-random':
-                    case 'random-only':
-                    case 'prefix-date-random':
-                        characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-                        break;
-                    case 'prefix-mixed':
-                    case 'mixed-only':
-                    case 'prefix-date-mixed':
-                        characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-                        break;
-                    case 'prefix-lowercase':
-                    case 'lowercase-only':
-                    case 'prefix-date-lowercase':
-                        characters = '0123456789abcdefghijklmnopqrstuvwxyz';
-                        break;
-                    case 'prefix-numbers':
-                    case 'numbers-only':
-                    case 'prefix-date-numbers':
-                        characters = '0123456789';
-                        break;
-                    case 'prefix-letters':
-                    case 'letters-only':
-                    case 'prefix-date-letters':
-                        characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-                        break;
-                    default:
-                        characters = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-                }
+                    let preview = '';
+                    switch(format) {
+                        case 'prefix-random':
+                        case 'prefix-mixed':
+                        case 'prefix-lowercase':
+                        case 'prefix-numbers':
+                        case 'prefix-letters':
+                            preview = prefix + randomString;
+                            break;
+                        case 'random-only':
+                        case 'mixed-only':
+                        case 'lowercase-only':
+                        case 'numbers-only':
+                        case 'letters-only':
+                            preview = randomString;
+                            break;
+                        case 'prefix-date-random':
+                        case 'prefix-date-mixed':
+                        case 'prefix-date-lowercase':
+                        case 'prefix-date-numbers':
+                        case 'prefix-date-letters':
+                            preview = prefix + currentDate + randomString;
+                            break;
+                        default:
+                            preview = prefix + randomString;
+                    }
 
-                // Generate sample random string
-                let randomString = '';
-                for (let i = 0; i < length; i++) {
-                    randomString += characters.charAt(Math.floor(Math.random() * characters.length));
-                }
-                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-
-                let preview = '';
-                switch(format) {
-                    case 'prefix-random':
-                    case 'prefix-mixed':
-                    case 'prefix-lowercase':
-                    case 'prefix-numbers':
-                    case 'prefix-letters':
-                        preview = prefix + randomString;
-                        break;
-                    case 'random-only':
-                    case 'mixed-only':
-                    case 'lowercase-only':
-                    case 'numbers-only':
-                    case 'letters-only':
-                        preview = randomString;
-                        break;
-                    case 'prefix-date-random':
-                    case 'prefix-date-mixed':
-                    case 'prefix-date-lowercase':
-                    case 'prefix-date-numbers':
-                    case 'prefix-date-letters':
-                        preview = prefix + currentDate + randomString;
-                        break;
-                    default:
-                        preview = prefix + randomString;
+                    document.getElementById('transactionIdPreview').textContent = preview;
                 }
 
-                document.getElementById('transactionIdPreview').textContent = preview;
+                // Add event listeners for transaction ID preview updates
+                const transactionIdInputs = ['transaction_id_prefix', 'transaction_id_length', 'transaction_id_format'];
+                transactionIdInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateTransactionIdPreview);
+                        input.addEventListener('change', updateTransactionIdPreview);
+                    }
+                });
+
+                // Initial transaction ID preview update
+                updateTransactionIdPreview();
             }
-
-            // Add event listeners for transaction ID preview updates
-            const transactionIdInputs = ['transaction_id_prefix', 'transaction_id_length', 'transaction_id_format'];
-            transactionIdInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateTransactionIdPreview);
-                    input.addEventListener('change', updateTransactionIdPreview);
-                }
-            });
-
-            // Initial transaction ID preview update
-            updateTransactionIdPreview();
 
             // Check SMTP status on page load with a small delay to ensure DOM is loaded
             setTimeout(() => {
@@ -4577,6 +5035,36 @@ Best regards,
                         smtpPasswordIcon.classList.add('bi-eye');
                     }
                 });
+            }
+
+            // Quotation number preview functionality (only if quotation tab is active)
+            if (document.getElementById('quotation_prefix') && document.getElementById('quotation_number_length')) {
+                function updateQuotationNumberPreview() {
+                    const prefix = document.getElementById('quotation_prefix').value || 'QUO';
+                    const length = parseInt(document.getElementById('quotation_number_length').value) || 6;
+
+                    // Generate sample number
+                    const sampleNumber = '1'.padStart(length, '0');
+                    const preview = prefix + sampleNumber;
+
+                    const previewElement = document.getElementById('quotationNumberPreview');
+                    if (previewElement) {
+                        previewElement.textContent = preview;
+                    }
+                }
+
+                // Add event listeners for quotation number preview updates
+                const quotationInputs = ['quotation_prefix', 'quotation_number_length'];
+                quotationInputs.forEach(inputId => {
+                    const input = document.getElementById(inputId);
+                    if (input) {
+                        input.addEventListener('input', updateQuotationNumberPreview);
+                        input.addEventListener('change', updateQuotationNumberPreview);
+                    }
+                });
+
+                // Initial quotation number preview update
+                updateQuotationNumberPreview();
             }
         });
     </script>

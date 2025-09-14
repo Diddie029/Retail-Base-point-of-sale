@@ -763,6 +763,7 @@ try {
         if ($result['count'] == 0) {
             // Insert default menu sections
             $menu_sections = [
+                ['quotations', 'Quotations', 'bi-file-earmark-text', 'Create and manage customer quotations', 2],
                 ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 3],
                 ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 4],
                 ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 5],
@@ -787,6 +788,7 @@ try {
 
         // Ensure all required sections exist (for existing databases)
         $required_sections = [
+            ['quotations', 'Quotations', 'bi-file-earmark-text', 'Create and manage customer quotations', 2],
             ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 3],
             ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 4],
             ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 5],
@@ -2618,6 +2620,31 @@ try {
         $stmt->execute();
     }
 
+    // Add quotation permissions
+    $quotation_permissions = [
+        ['name' => 'manage_quotations', 'description' => 'Full access to create, edit, and delete quotations', 'category' => 'Quotations'],
+        ['name' => 'create_quotations', 'description' => 'Create new quotations', 'category' => 'Quotations'],
+        ['name' => 'view_quotations', 'description' => 'View existing quotations', 'category' => 'Quotations'],
+        ['name' => 'edit_quotations', 'description' => 'Edit existing quotations', 'category' => 'Quotations'],
+        ['name' => 'delete_quotations', 'description' => 'Delete quotations', 'category' => 'Quotations'],
+        ['name' => 'approve_quotations', 'description' => 'Approve or reject quotations', 'category' => 'Quotations'],
+        ['name' => 'convert_quotations_to_sales', 'description' => 'Convert approved quotations to sales', 'category' => 'Quotations']
+    ];
+
+    foreach ($quotation_permissions as $permission) {
+        try {
+            $stmt = $conn->prepare("
+                INSERT INTO permissions (name, description, category, created_at, updated_at)
+                VALUES (:name, :description, :category, NOW(), NOW())
+                ON DUPLICATE KEY UPDATE description = VALUES(description), category = VALUES(category), updated_at = NOW()
+            ");
+            $stmt->execute($permission);
+        } catch (Exception $e) {
+            // Permission might already exist
+            error_log("Quotation permission '{$permission['name']}' creation warning: " . $e->getMessage());
+        }
+    }
+
     // Clear existing role permissions for default roles to avoid conflicts
     $conn->exec("DELETE FROM role_permissions WHERE role_id IN (1, 2)");
 
@@ -2633,7 +2660,10 @@ try {
     $cashier_permissions = [
         'view_dashboard',      // allow landing on dashboard
         'process_sales',       // POS access
-        'view_customers'       // customer lookup for POS
+        'view_customers',      // customer lookup for POS
+        'create_quotations',   // create quotations
+        'view_quotations',     // view quotations
+        'edit_quotations'      // edit quotations
         // Add more only if needed: 'view_held_transactions','create_held_transactions','resume_held_transactions'
     ];
     $stmt = $conn->prepare("INSERT INTO role_permissions (role_id, permission_id)
@@ -4350,26 +4380,70 @@ try {
         error_log("Database migration warning: " . $e->getMessage());
     }
 
-    // Create receipt_reprint_log table for tracking receipt reprints
+
+
+    // Create quotations table
     $conn->exec("
-        CREATE TABLE IF NOT EXISTS receipt_reprint_log (
+        CREATE TABLE IF NOT EXISTS quotations (
             id INT PRIMARY KEY AUTO_INCREMENT,
-            sale_id INT NOT NULL,
+            quotation_number VARCHAR(50) UNIQUE NOT NULL,
+            customer_id INT,
+            customer_name VARCHAR(255),
+            customer_email VARCHAR(255),
+            customer_phone VARCHAR(50),
+            customer_address TEXT,
             user_id INT NOT NULL,
-            reprint_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-            status ENUM('success', 'failed') NOT NULL DEFAULT 'success',
+            subtotal DECIMAL(10,2) DEFAULT 0.00,
+            tax_amount DECIMAL(10,2) DEFAULT 0.00,
+            discount_amount DECIMAL(10,2) DEFAULT 0.00,
+            final_amount DECIMAL(10,2) DEFAULT 0.00,
+            quotation_status ENUM('draft', 'sent', 'approved', 'rejected', 'expired') DEFAULT 'draft',
+            valid_until DATE,
             notes TEXT,
-            user_ip VARCHAR(45),
+            terms TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_sale_id (sale_id),
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_customer_id (customer_id),
             INDEX idx_user_id (user_id),
-            INDEX idx_reprint_time (reprint_time),
-            INDEX idx_status (status),
-            FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+            INDEX idx_quotation_status (quotation_status),
+            INDEX idx_valid_until (valid_until),
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
     ");
 
+    // Create quotation_items table
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS quotation_items (
+            id INT PRIMARY KEY AUTO_INCREMENT,
+            quotation_id INT NOT NULL,
+            product_id INT,
+            product_name VARCHAR(255) NOT NULL,
+            product_sku VARCHAR(100),
+            quantity DECIMAL(10,3) NOT NULL,
+            unit_price DECIMAL(10,2) NOT NULL,
+            total_price DECIMAL(10,2) NOT NULL,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_quotation_id (quotation_id),
+            INDEX idx_product_id (product_id),
+            FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL
+        )
+    ");
+
+    // Add quotation settings
+    $conn->exec("
+        INSERT IGNORE INTO settings (setting_key, setting_value) VALUES
+        ('quotation_auto_generate', '1'),
+        ('quotation_prefix', 'QUO'),
+        ('quotation_suffix', ''),
+        ('quotation_length', '6'),
+        ('quotation_format', 'prefix-date-number'),
+        ('quotation_valid_days', '30'),
+        ('quotation_terms', 'This quotation is valid for 30 days from the date of issue. Prices are subject to change without notice.'),
+        ('quotation_footer', 'Thank you for your business!')
+    ");
 
     // Add Employee ID settings
     $conn->exec("
@@ -5526,6 +5600,658 @@ function getHeldTransactionsCount($conn, $till_id) {
     } catch (PDOException $e) {
         error_log("Error getting held transactions count: " . $e->getMessage());
         return 0;
+    }
+}
+
+/**
+ * Generate quotation number based on settings
+ */
+function generateQuotationNumber($conn, $date = null) {
+    if ($date === null) {
+        $date = date('Y-m-d');
+    }
+
+    try {
+        // Get quotation settings
+        $settings = [];
+        $stmt = $conn->query("SELECT setting_key, setting_value FROM settings WHERE setting_key LIKE 'quotation_%'");
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $settings[$row['setting_key']] = $row['setting_value'];
+        }
+
+        $prefix = $settings['quotation_prefix'] ?? 'QUO';
+        $length = (int)($settings['quotation_number_length'] ?? 6);
+        $startNumber = (int)($settings['quotation_start_number'] ?? 1);
+
+        // Get the next number based on the highest existing number
+        $stmt = $conn->query("SELECT MAX(CAST(SUBSTRING(quotation_number, LENGTH('$prefix') + 1) AS UNSIGNED)) as max_num FROM quotations WHERE quotation_number LIKE '$prefix%'");
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $nextNum = max($startNumber, ($row['max_num'] ?? 0) + 1);
+
+        // Pad the number to required length
+        $paddedNum = str_pad($nextNum, $length, '0', STR_PAD_LEFT);
+
+        return $prefix . $paddedNum;
+    } catch (PDOException $e) {
+        error_log("Error generating quotation number: " . $e->getMessage());
+        return 'QUO-' . date('Ymd') . '-001';
+    }
+}
+
+/**
+ * Create a new quotation
+ */
+function createQuotation($conn, $quotationData) {
+    try {
+        $conn->beginTransaction();
+
+        // Generate quotation number
+        $quotationNumber = generateQuotationNumber($conn);
+
+        // Use valid_until from form data or calculate from settings
+        $validUntil = $quotationData['valid_until'] ?? null;
+        if (!$validUntil) {
+            $settings = [];
+            $stmt = $conn->query("SELECT setting_key, setting_value FROM settings WHERE setting_key LIKE 'quotation_%'");
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
+            $validDays = (int)($settings['quotation_valid_days'] ?? 30);
+            $validUntil = date('Y-m-d', strtotime("+$validDays days"));
+        }
+
+        // Insert quotation
+        $stmt = $conn->prepare("
+            INSERT INTO quotations (
+                quotation_number, customer_id, customer_name, customer_email,
+                customer_phone, customer_address, user_id, subtotal, tax_amount,
+                final_amount, quotation_status, valid_until,
+                notes, terms, created_at
+            ) VALUES (
+                :quotation_number, :customer_id, :customer_name, :customer_email,
+                :customer_phone, :customer_address, :user_id, :subtotal, :tax_amount,
+                :final_amount, :quotation_status, :valid_until,
+                :notes, :terms, NOW()
+            )
+        ");
+
+        $stmt->execute([
+            ':quotation_number' => $quotationNumber,
+            ':customer_id' => $quotationData['customer_id'] ?? null,
+            ':customer_name' => $quotationData['customer_name'] ?? '',
+            ':customer_email' => $quotationData['customer_email'] ?? '',
+            ':customer_phone' => $quotationData['customer_phone'] ?? '',
+            ':customer_address' => $quotationData['customer_address'] ?? '',
+            ':user_id' => $quotationData['user_id'],
+            ':subtotal' => $quotationData['subtotal'] ?? 0,
+            ':tax_amount' => $quotationData['tax_amount'] ?? 0,
+            ':final_amount' => $quotationData['final_amount'] ?? 0,
+            ':quotation_status' => $quotationData['quotation_status'] ?? 'draft',
+            ':valid_until' => $validUntil,
+            ':notes' => $quotationData['notes'] ?? '',
+            ':terms' => $quotationData['terms'] ?? ''
+        ]);
+
+        $quotationId = $conn->lastInsertId();
+
+        // Insert quotation items
+        if (isset($quotationData['items']) && is_array($quotationData['items'])) {
+            $stmt = $conn->prepare("
+                INSERT INTO quotation_items (
+                    quotation_id, product_id, product_name, product_sku,
+                    quantity, unit_price, total_price, description
+                ) VALUES (
+                    :quotation_id, :product_id, :product_name, :product_sku,
+                    :quantity, :unit_price, :total_price, :description
+                )
+            ");
+
+            foreach ($quotationData['items'] as $item) {
+                $stmt->execute([
+                    ':quotation_id' => $quotationId,
+                    ':product_id' => $item['product_id'] ?? null,
+                    ':product_name' => $item['product_name'],
+                    ':product_sku' => $item['product_sku'] ?? '',
+                    ':quantity' => $item['quantity'],
+                    ':unit_price' => $item['unit_price'],
+                    ':total_price' => $item['total_price'],
+                    ':description' => $item['description'] ?? ''
+                ]);
+            }
+        }
+
+        $conn->commit();
+        return ['success' => true, 'quotation_id' => $quotationId, 'quotation_number' => $quotationNumber];
+
+    } catch (PDOException $e) {
+        $conn->rollBack();
+        error_log("Error creating quotation: " . $e->getMessage());
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+/**
+ * Get quotation by ID
+ */
+function getQuotation($conn, $quotationId) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT q.*, u.username as created_by
+            FROM quotations q
+            LEFT JOIN users u ON q.user_id = u.id
+            WHERE q.id = :quotation_id
+        ");
+        $stmt->execute([':quotation_id' => $quotationId]);
+        $quotation = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$quotation) {
+            return null;
+        }
+
+        // Get quotation items
+        $stmt = $conn->prepare("
+            SELECT * FROM quotation_items
+            WHERE quotation_id = :quotation_id
+            ORDER BY id
+        ");
+        $stmt->execute([':quotation_id' => $quotationId]);
+        $quotation['items'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return $quotation;
+
+    } catch (PDOException $e) {
+        error_log("Error getting quotation: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Update quotation status
+ */
+function updateQuotationStatus($conn, $quotationId, $status) {
+    try {
+        $stmt = $conn->prepare("
+            UPDATE quotations
+            SET quotation_status = :status, updated_at = NOW()
+            WHERE id = :quotation_id
+        ");
+        return $stmt->execute([
+            ':status' => $status,
+            ':quotation_id' => $quotationId
+        ]);
+    } catch (PDOException $e) {
+        error_log("Error updating quotation status: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Create invoices table and invoice_items table
+ */
+$conn->exec("
+    CREATE TABLE IF NOT EXISTS invoices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        invoice_number VARCHAR(50) NOT NULL UNIQUE,
+        sale_id INT DEFAULT NULL COMMENT 'Original sale ID if converted from receipt',
+        customer_id INT DEFAULT NULL,
+        customer_name VARCHAR(255) NOT NULL,
+        customer_email VARCHAR(255) DEFAULT '',
+        customer_phone VARCHAR(20) DEFAULT '',
+        customer_address TEXT,
+        subtotal DECIMAL(10,2) DEFAULT 0,
+        tax_amount DECIMAL(10,2) DEFAULT 0,
+        discount_amount DECIMAL(10,2) DEFAULT 0,
+        final_amount DECIMAL(10,2) NOT NULL,
+        invoice_status ENUM('draft', 'sent', 'paid', 'overdue') DEFAULT 'draft',
+        payment_terms VARCHAR(100) DEFAULT 'Due within 30 days',
+        payment_method VARCHAR(50) DEFAULT '',
+        notes TEXT,
+        terms TEXT,
+        due_date DATE DEFAULT NULL,
+        invoice_date DATE DEFAULT (CURRENT_DATE),
+        created_by INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE SET NULL,
+        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        INDEX idx_invoice_number (invoice_number),
+        INDEX idx_sale_id (sale_id),
+        INDEX idx_customer_id (customer_id),
+        INDEX idx_invoice_status (invoice_status),
+        INDEX idx_due_date (due_date)
+    )
+");
+
+/**
+ * Create invoice_items table
+ */
+$conn->exec("
+    CREATE TABLE IF NOT EXISTS invoice_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        invoice_id INT NOT NULL,
+        product_id INT DEFAULT NULL,
+        product_name VARCHAR(255) NOT NULL,
+        product_sku VARCHAR(100) DEFAULT '',
+        description TEXT,
+        quantity DECIMAL(10,2) NOT NULL,
+        unit_price DECIMAL(10,2) NOT NULL,
+        discount DECIMAL(10,2) DEFAULT 0,
+        tax_rate DECIMAL(5,2) DEFAULT 0,
+        tax_amount DECIMAL(10,2) DEFAULT 0,
+        total_price DECIMAL(10,2) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
+        INDEX idx_invoice_id (invoice_id),
+        INDEX idx_product_id (product_id)
+    )
+");
+
+/**
+ * Generate invoice number
+ */
+function generateInvoiceNumber($conn) {
+    try {
+        // Get invoice settings
+        $settings = [];
+        $stmt = $conn->query("SELECT setting_key, setting_value FROM settings WHERE setting_key LIKE 'invoice_%'");
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $settings[$row['setting_key']] = $row['setting_value'];
+        }
+
+        $prefix = $settings['invoice_prefix'] ?? 'INV';
+        $length = (int)($settings['invoice_number_length'] ?? 6);
+        $startNumber = (int)($settings['invoice_start_number'] ?? 1);
+
+        // Get the next number based on the highest existing number
+        $stmt = $conn->query("SELECT MAX(CAST(SUBSTRING(invoice_number, LENGTH('$prefix') + 1) AS UNSIGNED)) as max_num FROM invoices WHERE invoice_number LIKE '$prefix%'");
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $nextNum = max($startNumber, ($row['max_num'] ?? 0) + 1);
+
+        // Pad the number to required length
+        $paddedNum = str_pad($nextNum, $length, '0', STR_PAD_LEFT);
+
+        return $prefix . $paddedNum;
+    } catch (PDOException $e) {
+        error_log("Error generating invoice number: " . $e->getMessage());
+        return 'INV-' . date('Ymd') . '-001';
+    }
+}
+
+/**
+ * Create invoice from sale/receipt
+ */
+function createInvoiceFromSale($conn, $saleId, $userId) {
+    try {
+        $conn->beginTransaction();
+
+        // Get sale details
+        $stmt = $conn->prepare("
+            SELECT s.*, u.username as created_by_name
+            FROM sales s
+            LEFT JOIN users u ON s.user_id = u.id
+            WHERE s.id = :sale_id
+        ");
+        $stmt->execute([':sale_id' => $saleId]);
+        $sale = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$sale) {
+            throw new Exception('Sale not found');
+        }
+
+        // Check if invoice already exists for this sale
+        $stmt = $conn->prepare("SELECT id FROM invoices WHERE sale_id = :sale_id");
+        $stmt->execute([':sale_id' => $saleId]);
+        if ($stmt->fetch()) {
+            throw new Exception('Invoice already exists for this sale');
+        }
+
+        // Generate invoice number
+        $invoiceNumber = generateInvoiceNumber($conn);
+
+        // For receipts, set payment terms as "Paid", due date as sale date, and status as "paid"
+        $dueDate = date('Y-m-d', strtotime($sale['sale_date']));
+        $paymentTerms = 'Paid';
+        $invoiceStatus = 'paid';
+
+        // Insert invoice
+        $stmt = $conn->prepare("
+            INSERT INTO invoices (
+                invoice_number, sale_id, customer_id, customer_name, customer_email,
+                customer_phone, customer_address, subtotal, tax_amount, discount_amount,
+                final_amount, payment_method, notes, payment_terms, due_date, invoice_status, created_by
+            ) VALUES (
+                :invoice_number, :sale_id, :customer_id, :customer_name, :customer_email,
+                :customer_phone, :customer_address, :subtotal, :tax_amount, :discount_amount,
+                :final_amount, :payment_method, :notes, :payment_terms, :due_date, :invoice_status, :created_by
+            )
+        ");
+
+        $stmt->execute([
+            ':invoice_number' => $invoiceNumber,
+            ':sale_id' => $saleId,
+            ':customer_id' => $sale['customer_id'] ?? null,
+            ':customer_name' => $sale['customer_name'] ?: 'Walk-in Customer',
+            ':customer_email' => $sale['customer_email'] ?: '',
+            ':customer_phone' => $sale['customer_phone'] ?: '',
+            ':customer_address' => $sale['customer_address'] ?: '',
+            ':subtotal' => $sale['total_amount'] - $sale['tax_amount'] - $sale['discount'],
+            ':tax_amount' => $sale['tax_amount'],
+            ':discount_amount' => $sale['discount'],
+            ':final_amount' => $sale['final_amount'],
+            ':payment_method' => $sale['payment_method'],
+            ':notes' => $sale['notes'] ?: '',
+            ':payment_terms' => $paymentTerms,
+            ':due_date' => $dueDate,
+            ':invoice_status' => $invoiceStatus,
+            ':created_by' => $userId
+        ]);
+
+        $invoiceId = $conn->lastInsertId();
+
+        // Get sale items and insert as invoice items
+        $stmt = $conn->prepare("
+            SELECT si.*, p.sku, p.description
+            FROM sale_items si
+            LEFT JOIN products p ON si.product_id = p.id
+            WHERE si.sale_id = :sale_id
+        ");
+        $stmt->execute([':sale_id' => $saleId]);
+        $saleItems = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Insert invoice items
+        $stmt = $conn->prepare("
+            INSERT INTO invoice_items (
+                invoice_id, product_id, product_name, product_sku, description,
+                quantity, unit_price, discount, total_price
+            ) VALUES (
+                :invoice_id, :product_id, :product_name, :product_sku, :description,
+                :quantity, :unit_price, :discount, :total_price
+            )
+        ");
+
+        foreach ($saleItems as $item) {
+            $stmt->execute([
+                ':invoice_id' => $invoiceId,
+                ':product_id' => $item['product_id'],
+                ':product_name' => $item['product_name'],
+                ':product_sku' => $item['sku'] ?: '',
+                ':description' => $item['description'] ?: '',
+                ':quantity' => $item['quantity'],
+                ':unit_price' => $item['unit_price'],
+                ':discount' => 0, // Calculate discount per item if needed
+                ':total_price' => $item['total_price']
+            ]);
+        }
+
+        $conn->commit();
+        return [
+            'success' => true,
+            'invoice_id' => $invoiceId,
+            'invoice_number' => $invoiceNumber
+        ];
+
+    } catch (Exception $e) {
+        $conn->rollBack();
+        return [
+            'success' => false,
+            'error' => $e->getMessage()
+        ];
+    }
+}
+
+/**
+ * Get invoice by ID
+ */
+function getInvoice($conn, $invoiceId) {
+    try {
+        $stmt = $conn->prepare("
+            SELECT i.*, u.username as created_by_name, c.email as customer_email_from_db
+            FROM invoices i
+            LEFT JOIN users u ON i.created_by = u.id
+            LEFT JOIN customers c ON i.customer_id = c.id
+            WHERE i.id = :invoice_id
+        ");
+        $stmt->execute([':invoice_id' => $invoiceId]);
+        $invoice = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$invoice) {
+            return null;
+        }
+
+        // Get invoice items
+        $stmt = $conn->prepare("
+            SELECT * FROM invoice_items
+            WHERE invoice_id = :invoice_id
+            ORDER BY id
+        ");
+        $stmt->execute([':invoice_id' => $invoiceId]);
+        $invoice['items'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return $invoice;
+
+    } catch (PDOException $e) {
+        error_log("Error getting invoice: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Get invoices with pagination and filters
+ */
+function getInvoices($conn, $filters = [], $page = 1, $perPage = 20) {
+    try {
+        $where = [];
+        $params = [];
+
+        if (!empty($filters['status'])) {
+            $where[] = 'invoice_status = :status';
+            $params[':status'] = $filters['status'];
+        }
+
+        if (!empty($filters['customer_name'])) {
+            $where[] = 'customer_name LIKE :customer_name';
+            $params[':customer_name'] = '%' . $filters['customer_name'] . '%';
+        }
+
+        if (!empty($filters['invoice_number'])) {
+            $where[] = 'invoice_number LIKE :invoice_number';
+            $params[':invoice_number'] = '%' . $filters['invoice_number'] . '%';
+        }
+
+        if (!empty($filters['date_from'])) {
+            $where[] = 'invoice_date >= :date_from';
+            $params[':date_from'] = $filters['date_from'];
+        }
+
+        if (!empty($filters['date_to'])) {
+            $where[] = 'invoice_date <= :date_to';
+            $params[':date_to'] = $filters['date_to'];
+        }
+
+        $whereClause = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $offset = ($page - 1) * $perPage;
+
+        // Get total count
+        $countStmt = $conn->prepare("SELECT COUNT(*) as total FROM invoices $whereClause");
+        $countStmt->execute($params);
+        $total = $countStmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+        // Get invoices
+        $stmt = $conn->prepare("
+            SELECT i.*, u.username as created_by_name
+            FROM invoices i
+            LEFT JOIN users u ON i.created_by = u.id
+            $whereClause
+            ORDER BY i.created_at DESC
+            LIMIT $perPage OFFSET $offset
+        ");
+        $stmt->execute($params);
+        $invoices = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $totalPages = ceil($total / $perPage);
+
+        return [
+            'invoices' => $invoices,
+            'total' => $total,
+            'pages' => $totalPages,
+            'current_page' => $page
+        ];
+
+    } catch (PDOException $e) {
+        error_log("Error getting invoices: " . $e->getMessage());
+        return [
+            'invoices' => [],
+            'total' => 0,
+            'pages' => 0,
+            'current_page' => $page
+        ];
+    }
+}
+
+/**
+ * Update an existing quotation
+ */
+function updateQuotation($conn, $quotationId, $quotationData) {
+    try {
+        $conn->beginTransaction();
+
+        // Update quotation header
+        $stmt = $conn->prepare("
+            UPDATE quotations SET
+                customer_id = :customer_id,
+                customer_name = :customer_name,
+                customer_email = :customer_email,
+                customer_phone = :customer_phone,
+                customer_address = :customer_address,
+                subtotal = :subtotal,
+                tax_amount = :tax_amount,
+                final_amount = :final_amount,
+                quotation_status = :quotation_status,
+                valid_until = :valid_until,
+                notes = :notes,
+                terms = :terms,
+                updated_at = NOW()
+            WHERE id = :quotation_id
+        ");
+
+        $stmt->execute([
+            ':quotation_id' => $quotationId,
+            ':customer_id' => $quotationData['customer_id'] ?? null,
+            ':customer_name' => $quotationData['customer_name'] ?? '',
+            ':customer_email' => $quotationData['customer_email'] ?? '',
+            ':customer_phone' => $quotationData['customer_phone'] ?? '',
+            ':customer_address' => $quotationData['customer_address'] ?? '',
+            ':subtotal' => $quotationData['subtotal'] ?? 0,
+            ':tax_amount' => $quotationData['tax_amount'] ?? 0,
+            ':final_amount' => $quotationData['final_amount'] ?? 0,
+            ':quotation_status' => $quotationData['quotation_status'] ?? 'draft',
+            ':valid_until' => $quotationData['valid_until'],
+            ':notes' => $quotationData['notes'] ?? '',
+            ':terms' => $quotationData['terms'] ?? ''
+        ]);
+
+        // Delete existing items and insert updated ones
+        $stmt = $conn->prepare("DELETE FROM quotation_items WHERE quotation_id = :quotation_id");
+        $stmt->execute([':quotation_id' => $quotationId]);
+
+        // Insert updated quotation items
+        if (isset($quotationData['items']) && is_array($quotationData['items'])) {
+            $stmt = $conn->prepare("
+                INSERT INTO quotation_items (
+                    quotation_id, product_id, product_name, product_sku,
+                    quantity, unit_price, total_price, description
+                ) VALUES (
+                    :quotation_id, :product_id, :product_name, :product_sku,
+                    :quantity, :unit_price, :total_price, :description
+                )
+            ");
+
+            foreach ($quotationData['items'] as $item) {
+                $stmt->execute([
+                    ':quotation_id' => $quotationId,
+                    ':product_id' => $item['product_id'] ?? null,
+                    ':product_name' => $item['product_name'],
+                    ':product_sku' => $item['product_sku'] ?? '',
+                    ':quantity' => $item['quantity'],
+                    ':unit_price' => $item['unit_price'],
+                    ':total_price' => $item['total_price'],
+                    ':description' => $item['description'] ?? ''
+                ]);
+            }
+        }
+
+        $conn->commit();
+        return ['success' => true, 'quotation_id' => $quotationId];
+
+    } catch (PDOException $e) {
+        $conn->rollBack();
+        error_log("Error updating quotation: " . $e->getMessage());
+        return ['success' => false, 'error' => $e->getMessage()];
+    }
+}
+
+/**
+ * Get quotations with pagination and filters
+ */
+function getQuotations($conn, $filters = [], $page = 1, $perPage = 20) {
+    try {
+        $where = [];
+        $params = [];
+
+        if (!empty($filters['status'])) {
+            $where[] = 'quotation_status = :status';
+            $params[':status'] = $filters['status'];
+        }
+
+        if (!empty($filters['customer_name'])) {
+            $where[] = 'customer_name LIKE :customer_name';
+            $params[':customer_name'] = '%' . $filters['customer_name'] . '%';
+        }
+
+        if (!empty($filters['date_from'])) {
+            $where[] = 'created_at >= :date_from';
+            $params[':date_from'] = $filters['date_from'];
+        }
+
+        if (!empty($filters['date_to'])) {
+            $where[] = 'created_at <= :date_to';
+            $params[':date_to'] = $filters['date_to'];
+        }
+
+        $whereClause = !empty($where) ? 'WHERE ' . implode(' AND ', $where) : '';
+
+        $offset = ($page - 1) * $perPage;
+
+        // Get total count
+        $countStmt = $conn->prepare("SELECT COUNT(*) as total FROM quotations $whereClause");
+        $countStmt->execute($params);
+        $total = $countStmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+        // Get quotations
+        $stmt = $conn->prepare("
+            SELECT q.*, u.username as created_by
+            FROM quotations q
+            LEFT JOIN users u ON q.user_id = u.id
+            $whereClause
+            ORDER BY q.created_at DESC
+            LIMIT $perPage OFFSET $offset
+        ");
+        $stmt->execute($params);
+        $quotations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return [
+            'quotations' => $quotations,
+            'total' => $total,
+            'pages' => ceil($total / $perPage),
+            'current_page' => $page
+        ];
+
+    } catch (PDOException $e) {
+        error_log("Error getting quotations: " . $e->getMessage());
+        return ['quotations' => [], 'total' => 0, 'pages' => 0, 'current_page' => 1];
     }
 }
 ?>

@@ -4,6 +4,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 require_once __DIR__ . '/../include/db.php';
+require_once __DIR__ . '/../include/functions.php';
 
 // Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
@@ -83,7 +84,8 @@ try {
         $cart_item = [
             'product_id' => $product['id'],
             'name' => $product['name'],
-            'price' => floatval($product['price']),
+            // Use helper to determine current product price (sale price if applicable)
+            'price' => floatval(getCurrentProductPrice($product)),
             'quantity' => $quantity,
             'category_name' => $product['category_name'],
             'image_url' => $product['image_url'],

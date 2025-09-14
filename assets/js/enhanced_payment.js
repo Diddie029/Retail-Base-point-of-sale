@@ -12,6 +12,8 @@ class PaymentProcessor {
         this.taxRate = 0;
         this.cashSelectedCustomer = null;
         this.loyaltySelectedCustomer = null;
+        // Reference to a pre-opened print window (opened synchronously on user gesture)
+        this._preopenedPrintWindow = null;
         
         this.init();
     }
@@ -511,6 +513,27 @@ class PaymentProcessor {
         confirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Processing...';
 
         try {
+            // If auto-print is enabled, pre-open a (blank) print window now while still in
+            // the user click handler so popup blockers allow it. We'll navigate it later
+            // when the receipt is ready.
+            if (window.autoPrintReceipt) {
+                try {
+                    // Use a consistent name so subsequent attempts reuse the same window/tab
+                    this._preopenedPrintWindow = window.open('', 'pos_print_window');
+                    if (this._preopenedPrintWindow) {
+                        // Provide minimal feedback while processing
+                        try {
+                            this._preopenedPrintWindow.document.write('<html><head><title>Printing...</title></head><body><p>Preparing receipt for printing...</p></body></html>');
+                        } catch (e) {
+                            // ignore write errors (some browsers may restrict document write)
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Could not pre-open print window', e);
+                    this._preopenedPrintWindow = null;
+                }
+            }
+
             const paymentData = await this.processPayment();
             
             if (paymentData.success) {
@@ -744,11 +767,28 @@ class PaymentProcessor {
     }
 
     printReceipt() {
-        const receiptData = this.getReceiptData();
-        const printUrl = `print_receipt.php?data=${encodeURIComponent(JSON.stringify(receiptData))}`;
-        
-        // Open print window
-        const printWindow = window.open(printUrl, '_blank', 'width=800,height=600');
+    const receiptData = this.getReceiptData();
+    // Build print URL with optional auto-print and auto-close flags so the print page
+    // can trigger printing and close itself when appropriate.
+    const params = new URLSearchParams();
+    params.set('data', encodeURIComponent(JSON.stringify(receiptData)));
+    if (window.autoPrintReceipt) params.set('auto_print', 'true');
+    if (window.autoClosePrintWindow) params.set('auto_close', 'true');
+    const printUrl = `print_receipt.php?${params.toString()}`;
+
+        // Reuse pre-opened print window if available (opened synchronously on user click)
+        let printWindow = null;
+        if (this._preopenedPrintWindow && !this._preopenedPrintWindow.closed) {
+            try {
+                printWindow = this._preopenedPrintWindow;
+                printWindow.location.href = printUrl;
+            } catch (e) {
+                // Could fail in some cross-origin or restricted contexts, fallback to open
+                printWindow = window.open(printUrl, '_blank', 'width=800,height=600');
+            }
+        } else {
+            printWindow = window.open(printUrl, '_blank', 'width=800,height=600');
+        }
         
         // Check if window was opened successfully
         if (!printWindow) {
@@ -757,18 +797,31 @@ class PaymentProcessor {
             return;
         }
         
-        // Auto-trigger print dialog when window loads
-        printWindow.onload = function() {
-            printWindow.focus();
-            printWindow.print();
-            
-            // Auto-close print window if enabled
-            if (window.autoClosePrintWindow) {
-                // Close window after a short delay to allow printing to complete
-                setTimeout(() => {
-                    printWindow.close();
-                }, 2000);
+        // Auto-trigger print dialog when window loads unless the print page will handle it
+        printWindow.onload = () => {
+            try {
+                printWindow.focus();
+            } catch (e) {}
+
+            // If we explicitly requested auto_print on the print page, let that page call print().
+            // Otherwise, trigger print from this opener.
+            if (!printUrl.includes('auto_print=true')) {
+                try {
+                    printWindow.print();
+
+                    // Auto-close from opener side as a fallback when requested
+                    if (window.autoClosePrintWindow) {
+                        setTimeout(() => {
+                            try { printWindow.close(); } catch (e) {}
+                        }, 2000);
+                    }
+                } catch (e) {
+                    console.warn('Could not trigger print from opener:', e);
+                }
             }
+
+            // Clear the preopened reference so future prints will re-open
+            try { window._preopenedPrintWindow = null; } catch (e) {}
         };
         
         // Handle window load error

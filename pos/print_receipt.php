@@ -80,14 +80,18 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
     <style>
         /* Print-specific styles */
+        @page { size: 80mm auto; margin: 0mm; }
+
         @media print {
-            body {
+            html, body {
                 margin: 0 !important;
-                padding: 20px !important;
-                font-size: 12px !important;
-                line-height: 1.4 !important;
+                padding: 0 !important;
+                /* Slightly increased base font size for better thermal visibility */
+                font-size: 13px !important;
+                line-height: 1.35 !important;
                 color: #000 !important;
                 background: white !important;
+                -webkit-print-color-adjust: exact !important;
             }
 
             /* Hide navigation buttons when printing */
@@ -99,13 +103,22 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 display: none !important;
             }
             
+            /* Make receipt narrow and thermal-friendly (80mm width) */
             .receipt-container {
-                max-width: none !important;
-                width: 100% !important;
-                margin: 0 !important;
+                max-width: 80mm !important;
+                width: 80mm !important;
+                margin: 0 auto !important;
                 box-shadow: none !important;
                 border: none !important;
                 page-break-inside: avoid;
+                padding: 4px 2px !important;
+                font-family: 'Courier New', monospace !important;
+                /* Force bold for thermal printer readability */
+                font-weight: bold !important;
+                /* Let the container size naturally and avoid forced extra height */
+                display: block !important;
+                height: auto !important;
+                overflow: visible !important;
             }
             
             .receipt-header {
@@ -113,16 +126,23 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 margin-bottom: 20px;
             }
             
+            /* Make all header and address text bold and slightly larger for visibility */
             .company-name {
                 font-size: 18px !important;
-                font-weight: bold !important;
-                margin-bottom: 5px;
+                margin-bottom: 4px !important;
             }
             
             .company-address {
                 font-size: 11px !important;
-                line-height: 1.3 !important;
-                margin-bottom: 15px;
+                line-height: 1.2 !important;
+                margin-bottom: 6px !important;
+                color: #000 !important;
+            }
+
+            /* Ensure every textual element in the receipt prints bold */
+            .receipt-container, .receipt-container * {
+                font-weight: bold !important;
+                color: #000 !important;
             }
             
             .transaction-info {
@@ -138,7 +158,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             
             .items-table th,
             .items-table td {
-                padding: 4px 0 !important;
+                padding: 3px 0 !important;
                 border-bottom: 1px solid #ddd !important;
                 font-size: 11px !important;
             }
@@ -153,8 +173,8 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             }
             
             .totals-section {
-                margin-top: 10px;
-                padding-top: 10px;
+                margin-top: 6px !important;
+                padding-top: 6px !important;
                 border-top: 2px solid #000;
             }
             
@@ -166,24 +186,20 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             }
             
             .total-row.final {
-                font-weight: bold !important;
                 font-size: 13px !important;
-                margin-top: 5px;
-                padding-top: 5px;
+                margin-top: 4px !important;
+                padding-top: 4px !important;
                 border-top: 1px solid #000;
             }
             
             .thank-you {
                 text-align: center;
-                margin-top: 20px;
+                margin-top: 6px !important;
                 font-size: 10px !important;
             }
             
-            .separator {
-                text-align: center;
-                margin: 15px 0;
-                font-size: 10px;
-            }
+            /* Hide visual separator when printing to save space */
+            .separator { display: none !important; }
         }
         
         /* Screen styles */
@@ -195,10 +211,10 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             }
             
             .receipt-container {
-                max-width: 400px;
+                max-width: 480px;
                 margin: 0 auto;
                 background: white;
-                padding: 30px;
+                padding: 20px;
                 border-radius: 8px;
                 box-shadow: 0 4px 20px rgba(0,0,0,0.1);
             }
@@ -300,16 +316,17 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 
             /* Barcode Section Styles */
             .barcode-section svg {
-                max-width: 100%;
+                display: block;
+                width: 100%;
                 height: auto;
             }
 
             @media print {
                 .barcode-section {
                     background: white !important;
-                    border: 1px solid #000 !important;
-                    margin: 10px 0 !important;
-                    padding: 5px 0 !important;
+                    border: none !important;
+                    margin: 6px 0 !important;
+                    padding: 0 !important;
                 }
             }
         }
@@ -319,12 +336,18 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     <div class="receipt-container">
         <!-- Print Controls (only visible on screen) -->
         <div class="print-controls no-print">
-            <button class="btn btn-primary me-2" onclick="window.print()">
+            <button class="btn btn-primary me-2" onclick="printAndClose()">
                 <i class="bi bi-printer"></i> Print Receipt
             </button>
-            <button class="btn btn-secondary" onclick="window.close()">
+            <button class="btn btn-secondary" onclick="goBackToPOS()">
                 <i class="bi bi-x-circle"></i> Close
             </button>
+        </div>
+        <!-- Manual print fallback shown when auto-print fails or is blocked -->
+        <div id="printFallback" class="no-print" style="text-align:center; margin:10px 0; display:none;">
+            <div style="margin-bottom:8px; font-weight:bold;">Auto-print was blocked or failed. Please print manually.</div>
+            <button id="manualPrintBtn" class="btn btn-lg btn-primary" onclick="manualPrint()"><i class="bi bi-printer"></i> Click to Print</button>
+            <button class="btn btn-link" onclick="goBackToPOS()">Return to POS</button>
         </div>
 
         <!-- Receipt Header -->
@@ -660,65 +683,164 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         <button onclick="goBackToPOS()" class="btn btn-primary" style="margin: 0 10px;">
             <i class="bi bi-arrow-left"></i> Back to POS
         </button>
-        <button onclick="printAgain()" class="btn btn-secondary" style="margin: 0 10px;">
-            <i class="bi bi-printer"></i> Print Again
-        </button>
         <button onclick="startNewSale()" class="btn btn-success" style="margin: 0 10px;">
             <i class="bi bi-plus-circle"></i> New Sale
         </button>
     </div>
 
     <script>
-        // Generate barcode for transaction ID
+        // Generate barcode for transaction ID with stronger rendering for thermal printers
         document.addEventListener('DOMContentLoaded', function() {
             const transactionId = '<?php echo htmlspecialchars($receiptData['transaction_id'] ?? $receiptData['sale_id'] ?? 'N/A'); ?>';
-            
+
+            // Use a larger height and slightly thicker lines for thermal readability
             JsBarcode("#receiptBarcode", transactionId, {
                 format: "CODE128",
-                width: 1.5,
-                height: 30,
+                width: 2,
+                height: 48,
                 displayValue: false,
                 background: "transparent",
                 lineColor: "#000000",
                 margin: 0
             });
+
+            // Helper: try to resize the print window to fit receipt content when opened by script.
+            function fitWindowToContent() {
+                try {
+                    const container = document.querySelector('.receipt-container');
+                    if (!container) return;
+                    // compute required pixel width/height
+                    const contentWidth = Math.min(Math.max(container.offsetWidth + 40, 280), 800);
+                    const contentHeight = container.scrollHeight + 80;
+
+                    // Only attempt resize on windows opened by script (browsers often allow this)
+                    if (window.name === 'pos_print_window' || (window.opener && !window.opener.closed)) {
+                        try {
+                            window.resizeTo(contentWidth, contentHeight);
+                        } catch (e) {
+                            // ignore if not allowed
+                        }
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
+
+            // Attempt to fit window after a short delay so styles and barcode render first
+            setTimeout(fitWindowToContent, 200);
         });
 
-        // Auto-print on page load (controlled by parameter)
+        // Auto-print on page load (controlled by URL parameters auto_print and auto_close)
         const urlParams = new URLSearchParams(window.location.search);
-        const autoPrint = urlParams.get('auto_print');
-        
-        if (autoPrint === 'true') {
-            window.addEventListener('load', function() {
+        const autoPrint = urlParams.get('auto_print') === 'true';
+        const autoClose = urlParams.get('auto_close') === 'true';
+
+        // If auto-print requested, hide navigation buttons to avoid UI flicker on small printers
+        if (autoPrint) {
+            const nav = document.getElementById('navButtons');
+            if (nav) nav.style.display = 'none';
+        }
+
+        // Resilient auto-print flow: attempt immediate print, show manual fallback if blocked,
+        // and always return to POS (or close) after printing when requested.
+        function triggerAutoPrintWithFallback() {
+            let attempted = false;
+
+            function showFallback() {
+                const fallback = document.getElementById('printFallback');
+                if (fallback) fallback.style.display = 'block';
+                const nav = document.getElementById('navButtons');
+                if (nav) nav.style.display = 'block';
+            }
+
+            try {
+                window.print();
+                attempted = true;
+            } catch (e) {
+                console.warn('Auto print call failed:', e);
+                attempted = false;
+            }
+
+            // If afterprint doesn't fire within a reasonable time, assume blocked and show fallback
+            const noPrintTimer = setTimeout(function() {
+                // Show manual print fallback
+                showFallback();
+                // Always redirect to sales page after timeout
                 setTimeout(function() {
-                    window.print();
-                }, 2000); // 2 second delay for auto-print
+                    try { window.location.href = 'sale.php'; } catch (e) {}
+                }, 3000); // 3 second delay to allow user to print manually
+            }, 2500);
+
+            // afterprint handler: notify opener and close or reveal nav
+            window.addEventListener('afterprint', function afterPrintHandler() {
+                clearTimeout(noPrintTimer);
+                try {
+                    if (window.opener && !window.opener.closed) {
+                        try {
+                            if (typeof window.opener.postMessage === 'function') {
+                                window.opener.postMessage({ type: 'receipt_printed' }, '*');
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+
+                // Always redirect to sales page after printing
+                setTimeout(function() {
+                    try { window.location.href = 'sale.php'; } catch (e) {}
+                }, 1000); // 1 second delay to allow printing to complete
+                window.removeEventListener('afterprint', afterPrintHandler);
             });
         }
-        
-        // Close window after printing
-        window.addEventListener('afterprint', function() {
-            // Optionally close the window after printing
-            // setTimeout(function() {
-            //     window.close();
-            // }, 1000);
-        });
 
-        // Show navigation buttons after page loads
+        if (autoPrint) {
+            window.addEventListener('load', function() {
+                // small delay to allow barcode/fonts to render
+                setTimeout(triggerAutoPrintWithFallback, 450);
+            });
+        }
+
+        // Show navigation buttons after page loads (unless autoPrint is running)
         window.addEventListener('load', function() {
             // Show navigation buttons after a delay (to allow for auto-print)
             setTimeout(function() {
-                document.getElementById('navButtons').style.display = 'block';
+                const nav = document.getElementById('navButtons');
+                if (!nav) return;
+                // Only show nav if autoPrint is not active; if autoPrint is active, nav will be revealed by fallback
+                if (!autoPrint) {
+                    nav.style.display = 'block';
+                }
             }, 3000); // 3 seconds delay
         });
+
+        // Manual print action triggered from fallback UI
+        function manualPrint() {
+            try {
+                // show nav while printing so user has controls
+                const nav = document.getElementById('navButtons');
+                if (nav) nav.style.display = 'block';
+                window.print();
+                // Close and redirect to sales page after printing
+                setTimeout(function() {
+                    window.location.href = 'sale.php';
+                }, 2000); // 2 second delay to allow printing to complete
+            } catch (e) {
+                console.warn('Manual print failed:', e);
+                // Redirect back to POS so user is not stuck
+                try { window.location.href = 'sale.php'; } catch (ee) {}
+            }
+        }
 
         // Navigation functions
         function goBackToPOS() {
             window.location.href = 'sale.php';
         }
 
-        function printAgain() {
+        function printAndClose() {
             window.print();
+            // Close and redirect to sales page after printing
+            setTimeout(function() {
+                window.location.href = 'sale.php';
+            }, 2000); // 2 second delay to allow printing to complete
         }
 
         function startNewSale() {

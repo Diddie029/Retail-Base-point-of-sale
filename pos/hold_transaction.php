@@ -57,19 +57,50 @@ header('Content-Type: application/json');
         throw new Exception('Hold reason is required');
     }
 
-    // Calculate totals
+    // Calculate totals and normalize item prices to current product price (sale if applicable)
     $subtotal = 0;
+    $normalizedItems = [];
     foreach ($cart as $item) {
-        $subtotal += $item['price'] * $item['quantity'];
+        // Support multiple cart item formats (product_id or id)
+        $product_id = $item['product_id'] ?? $item['id'] ?? null;
+        $quantity = isset($item['quantity']) ? (float)$item['quantity'] : 1;
+
+        $unit_price = null;
+        if ($product_id) {
+            // Fetch latest product details from DB
+            $pstmt = $conn->prepare("SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?");
+            $pstmt->execute([$product_id]);
+            $prod = $pstmt->fetch(PDO::FETCH_ASSOC);
+            if ($prod) {
+                $unit_price = (float)getCurrentProductPrice($prod);
+            }
+        }
+
+        // Fallback to cart-stored price if product lookup fails
+        if ($unit_price === null) {
+            $unit_price = isset($item['price']) ? (float)$item['price'] : 0;
+        }
+
+        $line_total = $unit_price * $quantity;
+        $subtotal += $line_total;
+
+        $normalizedItems[] = [
+            'product_id' => $product_id,
+            'name' => $item['name'] ?? $item['product_name'] ?? '',
+            'quantity' => $quantity,
+            'unit_price' => $unit_price,
+            'line_total' => $line_total,
+            'sku' => $item['sku'] ?? ''
+        ];
     }
     
     $tax_rate = 16; // Default tax rate - could be made configurable
     $tax_amount = $subtotal * ($tax_rate / 100);
     $total_amount = $subtotal + $tax_amount;
 
-    // Prepare cart data with totals
+    // Prepare cart data with normalized items and totals
     $cartData = [
-        'items' => $cart,
+        'items' => $normalizedItems,
         'totals' => [
             'subtotal' => $subtotal,
             'tax' => $tax_amount,

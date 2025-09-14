@@ -70,6 +70,14 @@
     
     // Save current cart state to session after initialization
     setTimeout(saveCartToSession, 200);
+
+    // Autofocus product search so barcode scanners type into it by default
+    setTimeout(() => {
+      const searchInput = document.getElementById('productSearch');
+      if (searchInput) {
+        try { searchInput.focus(); } catch(e) { /* ignore */ }
+      }
+    }, 300);
   }
 
   function bindFilters(){
@@ -89,7 +97,7 @@
         name: card.dataset.productName,
         sku: card.dataset.productSku,
         barcode: card.dataset.productBarcode,
-        price: parseFloat(card.dataset.productPrice),
+    price: parseFloat(card.dataset.productPrice || card.dataset.productPrice === 0 ? card.dataset.productPrice : card.dataset.productPrice) || 0,
         stock: parseInt(card.dataset.productStock),
         category: card.dataset.categoryId,
         searchText: card.dataset.searchText,
@@ -147,17 +155,36 @@
     // Search input handler with suggestions
     if (search && searchSuggestions && suggestionsList) {
       search.addEventListener('input', function() {
-        const term = this.value.trim().toLowerCase();
+        const raw = this.value.trim();
+        const term = raw.toLowerCase();
         selectedSuggestionIndex = -1;
         
         clearTimeout(searchTimeout);
-        
+
+        // If user scanned or typed an exact barcode/sku/product code (no spaces)
+        // and it matches a product, auto-add it to cart. We require length >= 3
+        // to avoid false positives during normal typing.
+        if (raw.length >= 3 && !raw.includes(' ')) {
+          const exactMatch = allProducts.find(p => (p.barcode && p.barcode.toLowerCase() === term) ||
+                                                 (p.sku && p.sku.toLowerCase() === term) ||
+                                                 (p.id && String(p.id) === raw));
+          if (exactMatch) {
+            // Simulate click to reuse existing add-to-cart flow (handles auto-bom etc.)
+            exactMatch.element.click();
+            // Clear search box and suggestions
+            this.value = '';
+            hideSuggestions();
+            applySearch('');
+            return;
+          }
+        }
+
         if (term.length === 0) {
           hideSuggestions();
           applySearch('');
           return;
         }
-        
+
         searchTimeout = setTimeout(() => {
           const filteredProducts = applySearch(term);
           displaySuggestions(filteredProducts, term);
@@ -181,9 +208,30 @@
             break;
           case 'Enter':
             e.preventDefault();
+            // If a suggestion is selected, use it
             if (selectedSuggestionIndex >= 0 && suggestions[selectedSuggestionIndex]) {
               selectSuggestion(suggestions[selectedSuggestionIndex]);
+              return;
             }
+
+            // Otherwise, try exact-match add (useful for scanner Enter)
+            const raw = this.value.trim();
+            const termLower = raw.toLowerCase();
+            if (raw.length >= 1 && !raw.includes(' ')) {
+              const exactMatch = allProducts.find(p => (p.barcode && p.barcode.toLowerCase() === termLower) ||
+                                                     (p.sku && p.sku.toLowerCase() === termLower) ||
+                                                     (p.id && String(p.id) === raw));
+              if (exactMatch) {
+                exactMatch.element.click();
+                this.value = '';
+                hideSuggestions();
+                applySearch('');
+                return;
+              }
+            }
+
+            // Fall back to selecting first suggestion if present
+            if (suggestions.length > 0) selectSuggestion(suggestions[0]);
             break;
           case 'Escape':
             hideSuggestions();
@@ -1238,7 +1286,7 @@
         scannedProduct = {
           id: productCard.dataset.productId,
           name: productCard.dataset.productName,
-          price: productCard.dataset.productPrice,
+    price: parseFloat(productCard.dataset.productPrice) || parseFloat(productCard.dataset.productSalePrice) || 0,
           barcode: barcode
         };
         

@@ -59,9 +59,30 @@ try {
         throw new Exception('Held transaction not found or already processed');
     }
 
-    // Decode cart data to get totals
+    // Decode cart data to get totals and re-evaluate totals based on current product prices
     $cartData = json_decode($held_transaction['cart_data'], true);
-    $total_amount = $cartData['totals']['total'] ?? 0;
+    $total_amount = 0;
+    if (!empty($cartData['items'])) {
+        foreach ($cartData['items'] as $item) {
+            $product_id = $item['product_id'] ?? $item['id'] ?? null;
+            $quantity = isset($item['quantity']) ? (float)$item['quantity'] : (isset($item['qty']) ? floatval($item['qty']) : 1);
+            $unit_price = null;
+            if ($product_id) {
+                $pstmt = $conn->prepare("SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?");
+                $pstmt->execute([$product_id]);
+                $prod = $pstmt->fetch(PDO::FETCH_ASSOC);
+                if ($prod) {
+                    $unit_price = (float)getCurrentProductPrice($prod);
+                }
+            }
+            if ($unit_price === null) {
+                if (isset($item['unit_price'])) $unit_price = (float)$item['unit_price'];
+                elseif (isset($item['price'])) $unit_price = (float)$item['price'];
+                else $unit_price = 0;
+            }
+            $total_amount += $unit_price * $quantity;
+        }
+    }
 
     // Start transaction
     $conn->beginTransaction();

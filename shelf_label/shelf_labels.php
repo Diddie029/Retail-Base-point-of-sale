@@ -530,7 +530,7 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
             <!-- Products Grid -->
                             <div class="product-grid">
                     <?php foreach ($products as $product): ?>
-                    <div class="product-card" data-product-id="<?php echo $product['id']; ?>" data-quantity="<?php echo (int)($product['quantity'] ?? 0); ?>">
+                    <div class="product-card" data-product-id="<?php echo $product['id']; ?>" data-quantity="<?php echo (int)($product['quantity'] ?? 0); ?>" data-product-sku="<?php echo htmlspecialchars($product['sku'] ?? ''); ?>" data-product-barcode="<?php echo htmlspecialchars($product['barcode'] ?? ''); ?>">
                         <div class="form-check">
                             <input class="form-check-input product-checkbox" type="checkbox"
                                    name="selected_products[]" value="<?php echo $product['id']; ?>"

@@ -65,15 +65,28 @@ try {
             ) VALUES (?, ?, 'product', ?, ?, ?, ?, ?, ?)
         ");
 
-        $total_amount = $cart_item['price'] * $cart_item['quantity'];
-        
+        // Re-evaluate unit price using current product price if available
+        $product_id = $cart_item['product_id'] ?? $cart_item['id'] ?? null;
+        $unit_price = isset($cart_item['price']) ? (float)$cart_item['price'] : null;
+        if ($product_id) {
+            $pstmt = $conn->prepare("SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?");
+            $pstmt->execute([$product_id]);
+            $prod = $pstmt->fetch(PDO::FETCH_ASSOC);
+            if ($prod) {
+                $unit_price = (float)getCurrentProductPrice($prod);
+            }
+        }
+
+        $quantity = isset($cart_item['quantity']) ? (float)$cart_item['quantity'] : (isset($cart_item['qty']) ? floatval($cart_item['qty']) : 1);
+        $total_amount = $unit_price * $quantity;
+
         $stmt->execute([
             $user_id,
             $till_id,
-            $cart_item['id'],
+            $product_id,
             $cart_item['name'],
-            $cart_item['quantity'],
-            $cart_item['price'],
+            $quantity,
+            $unit_price,
             $total_amount,
             $void_reason
         ]);

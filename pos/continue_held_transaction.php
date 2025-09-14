@@ -71,16 +71,63 @@ try {
         ");
         $stmt->execute([$held_transaction_id]);
 
-        // Load cart data into session
-        $_SESSION['cart'] = $cartData['items'];
+        // Normalize item prices to current product prices and load into session
+        $normalizedCart = [];
+        $subtotal = 0;
+        foreach ($cartData['items'] as $item) {
+            $product_id = $item['product_id'] ?? $item['id'] ?? null;
+            $quantity = isset($item['quantity']) ? (float)$item['quantity'] : (isset($item['qty']) ? floatval($item['qty']) : 1);
+
+            $unit_price = null;
+            if ($product_id) {
+                $pstmt = $conn->prepare("SELECT p.*, c.name as category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = ?");
+                $pstmt->execute([$product_id]);
+                $prod = $pstmt->fetch(PDO::FETCH_ASSOC);
+                if ($prod) {
+                    $unit_price = (float)getCurrentProductPrice($prod);
+                }
+            }
+
+            if ($unit_price === null) {
+                // Fallback to stored price fields
+                if (isset($item['unit_price'])) $unit_price = (float)$item['unit_price'];
+                elseif (isset($item['price'])) $unit_price = (float)$item['price'];
+                else $unit_price = 0;
+            }
+
+            $line_total = $unit_price * $quantity;
+            $subtotal += $line_total;
+
+            $normalizedCart[] = [
+                'product_id' => $product_id,
+                'id' => $product_id,
+                'name' => $item['name'] ?? $item['product_name'] ?? '',
+                'quantity' => $quantity,
+                'price' => $unit_price,
+                'unit_price' => $unit_price,
+                'line_total' => $line_total,
+                'sku' => $item['sku'] ?? ''
+            ];
+        }
+
+        $tax_rate = 16; // Default tax rate - keep consistent with hold flow
+        $tax_amount = $subtotal * ($tax_rate / 100);
+        $total_amount = $subtotal + $tax_amount;
+
+        // Load normalized cart into session
+        $_SESSION['cart'] = $normalizedCart;
 
         $conn->commit();
 
         echo json_encode([
             'success' => true,
             'message' => 'Held transaction loaded successfully',
-            'cart' => $cartData['items'],
-            'totals' => $cartData['totals'],
+            'cart' => $normalizedCart,
+            'totals' => [
+                'subtotal' => $subtotal,
+                'tax' => $tax_amount,
+                'total' => $total_amount
+            ],
             'held_transaction_info' => [
                 'id' => $held_transaction['id'],
                 'cashier_name' => $held_transaction['cashier_name'],

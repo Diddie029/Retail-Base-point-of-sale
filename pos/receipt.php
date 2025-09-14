@@ -418,6 +418,9 @@ $formatted_receipt_number = generateReceiptNumber($sale_id, $sale['created_at'])
                             <button onclick="shareReceipt()" class="btn btn-outline-secondary">
                                 <i class="bi bi-share"></i> Share
                             </button>
+                            <a href="../quotations/invoice.php?action=create_from_sale&sale_id=<?php echo $sale_id; ?>" class="btn btn-warning">
+                                <i class="bi bi-receipt"></i> Create Invoice
+                            </a>
                             <a href="sale.php" class="btn btn-success">
                                 <i class="bi bi-plus-circle"></i> New Sale
                             </a>

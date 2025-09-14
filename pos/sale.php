@@ -976,6 +976,7 @@ try {
             background: rgba(255, 255, 255, 0.15);
         }
 
+
         .avatar {
             width: 25px;
             height: 25px;
@@ -1145,6 +1146,9 @@ try {
                 <button type="button" class="btn btn-sm btn-secondary till-action-btn" onclick="releaseTill()" title="Release Till">
                     <i class="bi bi-person-dash"></i> Release Till
                 </button>
+                <button type="button" class="btn btn-sm btn-info till-action-btn refresh-btn" onclick="refreshPage()" title="Refresh Page">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
                 <?php if (hasPermission('cash_drop', $permissions) || $user_role === 'admin'): ?>
                 <button type="button" class="btn btn-sm btn-warning till-action-btn" onclick="showCashDropAuth()" title="Cash Drop">
                     <i class="bi bi-cash-stack"></i> Cash Drop
@@ -1227,33 +1231,49 @@ try {
             <div class="col-md-8">
             <div class="pos-main">
                     <!-- Search and Categories -->
-                    <div class="p-2 bg-white border-bottom flex-shrink-0" style="margin-left: 30px;">
-                        <div class="row g-2">
-                            <!-- Search Column (60%) -->
-                            <div class="col-md-7">
-                                <div class="input-group input-group-sm">
-                                    <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                    <input type="text" class="form-control" id="productSearch" placeholder="Search products...">
+                    <div class="search-section bg-white border-bottom">
+                        <div class="container-fluid">
+                            <div class="row g-3 align-items-center">
+                                <!-- Search Column (60%) -->
+                                <div class="col-lg-7 col-md-12">
+                                    <div class="search-input-wrapper">
+                                        <div class="input-group">
+                                            <span class="input-group-text search-icon">
+                                                <i class="bi bi-search"></i>
+                                            </span>
+                                            <input type="text" class="form-control search-input" id="productSearch" 
+                                                   placeholder="Ready to scan barcode..." 
+                                                   title="Scan barcodes here - Ready for continuous scanning" 
+                                                   autocomplete="off" 
+                                                   spellcheck="false">
+                                            <span class="input-group-text barcode-indicator" id="barcodeIndicator" style="display: none;">
+                                                <i class="bi bi-upc-scan text-primary"></i>
+                                            </span>
+                                            <button class="btn btn-outline-secondary clear-btn" type="button" onclick="clearSearch()" title="Clear Search">
+                                                <i class="bi bi-x-circle"></i>
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
 
-                            <!-- Categories Column (40%) -->
-                            <div class="col-md-5">
-                                <div class="d-flex align-items-center">
-                                    <span class="text-muted small me-2">
-                                        <i class="bi bi-funnel me-1"></i>Filter by Category:
-                                    </span>
-                                    <div class="category-dropdown-container">
-                                        <select class="form-select form-select-sm category-dropdown" id="categoryDropdown">
-                                            <option value="all" selected>
-                                                <i class="bi bi-grid-3x3-gap"></i> All Categories
-                                            </option>
-                                            <?php foreach ($categories as $category): ?>
-                                            <option value="<?php echo $category['id']; ?>">
-                                                <?php echo htmlspecialchars($category['name']); ?>
-                                            </option>
-                                            <?php endforeach; ?>
-                                        </select>
+                                <!-- Categories Column (40%) -->
+                                <div class="col-lg-5 col-md-12">
+                                    <div class="category-filter-wrapper">
+                                        <div class="d-flex align-items-center">
+                                            <span class="filter-label text-muted me-3">
+                                                <i class="bi bi-funnel me-2"></i>Filter by Category:
+                                            </span>
+                                            <div class="category-dropdown-container flex-grow-1">
+                                                <select class="form-select category-dropdown" id="categoryDropdown">
+                                                    <option value="all" selected>All Categories</option>
+                                                    <?php foreach ($categories as $category): ?>
+                                                    <option value="<?php echo $category['id']; ?>">
+                                                        <?php echo htmlspecialchars($category['name']); ?>
+                                                    </option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -1263,7 +1283,18 @@ try {
                     <!-- Products Grid -->
                     <div class="product-grid" id="productGrid">
                         <?php foreach ($products as $product): ?>
-                        <div class="product-card <?php echo !$selected_till ? 'disabled' : ''; ?>" data-product-id="<?php echo $product['id']; ?>" data-category-id="<?php echo $product['category_id']; ?>">
+                    <?php $isOnSale = isProductOnSale($product); ?>
+                    <div class="product-card <?php echo !$selected_till ? 'disabled' : ''; ?>" 
+                        data-product-id="<?php echo $product['id']; ?>" 
+                        data-category-id="<?php echo $product['category_id']; ?>"
+                        data-product-name="<?php echo htmlspecialchars($product['name']); ?>"
+                        data-product-price="<?php echo number_format(getCurrentProductPrice($product), 2); ?>"
+                        data-product-regular-price="<?php echo number_format($product['price'], 2); ?>"
+                        data-product-sale-price="<?php echo $isOnSale ? number_format($product['sale_price'], 2) : ''; ?>"
+                        data-product-stock="<?php echo $product['quantity']; ?>"
+                        data-product-sku="<?php echo htmlspecialchars($product['sku']); ?>"
+                        data-product-barcode="<?php echo htmlspecialchars($product['barcode']); ?>"
+                    >
                             <div class="text-center">
                                 <div class="mb-2">
                                     <?php if ($product['image_url']): ?>
@@ -1280,7 +1311,17 @@ try {
                                 <h6 class="fw-bold mb-1"><?php echo htmlspecialchars($product['name']); ?></h6>
                                 <p class="text-muted small mb-2"><?php echo htmlspecialchars($product['category_name']); ?></p>
                                 <div class="fw-bold text-success">
-                                    <?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($product['price'], 2); ?>
+                                    <?php echo $settings['currency_symbol'] ?? 'KES'; ?> 
+                                    <?php if ($isOnSale): ?>
+                                        <span class="original-price text-muted" style="text-decoration:line-through; font-size:0.85rem;">
+                                            <?php echo number_format($product['price'], 2); ?>
+                                        </span>
+                                        <span class="sale-price ms-1 text-danger">
+                                            <?php echo number_format($product['sale_price'], 2); ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <?php echo number_format($product['price'], 2); ?>
+                                    <?php endif; ?>
                                 </div>
 
                                 <?php if ($product['quantity'] <= 0): ?>
@@ -1535,35 +1576,141 @@ try {
         // Cache product data on page load
         cacheProductData();
 
+        // Initialize scan mode - focus search input for immediate scanning
+        function initializeScanMode() {
+            const searchInput = document.getElementById('productSearch');
+            if (searchInput) {
+                // Focus the search input for immediate barcode scanning
+                searchInput.focus();
+                
+                // Add scan mode class to indicate ready state
+                document.querySelector('.pos-main').classList.add('scan-mode');
+                
+            }
+        }
+
+        // Initialize scan mode on page load
+        setTimeout(initializeScanMode, 500);
+
+        // Add keyboard shortcut for refresh (Ctrl+R or F5 override)
+        document.addEventListener('keydown', function(event) {
+            // Override F5 and Ctrl+R to use immediate refresh function
+            if (event.key === 'F5' || (event.ctrlKey && event.key === 'r')) {
+                event.preventDefault();
+                performRefresh();
+            }
+        });
+
         // Product search and filtering - optimized with debouncing
         let searchTimeout = null;
+        let barcodeScanTimeout = null;
+        let isBarcodeScanning = false;
+        
         document.getElementById('productSearch').addEventListener('input', function() {
-            // Clear previous timeout
+            const searchTerm = this.value.trim();
+            
+            // Clear previous timeouts
             if (searchTimeout) {
                 clearTimeout(searchTimeout);
             }
+            if (barcodeScanTimeout) {
+                clearTimeout(barcodeScanTimeout);
+            }
 
-            // Debounce search to improve performance
-            searchTimeout = setTimeout(() => {
-                const searchTerm = this.value.toLowerCase();
-                const productCards = document.querySelectorAll('.product-card');
-
-                // Use requestAnimationFrame for smooth UI updates
-                requestAnimationFrame(() => {
-                    productCards.forEach(card => {
-                        const productName = card.querySelector('h6').textContent.toLowerCase();
-                        const categoryName = card.querySelector('p').textContent.toLowerCase();
-
-                        if (productName.includes(searchTerm) || categoryName.includes(searchTerm)) {
-                            card.style.display = 'block';
-                        } else {
-                            card.style.display = 'none';
-                        }
-                    });
-                });
-            }, 150); // 150ms debounce for search
+            // Ultra-fast barcode detection for rapid scanning
+            const isBarcodePattern = /^[A-Za-z0-9\-_]{6,}$/.test(searchTerm);
+            const isLikelyBarcode = searchTerm.length >= 6 && isBarcodePattern;
+            
+            if (isLikelyBarcode) {
+                // Handle barcode scanning - ultra-fast for multiple rapid scans
+                isBarcodeScanning = true;
+                barcodeScanTimeout = setTimeout(() => {
+                    handleBarcodeScan(searchTerm);
+                }, 100); // Ultra-fast 100ms for instant scanning
+            } else if (searchTerm.length >= 3) {
+                // Handle regular text search for shorter terms
+                isBarcodeScanning = false;
+                searchTimeout = setTimeout(() => {
+                    performProductSearch(searchTerm);
+                }, 400); // Longer debounce to avoid interfering with scanning
+            } else if (searchTerm.length === 0) {
+                // Clear search immediately when empty
+                performProductSearch('');
+            }
         });
 
+        // Enhanced product search function
+        function performProductSearch(searchTerm) {
+            const searchTermLower = searchTerm.toLowerCase();
+            const productCards = document.querySelectorAll('.product-card');
+
+            // Use requestAnimationFrame for smooth UI updates
+            requestAnimationFrame(() => {
+                productCards.forEach(card => {
+                    const productName = card.querySelector('h6').textContent.toLowerCase();
+                    const categoryName = card.querySelector('p').textContent.toLowerCase();
+                    const productSku = card.querySelector('.product-sku')?.textContent.toLowerCase() || '';
+                    const productBarcode = card.getAttribute('data-product-barcode')?.toLowerCase() || '';
+
+                    // Search in name, category, SKU, and barcode
+                    if (productName.includes(searchTermLower) || 
+                        categoryName.includes(searchTermLower) ||
+                        productSku.includes(searchTermLower) ||
+                        productBarcode.includes(searchTermLower)) {
+                        card.style.display = 'block';
+                    } else {
+                        card.style.display = 'none';
+                    }
+                });
+            });
+        }
+
+        // Handle Enter key for immediate scanning/searching
+        document.getElementById('productSearch').addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                const searchTerm = this.value.trim();
+                
+                if (searchTerm.length === 0) {
+                    return;
+                }
+                
+                // Clear any existing timeouts for immediate action
+                if (barcodeScanTimeout) {
+                    clearTimeout(barcodeScanTimeout);
+                }
+                if (searchTimeout) {
+                    clearTimeout(searchTimeout);
+                }
+                
+                // Enhanced barcode detection
+                const isBarcodePattern = /^[A-Za-z0-9\-_]{6,}$/.test(searchTerm);
+                const isLikelyBarcode = searchTerm.length >= 6 && isBarcodePattern;
+                
+                if (isLikelyBarcode) {
+                    // Trigger barcode scan immediately
+                    handleBarcodeScan(searchTerm);
+                } else {
+                    // Perform regular search immediately
+                    performProductSearch(searchTerm);
+                }
+            }
+        });
+
+        // Auto-focus search input for continuous scanning
+        document.addEventListener('click', function(event) {
+            // If clicking outside modals and not on form elements, focus search
+            const isModalClick = event.target.closest('.modal');
+            const isFormElement = event.target.matches('input, select, textarea, button');
+            const isCartArea = event.target.closest('.cart-container');
+            
+            if (!isModalClick && !isFormElement && !isCartArea) {
+                const searchInput = document.getElementById('productSearch');
+                if (searchInput) {
+                    searchInput.focus();
+                }
+            }
+        });
 
         // Product selection - optimized with targeted event delegation
         const productGrid = document.getElementById('productGrid');
@@ -1600,6 +1747,339 @@ try {
 
         // Track pending API calls to prevent duplicates
         const pendingApiCalls = new Set();
+
+        // Rapid barcode scanning - Optimized for instant multiple product scanning
+        async function handleBarcodeScan(barcode) {
+            if (!barcode || barcode.length < 6) {
+                return;
+            }
+
+            const searchInput = document.getElementById('productSearch');
+            const barcodeIndicator = document.getElementById('barcodeIndicator');
+            
+            if (!searchInput) {
+                console.error('Search input element not found');
+                return;
+            }
+
+            // Immediately clear input and prepare for next scan
+            searchInput.value = '';
+            searchInput.focus();
+
+            try {
+                // Show brief scanning indicator
+                searchInput.classList.add('barcode-scanning');
+                if (barcodeIndicator) {
+                    barcodeIndicator.style.display = 'block';
+                }
+
+                const response = await fetch(`../api/scan_barcode.php?barcode=${encodeURIComponent(barcode)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                if (data.success) {
+                    if (data.exact_match) {
+                        // Single product found - add directly to cart instantly
+                        const product = data.product;
+                        
+                        if (product.is_out_of_stock) {
+                            showQuickFeedback(`${product.name} - OUT OF STOCK`, 'error');
+                        } else {
+                            // Add to cart instantly without waiting
+                            addToCartInstant(product.id, 1, product);
+                            
+                            // Show minimal success feedback
+                            showQuickFeedback(`✓ ${product.name}`, 'success');
+                        }
+                    } else {
+                        // Multiple products - auto-select first available
+                        const availableProducts = data.products.filter(p => !p.is_out_of_stock);
+                        if (availableProducts.length > 0) {
+                            const firstProduct = availableProducts[0];
+                            addToCartInstant(firstProduct.id, 1, firstProduct);
+                            showQuickFeedback(`✓ ${firstProduct.name}`, 'success');
+                        } else {
+                            showQuickFeedback('No available products found', 'error');
+                        }
+                    }
+                } else {
+                    showQuickFeedback('Product not found', 'error');
+                }
+            } catch (error) {
+                console.error('Barcode scan error:', error);
+                showQuickFeedback('Scan error', 'error');
+            } finally {
+                // Reset scanning indicator very quickly
+                setTimeout(() => {
+                    searchInput.classList.remove('barcode-scanning');
+                    if (barcodeIndicator) {
+                        barcodeIndicator.style.display = 'none';
+                    }
+                }, 200); // Very brief delay
+            }
+        }
+
+        // Instant cart addition for rapid scanning
+        function addToCartInstant(productId, quantity, productData) {
+            // Update UI instantly without waiting for server response
+            const currentCart = window.cartData || [];
+            const existingItemIndex = currentCart.findIndex(item => item.id == productId);
+
+            let updatedCart;
+            if (existingItemIndex >= 0) {
+                // Item exists, increase quantity
+                updatedCart = [...currentCart];
+                updatedCart[existingItemIndex].quantity += quantity;
+            } else {
+                // New item, add to cart
+                const cartItem = {
+                    id: productId,
+                    product_id: productId,
+                    name: productData.name,
+                    price: productData.price,
+                    quantity: quantity,
+                    category_name: productData.category_name || '',
+                    image_url: productData.image_url || '',
+                    sku: productData.sku || ''
+                };
+                updatedCart = [...currentCart, cartItem];
+            }
+
+            // Update global cart data and UI immediately
+            window.cartData = updatedCart;
+            updateCartDisplay(updatedCart);
+
+            // Sync with server in background (fire and forget)
+            syncCartWithServer(productId, quantity);
+        }
+
+        // Background sync with server
+        async function syncCartWithServer(productId, quantity) {
+            try {
+                const response = await fetch('add_to_cart.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `product_id=${productId}&quantity=${quantity}`
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.success) {
+                        // Server sync successful - update with server data if different
+                        if (JSON.stringify(data.cart) !== JSON.stringify(window.cartData)) {
+                            window.cartData = data.cart;
+                            window.paymentTotals = data.totals;
+                            updateCartDisplay(data.cart);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Background sync error:', error);
+                // Don't show error to user - cart already updated locally
+            }
+        }
+
+        // Quick feedback for rapid scanning
+        function showQuickFeedback(message, type = 'success') {
+            // Remove any existing feedback
+            const existingFeedback = document.querySelector('.quick-feedback');
+            if (existingFeedback) {
+                existingFeedback.remove();
+            }
+
+            // Create minimal feedback element
+            const feedbackDiv = document.createElement('div');
+            feedbackDiv.className = 'quick-feedback';
+            
+            const icon = type === 'success' ? 'check-circle-fill' : 'x-circle-fill';
+            const bgColor = type === 'success' ? '#10b981' : '#ef4444';
+            
+            feedbackDiv.style.cssText = `
+                position: fixed;
+                top: 70px;
+                right: 20px;
+                z-index: 9999;
+                background: ${bgColor};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 0.5rem 1rem;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                font-weight: 600;
+                font-size: 0.9rem;
+                animation: quickSlideIn 0.2s ease-out;
+                max-width: 300px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            `;
+            
+            feedbackDiv.innerHTML = `<i class="bi bi-${icon} me-1"></i>${message}`;
+
+            document.body.appendChild(feedbackDiv);
+
+            // Auto-remove after 1 second for very fast scanning
+            setTimeout(() => {
+                if (feedbackDiv.parentNode) {
+                    feedbackDiv.style.animation = 'quickSlideOut 0.2s ease-in';
+                    setTimeout(() => {
+                        feedbackDiv.remove();
+                    }, 200);
+                }
+            }, 1000);
+        }
+
+        // Legacy function for compatibility
+        function showScanFeedback(message, type = 'success') {
+            showQuickFeedback(message, type);
+        }
+
+        // Legacy function for compatibility
+        function showBarcodeScanSuccess(product) {
+            showScanFeedback(`✓ Added: ${product.name}`, 'success');
+        }
+
+        // Show barcode product selection modal
+        function showBarcodeProductSelection(products, barcode) {
+            // Create modal if it doesn't exist
+            let modal = document.getElementById('barcodeProductModal');
+            if (!modal) {
+                modal = createBarcodeProductModal();
+                document.body.appendChild(modal);
+            }
+
+            // Update modal content
+            const modalBody = modal.querySelector('#barcodeProductList');
+            const modalTitle = modal.querySelector('#barcodeProductModalLabel');
+            
+            modalTitle.innerHTML = `<i class="bi bi-upc-scan me-2"></i>Select Product for Barcode: ${barcode}`;
+            
+            if (products.length === 0) {
+                modalBody.innerHTML = `
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-exclamation-triangle fs-1"></i>
+                        <p class="mt-2">No products found for barcode: ${barcode}</p>
+                    </div>
+                `;
+            } else {
+                let productsHtml = '';
+                products.forEach((product, index) => {
+                    const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
+                    const isOutOfStock = product.is_out_of_stock;
+                    
+                    productsHtml += `
+                        <div class="barcode-product-item ${isOutOfStock ? 'out-of-stock' : ''}" 
+                             onclick="selectBarcodeProduct(${product.id}, '${product.name.replace(/'/g, "\\'")}', ${product.is_out_of_stock})">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1">
+                                    <h6 class="mb-1">${product.name}</h6>
+                                    <small class="text-muted">${product.display_text}</small>
+                                    <div class="mt-1">
+                                        <span class="badge bg-primary me-1">${product.sku || 'No SKU'}</span>
+                                        <span class="badge bg-info me-1">${product.category_name || 'No Category'}</span>
+                                        ${isOutOfStock ? '<span class="badge bg-danger">Out of Stock</span>' : ''}
+                                    </div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fw-bold text-success">
+                                        ${currencySymbol} ${product.price.toFixed(2)}
+                                        ${product.is_on_sale ? `<br><small class="text-muted text-decoration-line-through">${currencySymbol} ${product.regular_price.toFixed(2)}</small>` : ''}
+                                    </div>
+                                    <small class="text-muted">Stock: ${product.quantity}</small>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                modalBody.innerHTML = productsHtml;
+            }
+
+            // Show modal
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+        }
+
+        // Create barcode product selection modal
+        function createBarcodeProductModal() {
+            const modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.id = 'barcodeProductModal';
+            modal.setAttribute('tabindex', '-1');
+            modal.setAttribute('aria-labelledby', 'barcodeProductModalLabel');
+            modal.setAttribute('aria-hidden', 'true');
+            
+            modal.innerHTML = `
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title" id="barcodeProductModalLabel">
+                                <i class="bi bi-upc-scan me-2"></i>Select Product
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="barcodeProductList">
+                                <!-- Products will be loaded here -->
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return modal;
+        }
+
+        // Select barcode product and add to cart
+        function selectBarcodeProduct(productId, productName, isOutOfStock) {
+            if (isOutOfStock) {
+                alert(`Product "${productName}" is out of stock.`);
+                return;
+            }
+
+            // Add to cart
+            addToCart(productId, 1);
+            
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('barcodeProductModal'));
+            if (modal) {
+                modal.hide();
+            }
+            
+            // Clear search input
+            document.getElementById('productSearch').value = '';
+            
+            // Show success message
+            showBarcodeScanSuccess({ name: productName, barcode: '' });
+        }
+
+        // Clear search and reset product grid
+        function clearSearch() {
+            const searchInput = document.getElementById('productSearch');
+            searchInput.value = '';
+            searchInput.focus();
+            
+            // Reset product grid display
+            const productCards = document.querySelectorAll('.product-card');
+            productCards.forEach(card => {
+                card.style.display = 'block';
+            });
+            
+            // Reset category filter
+            const categoryDropdown = document.getElementById('categoryDropdown');
+            if (categoryDropdown) {
+                categoryDropdown.value = 'all';
+            }
+        }
 
         // Async function to add item to cart
         async function addToCartAsync(productId, quantity, fallbackCart) {
@@ -1915,29 +2395,30 @@ try {
             updateCartItemsDisplay(cart, elements.cartItems);
         }
 
-        // Optimized cart items display update
+        // Optimized cart items display update with instant rendering
         function updateCartItemsDisplay(cart, cartItemsElement) {
             if (cart.length === 0) {
                 cartItemsElement.innerHTML = `
                     <div class="text-center text-muted py-4">
                         <i class="bi bi-cart-x fs-1"></i>
                         <p class="mt-2 mb-1">No items in cart</p>
-                        <small>Add products to get started</small>
+                        <small>Scan barcodes to add products</small>
                     </div>
                 `;
                 return;
             }
 
-            // Use DocumentFragment for better performance
+            // Use DocumentFragment for optimal performance
             const fragment = document.createDocumentFragment();
+            const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
 
             cart.forEach((item, index) => {
                 const cartItemDiv = document.createElement('div');
-                cartItemDiv.className = 'cart-item';
+                cartItemDiv.className = 'cart-item cart-item-scanned';
                 cartItemDiv.setAttribute('data-index', index);
+                cartItemDiv.setAttribute('data-product-id', item.id || item.product_id);
 
-                const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
-
+                // Optimized HTML with minimal content for faster rendering
                 cartItemDiv.innerHTML = `
                     <div class="flex-grow-1 d-flex align-items-center">
                         <span class="product-number">${index + 1}.</span>
@@ -1948,19 +2429,14 @@ try {
                             </div>
                             <div class="d-flex justify-content-between align-items-center">
                                 <small class="product-price">
-                                    ${currencySymbol} ${item.price.toFixed(2)} each
+                                    ${currencySymbol} ${parseFloat(item.price).toFixed(2)} × ${item.quantity} = ${currencySymbol} ${(parseFloat(item.price) * item.quantity).toFixed(2)}
                                 </small>
                             </div>
                         </div>
                     </div>
                     <div class="quantity-controls">
-                        <input type="number" class="quantity-display" value="${item.quantity}"
-                               min="1" max="999" data-index="${index}"
-                               onchange="debouncedUpdateQuantityDirect(${index}, this.value)"
-                               onkeypress="handleQuantityKeypress(event, ${index}, this)"
-                               oninput="filterQuantityInput(this)"
-                               onpaste="setTimeout(() => filterQuantityInput(this), 10)">
-                        <button class="btn btn-outline-danger btn-sm ms-2" onclick="voidProduct(${index})" title="Void Product">
+                        <span class="quantity-badge">${item.quantity}</span>
+                        <button class="btn btn-outline-danger btn-sm ms-2" onclick="voidProduct(${index})" title="Remove Item">
                             <i class="bi bi-x-circle"></i>
                         </button>
                     </div>
@@ -1969,7 +2445,7 @@ try {
                 fragment.appendChild(cartItemDiv);
             });
 
-            // Single DOM update
+            // Single DOM update for maximum performance
             cartItemsElement.innerHTML = '';
             cartItemsElement.appendChild(fragment);
         }
@@ -2692,6 +3168,36 @@ try {
                 window.location.href = '../logout.php';
             }
         }
+
+        // Refresh page function - immediate refresh without confirmation
+        function refreshPage() {
+            performRefresh();
+        }
+
+        // Perform the actual page refresh
+        function performRefresh() {
+            // Show loading indicator
+            const refreshBtn = document.querySelector('.refresh-btn');
+            if (refreshBtn) {
+                refreshBtn.disabled = true;
+                refreshBtn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+            }
+
+            // Immediate refresh
+            window.location.reload();
+        }
+
+        // Auto-sync every 10 minutes
+        function initializeAutoSync() {
+            setInterval(() => {
+                window.location.reload();
+            }, 10 * 60 * 1000); // 10 minutes in milliseconds
+        }
+
+        // Start auto-sync on page load
+        setTimeout(() => {
+            initializeAutoSync();
+        }, 1000);
     </script>
 
     <!-- No Tills Available Modal -->
@@ -3680,56 +4186,159 @@ try {
             cursor: not-allowed;
         }
 
-        /* Category Dropdown Styles */
-        .category-dropdown-container {
-            flex: 1;
+        /* Search Section Redesign */
+        .search-section {
+            padding: 1.5rem 2rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            border-bottom: 1px solid #e9ecef !important;
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
         }
 
-        .category-dropdown {
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            background: #f8f9fa;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            transition: all 0.2s ease;
-            cursor: pointer;
+        .search-input-wrapper {
             position: relative;
         }
 
-        .category-dropdown:focus {
-            border-color: #007bff;
-            box-shadow: 0 0 0 0.2rem rgba(0,123,255,0.25);
-            outline: none;
+        .search-input {
+            height: 48px;
+            font-size: 1rem;
+            border-radius: 12px;
+            border: 2px solid #e9ecef;
+            padding-left: 3rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         }
 
-        .category-dropdown:hover {
-            border-color: #007bff;
-            box-shadow: 0 2px 8px rgba(0,123,255,0.15);
+        .search-input:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1), 0 4px 12px rgba(0, 0, 0, 0.15);
             transform: translateY(-1px);
         }
 
-        .category-dropdown:active {
-            transform: translateY(0);
+        .search-icon {
+            background: transparent;
+            border: none;
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 10;
+            color: #6b7280;
+            font-size: 1.1rem;
+        }
+
+        .barcode-indicator {
+            background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            color: #1e40af;
+            font-weight: 600;
+        }
+
+        .clear-btn {
+            height: 48px;
+            border-radius: 0 12px 12px 0;
+            border: 2px solid #e9ecef;
+            border-left: none;
+            background: #f8fafc;
+            color: #6b7280;
+            transition: all 0.3s ease;
+        }
+
+        .clear-btn:hover {
+            background: #ef4444;
+            border-color: #ef4444;
+            color: white;
+            transform: translateY(-1px);
+        }
+
+        .category-filter-wrapper {
+            padding-left: 1rem;
+        }
+
+        .filter-label {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #4b5563 !important;
+            white-space: nowrap;
+        }
+
+        .filter-label i {
+            color: #667eea;
+        }
+
+        .category-dropdown-container {
+            min-width: 200px;
+        }
+
+        .category-dropdown {
+            height: 48px;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .category-dropdown:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1), 0 4px 12px rgba(0, 0, 0, 0.15);
+            outline: none;
+            transform: translateY(-1px);
+        }
+
+        .category-dropdown:hover {
+            border-color: #667eea;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
         }
 
         /* Custom dropdown arrow styling */
         .category-dropdown {
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m1 6 7 7 7-7'/%3e%3c/svg%3e");
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23667eea' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m1 6 7 7 7-7'/%3e%3c/svg%3e");
             background-repeat: no-repeat;
-            background-position: right 0.75rem center;
+            background-position: right 1rem center;
             background-size: 16px 12px;
-            padding-right: 2.5rem;
+            padding-right: 3rem;
         }
 
-
         /* Responsive adjustments */
+        @media (max-width: 992px) {
+            .search-section {
+                padding: 1rem 1.5rem;
+            }
+            
+            .category-filter-wrapper {
+                padding-left: 0;
+                margin-top: 1rem;
+            }
+
+            .filter-label {
+                margin-bottom: 0.5rem;
+                display: block;
+            }
+
+            .category-dropdown-container {
+                min-width: 100%;
+            }
+        }
+
         @media (max-width: 768px) {
-            .category-dropdown {
+            .search-section {
+                padding: 1rem;
+            }
+
+            .search-input, .category-dropdown, .clear-btn {
+                height: 44px;
                 font-size: 0.9rem;
             }
 
-            /* Stack columns vertically on mobile */
-            .col-md-7, .col-md-5 {
-                margin-bottom: 8px;
+            .filter-label {
+                font-size: 0.85rem;
             }
         }
 
@@ -3800,6 +4409,19 @@ try {
             color: #212529;
         }
 
+        .till-action-btn.btn-info {
+            background: linear-gradient(135deg, #06b6d4, #0891b2);
+            border-color: #06b6d4;
+            color: white;
+        }
+
+        .till-action-btn.btn-info:hover {
+            background: linear-gradient(135deg, #0891b2, #0e7490);
+            border-color: #0891b2;
+            color: white;
+            transform: translateY(-2px);
+        }
+
         .till-icon {
             width: 60px;
             height: 60px;
@@ -3810,6 +4432,203 @@ try {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border-radius: 50%;
             color: white;
+        }
+
+        /* Barcode Product Selection Modal Styles */
+        .barcode-product-item {
+            border: 2px solid transparent;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .barcode-product-item:hover {
+            border-color: #3b82f6;
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+        }
+
+        .barcode-product-item.out-of-stock {
+            opacity: 0.6;
+            cursor: not-allowed;
+            background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+        }
+
+        .barcode-product-item.out-of-stock:hover {
+            transform: none;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            border-color: transparent;
+        }
+
+        .barcode-product-item h6 {
+            color: #1f2937;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .barcode-product-item .badge {
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        /* Barcode scanning indicator */
+        .barcode-scanning {
+            position: relative;
+        }
+
+        .barcode-scanning::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.3), transparent);
+            animation: barcodeScan 1.5s infinite;
+        }
+
+        @keyframes barcodeScan {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        /* Scan feedback animations */
+        @keyframes slideInDown {
+            0% {
+                transform: translateX(-50%) translateY(-20px);
+                opacity: 0;
+            }
+            100% {
+                transform: translateX(-50%) translateY(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOutUp {
+            0% {
+                transform: translateX(-50%) translateY(0);
+                opacity: 1;
+            }
+            100% {
+                transform: translateX(-50%) translateY(-20px);
+                opacity: 0;
+            }
+        }
+
+        /* Quick feedback animations for rapid scanning */
+        @keyframes quickSlideIn {
+            0% {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            100% {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes quickSlideOut {
+            0% {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            100% {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+        }
+
+        /* Enhanced barcode scanning indicator */
+        .search-input.barcode-scanning {
+            border-color: #10b981 !important;
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2), 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+            animation: scanPulse 1s infinite;
+        }
+
+        @keyframes scanPulse {
+            0%, 100% {
+                box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2), 0 4px 12px rgba(0, 0, 0, 0.15);
+            }
+            50% {
+                box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.1), 0 4px 12px rgba(0, 0, 0, 0.15);
+            }
+        }
+
+        /* Scan ready state */
+        .search-input:focus {
+            border-color: #667eea !important;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1), 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+        }
+
+        /* Quick scan mode styling */
+        .pos-main.scan-mode .search-input {
+            border-color: #10b981;
+            background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
+        }
+
+        /* Scanned cart item styling */
+        .cart-item-scanned {
+            border-left: 4px solid #10b981;
+            animation: itemAdded 0.3s ease-out;
+        }
+
+        @keyframes itemAdded {
+            0% {
+                transform: translateX(-10px);
+                opacity: 0.7;
+                background: #ecfdf5;
+            }
+            100% {
+                transform: translateX(0);
+                opacity: 1;
+                background: inherit;
+            }
+        }
+
+        /* Quantity badge for scanned items */
+        .quantity-badge {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border-radius: 20px;
+            padding: 0.25rem 0.75rem;
+            font-weight: 700;
+            font-size: 0.9rem;
+            min-width: 40px;
+            text-align: center;
+            box-shadow: 0 2px 6px rgba(16, 185, 129, 0.3);
+            border: 2px solid white;
+        }
+
+        /* Simplified quantity controls for rapid scanning */
+        .cart-item-scanned .quantity-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Enhanced remove button for scanned items */
+        .cart-item-scanned .btn-outline-danger {
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+            border: 2px solid #ef4444;
+            color: #dc2626;
+            padding: 0.25rem;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .cart-item-scanned .btn-outline-danger:hover {
+            background: #ef4444;
+            color: white;
+            transform: scale(1.1);
         }
     </style>
 </body>
