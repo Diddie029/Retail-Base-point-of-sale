@@ -718,23 +718,26 @@ $final_amount = $quotation['final_amount'];
 
                         <!-- Action Buttons -->
                         <div class="text-center no-print">
+                            <?php if ($quotation['quotation_status'] !== 'converted'): ?>
                             <button onclick="window.print()" class="btn btn-print me-2">
                                 <i class="bi bi-printer"></i> Print Quotation
                             </button>
-                            <?php if ($quotation['quotation_status'] !== 'converted'): ?>
                             <a href="quotation.php?action=edit&amp;quotation_id=<?php echo $quotation_id; ?>" class="btn btn-warning me-2">
                                 <i class="bi bi-pencil-square"></i> Edit Quotation
                             </a>
-                            <?php endif; ?>
                             <button onclick="emailQuotation()" class="btn btn-secondary me-2">
                                 <i class="bi bi-envelope"></i> Email Quotation
                             </button>
                             <button onclick="downloadPDF()" class="btn btn-secondary me-2">
                                 <i class="bi bi-download"></i> Download PDF
                             </button>
-                            <a href="quotations.php" class="btn btn-secondary">
+                            <?php endif; ?>
+                            <a href="quotations.php" class="btn btn-secondary me-2">
                                 <i class="bi bi-arrow-left"></i> Back to Quotations
                             </a>
+                            <button onclick="window.close()" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-circle"></i> Close
+                            </button>
                         </div>
                     </div>
                 </div>
