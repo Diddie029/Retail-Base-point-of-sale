@@ -4,33 +4,31 @@ session_start();
 // require_once __DIR__ . '/../includes/bootstrap.php';
 // pos_guard_redirect_if_not_installed();
 
-include '../include/db.php';
+require_once '../include/db.php';
 
 if(isset($_SESSION['user_id'])) {
     // Get user's role redirect URL
     $user_id = $_SESSION['user_id'];
     $stmt = $conn->prepare("
-        SELECT r.redirect_url 
-        FROM users u 
-        LEFT JOIN roles r ON u.role_id = r.id 
+        SELECT r.redirect_url
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
         WHERE u.id = :user_id
     ");
     $stmt->bindParam(':user_id', $user_id);
     $stmt->execute();
     $user_data = $stmt->fetch(PDO::FETCH_ASSOC);
-    
+
     $redirect_url = $user_data['redirect_url'] ?? '../dashboard/dashboard.php';
-    
+
     // Ensure the redirect URL is safe
     if (empty($redirect_url) || !preg_match('/^[a-zA-Z0-9\/\.\-_]+$/', $redirect_url)) {
         $redirect_url = '../dashboard/dashboard.php';
     }
-    
+
     header("Location: " . $redirect_url);
     exit();
 }
-
-include '../include/db.php';
 
 // Generate CSRF token
 if (!isset($_SESSION['csrf_token'])) {

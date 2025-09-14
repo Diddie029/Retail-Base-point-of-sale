@@ -514,7 +514,7 @@ if (empty($errors)) {
         // The db.php file will automatically create all tables when included
         // Since we've reset everything, including it again will recreate all tables
         unset($conn); // Clear existing connection
-        include 'include/db.php'; // This will recreate all tables
+        require_once 'include/db.php'; // This will recreate all tables
         
         if (isset($GLOBALS['db_connected']) && $GLOBALS['db_connected'] === true) {
             echo "<p class='text-success'>✓ All database tables created successfully</p>";

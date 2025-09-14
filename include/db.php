@@ -4,9 +4,15 @@ $dbname = 'pos_system';
 $username = 'root';
 $password = '';
 
-try {
-    $conn = new PDO("mysql:host=$host", $username, $password);
+// Initialize connection status
+$GLOBALS['db_connected'] = false;
+$GLOBALS['db_error'] = '';
+
+$conn = new PDO("mysql:host=$host", $username, $password);
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    // Store connection status for login page
+    $GLOBALS['db_connected'] = true;
 
     // Create database if not exists
     $conn->exec("CREATE DATABASE IF NOT EXISTS `$dbname`");
@@ -30,7 +36,7 @@ try {
     } catch (PDOException $e) {
         // Table may already have a compatible enum; ignore if alter fails
         error_log('Role enum alter (users.role) skipped or failed: ' . $e->getMessage());
-    }
+    // Removed unmatched closing curly brace
 
 
     // Create categories table
@@ -4044,8 +4050,6 @@ try {
     $stmt->execute();
 
     // Database initialized silently
-    // Store connection status for login page
-    $GLOBALS['db_connected'] = true;
 
     // Add helper functions for error handling and validation
     if (!function_exists('validateOrderCreation')) {
@@ -5270,6 +5274,12 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+} catch(PDOException $e) {
+    // Store connection error for login page
+    $GLOBALS['db_connected'] = false;
+    $GLOBALS['db_error'] = $e->getMessage();
+}
+
     // Add new columns to existing loyalty_points table if they don't exist
     try {
         // Check if approval_status column exists
@@ -5358,6 +5368,7 @@ try {
     }
 
     // Create membership_levels table
+    try {
     $conn->exec("
         CREATE TABLE IF NOT EXISTS membership_levels (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -5426,17 +5437,15 @@ try {
         $stmt->execute($reward);
     }
 
-
-} catch(PDOException $e) {
-    // Store connection error for login page
-    $GLOBALS['db_connected'] = false;
-    $GLOBALS['db_error'] = $e->getMessage();
+} catch (PDOException $e) {
+    error_log("Error setting up membership levels and loyalty rewards: " . $e->getMessage());
 }
 
 /**
  * Get active payment methods including loyalty points and cash
  */
-function getPaymentMethods($conn) {
+if (!function_exists('getPaymentMethods')) {
+    function getPaymentMethods($conn) {
     try {
         // Get payment methods from database
         $stmt = $conn->query("
@@ -5500,121 +5509,131 @@ function getPaymentMethods($conn) {
         error_log("Error getting payment methods: " . $e->getMessage());
         return [];
     }
+    }
 }
 
 /**
  * Get payment method by name
  */
-function getPaymentMethodByName($conn, $name) {
-    try {
-        $stmt = $conn->prepare("
-            SELECT * FROM payment_types
-            WHERE name = :name AND is_active = 1
-        ");
-        $stmt->execute([':name' => $name]);
-        return $stmt->fetch(PDO::FETCH_ASSOC);
-    } catch (PDOException $e) {
-        error_log("Error getting payment method by name: " . $e->getMessage());
-        return null;
+if (!function_exists('getPaymentMethodByName')) {
+    function getPaymentMethodByName($conn, $name) {
+        try {
+            $stmt = $conn->prepare("
+                SELECT * FROM payment_types
+                WHERE name = :name AND is_active = 1
+            ");
+            $stmt->execute([':name' => $name]);
+            return $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("Error getting payment method by name: " . $e->getMessage());
+            return null;
+        }
     }
 }
 
 /**
  * Add or update payment method
  */
-function savePaymentMethod($conn, $data) {
-    try {
-        $stmt = $conn->prepare("
-            INSERT INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order)
-            VALUES (:name, :display_name, :description, :category, :icon, :color, :is_active, :requires_reconciliation, :sort_order)
-            ON DUPLICATE KEY UPDATE
-            display_name = VALUES(display_name),
-            description = VALUES(description),
-            category = VALUES(category),
-            icon = VALUES(icon),
-            color = VALUES(color),
-            is_active = VALUES(is_active),
-            requires_reconciliation = VALUES(requires_reconciliation),
-            sort_order = VALUES(sort_order),
-            updated_at = CURRENT_TIMESTAMP
-        ");
+if (!function_exists('savePaymentMethod')) {
+    function savePaymentMethod($conn, $data) {
+        try {
+            $stmt = $conn->prepare("
+                INSERT INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order)
+                VALUES (:name, :display_name, :description, :category, :icon, :color, :is_active, :requires_reconciliation, :sort_order)
+                ON DUPLICATE KEY UPDATE
+                display_name = VALUES(display_name),
+                description = VALUES(description),
+                category = VALUES(category),
+                icon = VALUES(icon),
+                color = VALUES(color),
+                is_active = VALUES(is_active),
+                requires_reconciliation = VALUES(requires_reconciliation),
+                sort_order = VALUES(sort_order),
+                updated_at = CURRENT_TIMESTAMP
+            ");
 
-        return $stmt->execute([
-            ':name' => $data['name'],
-            ':display_name' => $data['display_name'],
-            ':description' => $data['description'] ?? '',
-            ':category' => $data['category'] ?? 'other',
-            ':icon' => $data['icon'] ?? 'bi-cash',
-            ':color' => $data['color'] ?? '#6c757d',
-            ':is_active' => $data['is_active'] ?? 1,
-            ':requires_reconciliation' => $data['requires_reconciliation'] ?? 1,
-            ':sort_order' => $data['sort_order'] ?? 0
-        ]);
+            return $stmt->execute([
+                ':name' => $data['name'],
+                ':display_name' => $data['display_name'],
+                ':description' => $data['description'] ?? '',
+                ':category' => $data['category'] ?? 'other',
+                ':icon' => $data['icon'] ?? 'bi-cash',
+                ':color' => $data['color'] ?? '#6c757d',
+                ':is_active' => $data['is_active'] ?? 1,
+                ':requires_reconciliation' => $data['requires_reconciliation'] ?? 1,
+                ':sort_order' => $data['sort_order'] ?? 0
+            ]);
 
-    } catch (PDOException $e) {
-        error_log("Error saving payment method: " . $e->getMessage());
-        return false;
+        } catch (PDOException $e) {
+            error_log("Error saving payment method: " . $e->getMessage());
+            return false;
+        }
     }
 }
 
 /**
  * Get count of held transactions for a specific till
  */
-function getHeldTransactionsCount($conn, $till_id) {
-    try {
-        $stmt = $conn->prepare("
-            SELECT COUNT(*) as count
-            FROM held_transactions
-            WHERE till_id = ? AND status = 'held'
-        ");
-        $stmt->execute([$till_id]);
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $result['count'] ?? 0;
-    } catch (PDOException $e) {
-        error_log("Error getting held transactions count: " . $e->getMessage());
-        return 0;
+if (!function_exists('getHeldTransactionsCount')) {
+    function getHeldTransactionsCount($conn, $till_id) {
+        try {
+            $stmt = $conn->prepare("
+                SELECT COUNT(*) as count
+                FROM held_transactions
+                WHERE till_id = ? AND status = 'held'
+            ");
+            $stmt->execute([$till_id]);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $result['count'] ?? 0;
+        } catch (PDOException $e) {
+            error_log("Error getting held transactions count: " . $e->getMessage());
+            return 0;
+        }
     }
 }
 
 /**
  * Generate quotation number based on settings
  */
-function generateQuotationNumber($conn, $date = null) {
-    if ($date === null) {
-        $date = date('Y-m-d');
-    }
-
-    try {
-        // Get quotation settings
-        $settings = [];
-        $stmt = $conn->query("SELECT setting_key, setting_value FROM settings WHERE setting_key LIKE 'quotation_%'");
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $settings[$row['setting_key']] = $row['setting_value'];
+if (!function_exists('generateQuotationNumber')) {
+    function generateQuotationNumber($conn, $date = null) {
+        if ($date === null) {
+            $date = date('Y-m-d');
         }
 
-        $prefix = $settings['quotation_prefix'] ?? 'QUO';
-        $length = (int)($settings['quotation_number_length'] ?? 6);
-        $startNumber = (int)($settings['quotation_start_number'] ?? 1);
+        try {
+            // Get quotation settings
+            $settings = [];
+            $stmt = $conn->query("SELECT setting_key, setting_value FROM settings WHERE setting_key LIKE 'quotation_%'");
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $settings[$row['setting_key']] = $row['setting_value'];
+            }
 
-        // Get the next number based on the highest existing number
-        $stmt = $conn->query("SELECT MAX(CAST(SUBSTRING(quotation_number, LENGTH('$prefix') + 1) AS UNSIGNED)) as max_num FROM quotations WHERE quotation_number LIKE '$prefix%'");
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $nextNum = max($startNumber, ($row['max_num'] ?? 0) + 1);
+            $prefix = $settings['quotation_prefix'] ?? 'QUO';
+            $length = (int)($settings['quotation_number_length'] ?? 6);
+            $startNumber = (int)($settings['quotation_start_number'] ?? 1);
 
-        // Pad the number to required length
-        $paddedNum = str_pad($nextNum, $length, '0', STR_PAD_LEFT);
+            // Get the next number based on the highest existing number
+            $stmt = $conn->query("SELECT MAX(CAST(SUBSTRING(quotation_number, LENGTH('$prefix') + 1) AS UNSIGNED)) as max_num FROM quotations WHERE quotation_number LIKE '$prefix%'");
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $nextNum = max($startNumber, ($row['max_num'] ?? 0) + 1);
 
-        return $prefix . $paddedNum;
-    } catch (PDOException $e) {
-        error_log("Error generating quotation number: " . $e->getMessage());
-        return 'QUO-' . date('Ymd') . '-001';
+            // Pad the number to required length
+            $paddedNum = str_pad($nextNum, $length, '0', STR_PAD_LEFT);
+
+            return $prefix . $paddedNum;
+        } catch (PDOException $e) {
+            error_log("Error generating quotation number: " . $e->getMessage());
+            return 'QUO-' . date('Ymd') . '-001';
+        }
     }
 }
 
 /**
  * Create a new quotation
  */
-function createQuotation($conn, $quotationData) {
+if (!function_exists('createQuotation')) {
+    function createQuotation($conn, $quotationData) {
     try {
         $conn->beginTransaction();
 
@@ -5701,47 +5720,51 @@ function createQuotation($conn, $quotationData) {
         error_log("Error creating quotation: " . $e->getMessage());
         return ['success' => false, 'error' => $e->getMessage()];
     }
+    }
 }
 
 /**
  * Get quotation by ID
  */
-function getQuotation($conn, $quotationId) {
-    try {
-        $stmt = $conn->prepare("
-            SELECT q.*, u.username as created_by
-            FROM quotations q
-            LEFT JOIN users u ON q.user_id = u.id
-            WHERE q.id = :quotation_id
-        ");
-        $stmt->execute([':quotation_id' => $quotationId]);
-        $quotation = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!function_exists('getQuotation')) {
+    function getQuotation($conn, $quotationId) {
+        try {
+            $stmt = $conn->prepare("
+                SELECT q.*, u.username as created_by
+                FROM quotations q
+                LEFT JOIN users u ON q.user_id = u.id
+                WHERE q.id = :quotation_id
+            ");
+            $stmt->execute([':quotation_id' => $quotationId]);
+            $quotation = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!$quotation) {
+            if (!$quotation) {
+                return null;
+            }
+
+            // Get quotation items
+            $stmt = $conn->prepare("
+                SELECT * FROM quotation_items
+                WHERE quotation_id = :quotation_id
+                ORDER BY id
+            ");
+            $stmt->execute([':quotation_id' => $quotationId]);
+            $quotation['items'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            return $quotation;
+
+        } catch (PDOException $e) {
+            error_log("Error getting quotation: " . $e->getMessage());
             return null;
         }
-
-        // Get quotation items
-        $stmt = $conn->prepare("
-            SELECT * FROM quotation_items
-            WHERE quotation_id = :quotation_id
-            ORDER BY id
-        ");
-        $stmt->execute([':quotation_id' => $quotationId]);
-        $quotation['items'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        return $quotation;
-
-    } catch (PDOException $e) {
-        error_log("Error getting quotation: " . $e->getMessage());
-        return null;
     }
 }
 
 /**
  * Update quotation status
  */
-function updateQuotationStatus($conn, $quotationId, $status) {
+if (!function_exists('updateQuotationStatus')) {
+    function updateQuotationStatus($conn, $quotationId, $status) {
     try {
         $stmt = $conn->prepare("
             UPDATE quotations
@@ -5755,6 +5778,7 @@ function updateQuotationStatus($conn, $quotationId, $status) {
     } catch (PDOException $e) {
         error_log("Error updating quotation status: " . $e->getMessage());
         return false;
+    }
     }
 }
 
@@ -5823,7 +5847,8 @@ $conn->exec("
 /**
  * Generate invoice number
  */
-function generateInvoiceNumber($conn) {
+if (!function_exists('generateInvoiceNumber')) {
+    function generateInvoiceNumber($conn) {
     try {
         // Get invoice settings
         $settings = [];
@@ -5849,12 +5874,14 @@ function generateInvoiceNumber($conn) {
         error_log("Error generating invoice number: " . $e->getMessage());
         return 'INV-' . date('Ymd') . '-001';
     }
+    }
 }
 
 /**
  * Create invoice from sale/receipt
  */
-function createInvoiceFromSale($conn, $saleId, $userId) {
+if (!function_exists('createInvoiceFromSale')) {
+    function createInvoiceFromSale($conn, $saleId, $userId) {
     try {
         $conn->beginTransaction();
 
@@ -5971,12 +5998,14 @@ function createInvoiceFromSale($conn, $saleId, $userId) {
             'error' => $e->getMessage()
         ];
     }
+    }
 }
 
 /**
  * Get invoice by ID
  */
-function getInvoice($conn, $invoiceId) {
+if (!function_exists('getInvoice')) {
+    function getInvoice($conn, $invoiceId) {
     try {
         $stmt = $conn->prepare("
             SELECT i.*, u.username as created_by_name, c.email as customer_email_from_db
@@ -6007,12 +6036,14 @@ function getInvoice($conn, $invoiceId) {
         error_log("Error getting invoice: " . $e->getMessage());
         return null;
     }
+    }
 }
 
 /**
  * Get invoices with pagination and filters
  */
-function getInvoices($conn, $filters = [], $page = 1, $perPage = 20) {
+if (!function_exists('getInvoices')) {
+    function getInvoices($conn, $filters = [], $page = 1, $perPage = 20) {
     try {
         $where = [];
         $params = [];
@@ -6081,12 +6112,14 @@ function getInvoices($conn, $filters = [], $page = 1, $perPage = 20) {
             'current_page' => $page
         ];
     }
+    }
 }
 
 /**
  * Update an existing quotation
  */
-function updateQuotation($conn, $quotationId, $quotationData) {
+if (!function_exists('updateQuotation')) {
+    function updateQuotation($conn, $quotationId, $quotationData) {
     try {
         $conn->beginTransaction();
 
@@ -6163,12 +6196,14 @@ function updateQuotation($conn, $quotationId, $quotationData) {
         error_log("Error updating quotation: " . $e->getMessage());
         return ['success' => false, 'error' => $e->getMessage()];
     }
+    }
 }
 
 /**
  * Get quotations with pagination and filters
  */
-function getQuotations($conn, $filters = [], $page = 1, $perPage = 20) {
+if (!function_exists('getQuotations')) {
+    function getQuotations($conn, $filters = [], $page = 1, $perPage = 20) {
     try {
         $where = [];
         $params = [];
@@ -6225,5 +6260,6 @@ function getQuotations($conn, $filters = [], $page = 1, $perPage = 20) {
         error_log("Error getting quotations: " . $e->getMessage());
         return ['quotations' => [], 'total' => 0, 'pages' => 0, 'current_page' => 1];
     }
+}
 }
 ?>
