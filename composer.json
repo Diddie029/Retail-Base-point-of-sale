@@ -3,7 +3,8 @@
     "description": "Point of Sale System",
     "type": "project",
     "require": {
-        "dompdf/dompdf": "^3.0"
+        "dompdf/dompdf": "^3.0",
+        "phpmailer/phpmailer": "^6.10"
     },
     "config": {
         "vendor-dir": "vendor"

@@ -1842,6 +1842,15 @@ try {
 
         // Enhanced product search function
         function performProductSearch(searchTerm) {
+            // Check if till is selected for non-empty searches
+            if (searchTerm.trim() !== '') {
+                <?php if (!$selected_till): ?>
+                alert('Please select a till before searching products');
+                showTillSelection();
+                return;
+                <?php endif; ?>
+            }
+
             const searchTermLower = searchTerm.toLowerCase();
             const productCards = document.querySelectorAll('.product-card');
 
@@ -1951,6 +1960,13 @@ try {
 
         // Rapid barcode scanning - Optimized for instant multiple product scanning
         async function handleBarcodeScan(barcode) {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before scanning barcodes');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             if (!barcode || barcode.length < 6) {
                 return;
             }
@@ -2437,6 +2453,13 @@ try {
 
         // Add to cart function with instant UI update
         function addToCart(productId, quantityToAdd = 1) {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before adding products to cart');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             // Use cached product data if available, otherwise query DOM
             let productData = window.productCache?.[productId];
 
@@ -2772,6 +2795,13 @@ try {
 
         // Quotation functionality
         function openQuotationModal() {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before accessing quotations');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             const modal = new bootstrap.Modal(document.getElementById('quotationModal'));
             modal.show();
             
@@ -3025,6 +3055,13 @@ try {
             const button = event.target;
             if (button.disabled) return;
 
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before holding transactions');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             if (window.cartData.length === 0) {
                 alert('Cart is empty');
                 return;
@@ -3084,6 +3121,13 @@ try {
 
         // Load held transactions
         function loadHeldTransactions() {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before accessing held transactions');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             const modalElement = document.getElementById('heldTransactionsModal');
             if (!modalElement) {
                 console.error('Held transactions modal element not found');
@@ -3106,6 +3150,13 @@ try {
         let selectedCustomerData = null;
 
         function openCustomerModal() {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before accessing customers');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             const customerModal = new bootstrap.Modal(document.getElementById('customerModal'));
             customerModal.show();
 
@@ -3221,6 +3272,13 @@ try {
         }
 
         function confirmCustomerSelection() {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before selecting customers');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             if (selectedCustomerId && selectedCustomerData) {
                 // Show confirmation dialog
                 const customerName = selectedCustomerData.display_name;
@@ -3523,6 +3581,14 @@ try {
 
             // Handle category selection
             categoryDropdown.addEventListener('change', function() {
+                // Check if till is selected
+                <?php if (!$selected_till): ?>
+                alert('Please select a till before filtering products');
+                showTillSelection();
+                this.value = 'all'; // Reset to show all categories
+                return;
+                <?php endif; ?>
+
                 const selectedCategory = this.value;
 
                 productCards.forEach(card => {
@@ -4345,6 +4411,13 @@ try {
 
         // Continue held transaction
         function continueHeldTransaction(heldTransactionId) {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before continuing held transactions');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             if (window.cartData.length > 0) {
                 alert('Cart must be empty to continue with held transaction. Please clear the cart first.');
                 return;
@@ -4393,6 +4466,13 @@ try {
 
         // Void held transaction
         function voidHeldTransaction(heldTransactionId, originalReason) {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before voiding held transactions');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             const voidReason = prompt(`Void Held Transaction #${heldTransactionId}\n\nOriginal Reason: ${originalReason}\n\nEnter void reason (required):`);
             if (!voidReason || voidReason.trim() === '') {
                 alert('Void reason is required.');
@@ -4472,6 +4552,13 @@ try {
 
         // Void product functionality
         function voidProduct(cartIndex) {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before voiding products');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             if (!window.cartData || !window.cartData[cartIndex]) {
                 alert('Invalid product selection.');
                 return;
@@ -4526,6 +4613,13 @@ try {
 
         // Void cart functionality
         function voidCart() {
+            // Check if till is selected
+            <?php if (!$selected_till): ?>
+            alert('Please select a till before voiding cart');
+            showTillSelection();
+            return;
+            <?php endif; ?>
+
             if (!window.cartData || window.cartData.length === 0) {
                 alert('Cart is empty. Nothing to void.');
                 return;
