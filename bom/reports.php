@@ -154,8 +154,10 @@ if ($report_type === 'cost_analysis' && $bom_id) {
         WHERE po.created_at BETWEEN :start_date AND :end_date
         ORDER BY po.created_at DESC
     ");
-    $stmt->bindParam(':start_date', $start_date . ' 00:00:00');
-    $stmt->bindParam(':end_date', $end_date . ' 23:59:59');
+    $start_datetime = $start_date . ' 00:00:00';
+    $end_datetime = $end_date . ' 23:59:59';
+    $stmt->bindParam(':start_date', $start_datetime);
+    $stmt->bindParam(':end_date', $end_datetime);
     $stmt->execute();
     $production_orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 

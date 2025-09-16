@@ -26,6 +26,8 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             password VARCHAR(255) NOT NULL,
             role ENUM('Admin', 'Cashier') NOT NULL,
             role_id INT DEFAULT NULL,
+            employment_id VARCHAR(50) DEFAULT NULL UNIQUE,
+            status ENUM('active', 'inactive') DEFAULT 'active',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ");
@@ -36,7 +38,23 @@ $conn = new PDO("mysql:host=$host", $username, $password);
     } catch (PDOException $e) {
         // Table may already have a compatible enum; ignore if alter fails
         error_log('Role enum alter (users.role) skipped or failed: ' . $e->getMessage());
-    // Removed unmatched closing curly brace
+    }
+
+    // Add employment_id field if it doesn't exist
+    try {
+        $conn->exec("ALTER TABLE users ADD COLUMN employment_id VARCHAR(50) DEFAULT NULL UNIQUE");
+    } catch (PDOException $e) {
+        // Column may already exist; ignore if alter fails
+        error_log('employment_id column add skipped or failed: ' . $e->getMessage());
+    }
+
+    // Add status field if it doesn't exist
+    try {
+        $conn->exec("ALTER TABLE users ADD COLUMN status ENUM('active', 'inactive') DEFAULT 'active'");
+    } catch (PDOException $e) {
+        // Column may already exist; ignore if alter fails
+        error_log('status column add skipped or failed: ' . $e->getMessage());
+    }
 
 
     // Create categories table
@@ -5123,6 +5141,7 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             till_id INT NOT NULL,
             user_id INT NOT NULL,
             drop_amount DECIMAL(15,2) NOT NULL,
+            drop_type VARCHAR(50) DEFAULT 'cashier_sales',
             drop_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             notes TEXT,
             status ENUM('pending', 'confirmed', 'cancelled') DEFAULT 'pending',
@@ -5140,18 +5159,36 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    // Add drop_type column to existing cash_drops table if it doesn't exist
+    try {
+        $stmt = $conn->query("SHOW COLUMNS FROM cash_drops LIKE 'drop_type'");
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE cash_drops ADD COLUMN drop_type VARCHAR(50) DEFAULT 'cashier_sales' AFTER drop_amount");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist or table doesn't exist yet
+        error_log('drop_type column add to cash_drops table: ' . $e->getMessage());
+    }
+
     // Create till_closings table
     $conn->exec("
         CREATE TABLE IF NOT EXISTS till_closings (
             id INT AUTO_INCREMENT PRIMARY KEY,
             till_id INT NOT NULL,
             user_id INT NOT NULL,
+            opening_amount DECIMAL(15,2) DEFAULT 0.00,
+            total_sales DECIMAL(15,2) DEFAULT 0.00,
+            total_drops DECIMAL(15,2) DEFAULT 0.00,
+            expected_balance DECIMAL(15,2) DEFAULT 0.00,
             cash_amount DECIMAL(15,2) DEFAULT 0.00,
             voucher_amount DECIMAL(15,2) DEFAULT 0.00,
             loyalty_points DECIMAL(15,2) DEFAULT 0.00,
             other_amount DECIMAL(15,2) DEFAULT 0.00,
             other_description VARCHAR(255),
+            actual_counted_amount DECIMAL(15,2) DEFAULT 0.00,
             total_amount DECIMAL(15,2) NOT NULL,
+            difference DECIMAL(15,2) DEFAULT 0.00,
+            shortage_type ENUM('shortage', 'excess', 'exact') DEFAULT 'exact',
             closing_notes TEXT,
             allow_exceed TINYINT(1) DEFAULT 0,
             closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -5160,9 +5197,42 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
             INDEX idx_till_id (till_id),
             INDEX idx_user_id (user_id),
-            INDEX idx_closed_at (closed_at)
+            INDEX idx_closed_at (closed_at),
+            INDEX idx_shortage_type (shortage_type)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    // Add new columns to existing till_closings table if they don't exist
+    try {
+        $stmt = $conn->query("DESCRIBE till_closings");
+        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $new_columns = [
+            'opening_amount' => "ALTER TABLE till_closings ADD COLUMN opening_amount DECIMAL(15,2) DEFAULT 0.00 AFTER user_id",
+            'total_sales' => "ALTER TABLE till_closings ADD COLUMN total_sales DECIMAL(15,2) DEFAULT 0.00 AFTER opening_amount",
+            'total_drops' => "ALTER TABLE till_closings ADD COLUMN total_drops DECIMAL(15,2) DEFAULT 0.00 AFTER total_sales",
+            'expected_balance' => "ALTER TABLE till_closings ADD COLUMN expected_balance DECIMAL(15,2) DEFAULT 0.00 AFTER total_drops",
+            'actual_counted_amount' => "ALTER TABLE till_closings ADD COLUMN actual_counted_amount DECIMAL(15,2) DEFAULT 0.00 AFTER other_description",
+            'difference' => "ALTER TABLE till_closings ADD COLUMN difference DECIMAL(15,2) DEFAULT 0.00 AFTER actual_counted_amount",
+            'shortage_type' => "ALTER TABLE till_closings ADD COLUMN shortage_type ENUM('shortage', 'excess', 'exact') DEFAULT 'exact' AFTER difference",
+        ];
+
+        foreach ($new_columns as $column => $alter_sql) {
+            if (!in_array($column, $columns)) {
+                $conn->exec($alter_sql);
+            }
+        }
+
+        // Add index for shortage_type if it doesn't exist
+        try {
+            $conn->exec("ALTER TABLE till_closings ADD INDEX idx_shortage_type (shortage_type)");
+        } catch (PDOException $e) {
+            // Index might already exist
+        }
+
+    } catch (PDOException $e) {
+        error_log('Error updating till_closings table: ' . $e->getMessage());
+    }
 
     // Create pos_settings table
     $conn->exec("
@@ -5246,7 +5316,8 @@ $conn = new PDO("mysql:host=$host", $username, $password);
     }
 
     // Create loyalty_points table
-    $conn->exec("
+    try {
+        $conn->exec("
         CREATE TABLE IF NOT EXISTS loyalty_points (
             id INT AUTO_INCREMENT PRIMARY KEY,
             customer_id INT NOT NULL,
@@ -5587,6 +5658,164 @@ if (!function_exists('getHeldTransactionsCount')) {
             return $result['count'] ?? 0;
         } catch (PDOException $e) {
             error_log("Error getting held transactions count: " . $e->getMessage());
+            return 0;
+        }
+    }
+
+    // Cash Drop Functions
+    function createCashDrop($conn, $data) {
+        try {
+            $stmt = $conn->prepare("
+                INSERT INTO cash_drops (till_id, user_id, drop_amount, drop_type, notes, status)
+                VALUES (?, ?, ?, ?, ?, 'pending')
+            ");
+            
+            $stmt->execute([
+                $data['till_id'],
+                $data['user_id'],
+                $data['drop_amount'],
+                $data['drop_type'] ?? 'cashier_sales',
+                $data['notes'] ?? ''
+            ]);
+            
+            return $conn->lastInsertId();
+        } catch (PDOException $e) {
+            error_log("Error creating cash drop: " . $e->getMessage());
+            throw new Exception("Failed to create cash drop: " . $e->getMessage());
+        }
+    }
+
+    function getCashDrops($conn, $filters = [], $page = 1, $perPage = 20) {
+        try {
+            $whereConditions = [];
+            $params = [];
+            
+            if (isset($filters['till_id']) && $filters['till_id']) {
+                $whereConditions[] = "cd.till_id = ?";
+                $params[] = $filters['till_id'];
+            }
+            
+            if (isset($filters['user_id']) && $filters['user_id']) {
+                $whereConditions[] = "cd.user_id = ?";
+                $params[] = $filters['user_id'];
+            }
+            
+            if (isset($filters['date_from']) && $filters['date_from']) {
+                $whereConditions[] = "DATE(cd.drop_date) >= ?";
+                $params[] = $filters['date_from'];
+            }
+            
+            if (isset($filters['date_to']) && $filters['date_to']) {
+                $whereConditions[] = "DATE(cd.drop_date) <= ?";
+                $params[] = $filters['date_to'];
+            }
+            
+            if (isset($filters['status']) && $filters['status']) {
+                $whereConditions[] = "cd.status = ?";
+                $params[] = $filters['status'];
+            }
+            
+            $whereClause = !empty($whereConditions) ? "WHERE " . implode(" AND ", $whereConditions) : "";
+            
+            // Get total count
+            $countQuery = "
+                SELECT COUNT(*) as total
+                FROM cash_drops cd
+                LEFT JOIN users u ON cd.user_id = u.id
+                LEFT JOIN register_tills rt ON cd.till_id = rt.id
+                $whereClause
+            ";
+            
+            $stmt = $conn->prepare($countQuery);
+            $stmt->execute($params);
+            $total = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+            
+            // Get paginated results
+            $offset = ($page - 1) * $perPage;
+            $query = "
+                SELECT 
+                    cd.*,
+                    u.username,
+                    rt.till_name,
+                    rt.till_code
+                FROM cash_drops cd
+                LEFT JOIN users u ON cd.user_id = u.id
+                LEFT JOIN register_tills rt ON cd.till_id = rt.id
+                $whereClause
+                ORDER BY cd.drop_date DESC
+                LIMIT $perPage OFFSET $offset
+            ";
+            
+            $stmt = $conn->prepare($query);
+            $stmt->execute($params);
+            $drops = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            return [
+                'drops' => $drops,
+                'total' => $total,
+                'page' => $page,
+                'per_page' => $perPage,
+                'total_pages' => ceil($total / $perPage)
+            ];
+        } catch (PDOException $e) {
+            error_log("Error getting cash drops: " . $e->getMessage());
+            throw new Exception("Failed to get cash drops: " . $e->getMessage());
+        }
+    }
+
+    function getTotalCashDrops($conn, $till_id, $user_id = null, $date = null) {
+        try {
+            $whereConditions = ["cd.till_id = ?"];
+            $params = [$till_id];
+            
+            if ($user_id) {
+                $whereConditions[] = "cd.user_id = ?";
+                $params[] = $user_id;
+            }
+            
+            if ($date) {
+                $whereConditions[] = "DATE(cd.drop_date) = ?";
+                $params[] = $date;
+            }
+            
+            $whereClause = "WHERE " . implode(" AND ", $whereConditions);
+            
+            $stmt = $conn->prepare("
+                SELECT COALESCE(SUM(cd.drop_amount), 0) as total_drops
+                FROM cash_drops cd
+                $whereClause AND cd.status = 'pending'
+            ");
+            $stmt->execute($params);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            return floatval($result['total_drops']);
+        } catch (PDOException $e) {
+            error_log("Error getting total cash drops: " . $e->getMessage());
+            return 0;
+        }
+    }
+
+    function getCashierSalesTotal($conn, $till_id, $user_id, $date = null) {
+        try {
+            $whereConditions = ["s.till_id = ?", "s.user_id = ?"];
+            $params = [$till_id, $user_id];
+            
+            if ($date) {
+                $whereConditions[] = "DATE(s.sale_date) = ?";
+                $params[] = $date;
+            }
+            
+            $whereClause = "WHERE " . implode(" AND ", $whereConditions);
+            
+            $stmt = $conn->prepare("
+                SELECT COALESCE(SUM(s.final_amount), 0) as total_sales
+                FROM sales s
+                $whereClause AND s.status != 'void'
+            ");
+            $stmt->execute($params);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            return floatval($result['total_sales']);
+        } catch (PDOException $e) {
+            error_log("Error getting cashier sales total: " . $e->getMessage());
             return 0;
         }
     }

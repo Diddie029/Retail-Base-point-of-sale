@@ -470,18 +470,18 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
 
-            <!-- Additional Features Section -->
+            <!-- Analytics Section -->
             <div class="row mb-4">
                 <div class="col-12">
                     <div class="card">
                         <div class="card-header">
-                            <h5 class="mb-0"><i class="bi bi-plus-circle"></i> Additional Features</h5>
+                            <h5 class="mb-0"><i class="bi bi-graph-up"></i> Analytics & Insights</h5>
                         </div>
                         <div class="card-body">
                             <div class="row">
                                 <!-- Sales Analytics -->
-                                <div class="col-md-4">
-                                    <div class="feature-card" onclick="window.location.href='analytics.php'">
+                                <div class="col-md-6">
+                                    <div class="feature-card" onclick="window.location.href='../analytics/index.php'">
                                         <div class="d-flex align-items-center">
                                             <div class="feature-icon" style="background: linear-gradient(135deg, #17a2b8 0%, #138496 100%); color: white;">
                                                 <i class="bi bi-graph-up-arrow"></i>
@@ -494,54 +494,21 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     </div>
                                 </div>
 
-                                <!-- Inventory Alerts -->
-                                <div class="col-md-4">
-                                    <div class="feature-card" onclick="window.location.href='inventory-alerts.php'">
+                                <!-- Inventory Analytics -->
+                                <div class="col-md-6">
+                                    <div class="feature-card" onclick="window.location.href='../analytics/inventory.php'">
                                         <div class="d-flex align-items-center">
                                             <div class="feature-icon" style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white;">
-                                                <i class="bi bi-exclamation-triangle"></i>
+                                                <i class="bi bi-boxes"></i>
                                             </div>
                                             <div class="ms-3">
-                                                <h6 class="mb-1">Inventory Alerts</h6>
-                                                <p class="text-muted mb-0">Low stock notifications and management</p>
-                                                <small class="text-danger"><?php echo count($low_stock_alerts); ?> alerts</small>
+                                                <h6 class="mb-1">Inventory Analytics</h6>
+                                                <p class="text-muted mb-0">Stock levels, turnover rates, and inventory optimization</p>
+                                                <small class="text-danger"><?php echo count($low_stock_alerts); ?> low stock alerts</small>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
-
-                                <!-- Loyalty Points System -->
-                                <div class="col-md-4">
-                                    <div class="feature-card" onclick="window.location.href='loyalty-points.php'">
-                                        <div class="d-flex align-items-center">
-                                            <div class="feature-icon" style="background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%); color: white;">
-                                                <i class="bi bi-star-fill"></i>
-                                            </div>
-                                            <div class="ms-3">
-                                                <h6 class="mb-1">Loyalty Points</h6>
-                                                <p class="text-muted mb-0">Customer loyalty program and rewards</p>
-                                                <small class="text-warning">Points system</small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Quick Add Points -->
-                                <div class="col-md-4">
-                                    <div class="feature-card" data-bs-toggle="modal" data-bs-target="#quickAddPointsModal">
-                                        <div class="d-flex align-items-center">
-                                            <div class="feature-icon" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white;">
-                                                <i class="bi bi-plus-circle"></i>
-                                            </div>
-                                            <div class="ms-3">
-                                                <h6 class="mb-1">Quick Add Points</h6>
-                                                <p class="text-muted mb-0">Add points to customer (requires approval)</p>
-                                                <small class="text-success">Manual entry</small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
                             </div>
                         </div>
                     </div>

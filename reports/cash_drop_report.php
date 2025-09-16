@@ -1,0 +1,1329 @@
+<?php
+session_start();
+require_once '../include/db.php';
+require_once '../include/functions.php';
+
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ../auth/login.php');
+    exit();
+}
+
+// Get user info
+$user_id = $_SESSION['user_id'];
+$username = $_SESSION['username'];
+$role_name = $_SESSION['role_name'] ?? 'User';
+$role_id = $_SESSION['role_id'] ?? 0;
+
+// Get user permissions
+$permissions = [];
+if ($role_id) {
+    $stmt = $conn->prepare("
+        SELECT p.name
+        FROM permissions p
+        JOIN role_permissions rp ON p.id = rp.permission_id
+        WHERE rp.role_id = :role_id
+    ");
+    $stmt->bindParam(':role_id', $role_id);
+    $stmt->execute();
+    $permissions = $stmt->fetchAll(PDO::FETCH_COLUMN);
+}
+
+// Check if user has permission to view reports
+$hasAccess = false;
+if (isAdmin($role_name)) {
+    $hasAccess = true;
+}
+if (!$hasAccess && !empty($permissions)) {
+    if (hasPermission('view_sales', $permissions) || hasPermission('manage_sales', $permissions) || hasPermission('cash_drop', $permissions)) {
+        $hasAccess = true;
+    }
+}
+if (!$hasAccess && hasAdminAccess($role_name, $permissions)) {
+    $hasAccess = true;
+}
+
+if (!$hasAccess) {
+    header('Location: ../dashboard/dashboard.php?error=access_denied');
+    exit();
+}
+
+// Handle filters
+$date_from = $_GET['date_from'] ?? date('Y-m-d', strtotime('-30 days'));
+$date_to = $_GET['date_to'] ?? date('Y-m-d');
+$till_id = $_GET['till_id'] ?? '';
+$user_filter = $_GET['user_id'] ?? '';
+$status_filter = $_GET['status'] ?? '';
+$drop_type = $_GET['drop_type'] ?? '';
+
+// Check if cash_drops table exists
+$table_exists = false;
+try {
+    $stmt = $conn->query("SHOW TABLES LIKE 'cash_drops'");
+    $table_exists = $stmt->rowCount() > 0;
+} catch (Exception $e) {
+    $table_exists = false;
+}
+
+$cash_drops = [];
+$summary_stats = [
+    'total_drops' => 0,
+    'total_amount' => 0,
+    'pending_drops' => 0,
+    'confirmed_drops' => 0,
+    'cancelled_drops' => 0,
+    'pending_amount' => 0,
+    'confirmed_amount' => 0,
+    'cancelled_amount' => 0
+];
+
+if ($table_exists) {
+    // Build query for cash drop report
+    $query = "
+        SELECT
+            cd.*,
+            rt.till_name,
+            rt.till_code,
+            rt.current_balance as till_current_balance,
+            u.username as dropped_by_name,
+            cu.username as confirmed_by_name,
+            CASE
+                WHEN cd.status = 'pending' THEN 'Pending'
+                WHEN cd.status = 'confirmed' THEN 'Confirmed'
+                WHEN cd.status = 'cancelled' THEN 'Cancelled'
+                ELSE 'Unknown'
+            END as status_text
+        FROM cash_drops cd
+        LEFT JOIN register_tills rt ON cd.till_id = rt.id
+        LEFT JOIN users u ON cd.user_id = u.id
+        LEFT JOIN users cu ON cd.confirmed_by = cu.id
+        WHERE cd.drop_date BETWEEN ? AND ?
+    ";
+
+    $params = [$date_from . ' 00:00:00', $date_to . ' 23:59:59'];
+
+    if (!empty($till_id)) {
+        $query .= " AND cd.till_id = ?";
+        $params[] = $till_id;
+    }
+
+    if (!empty($user_filter)) {
+        $query .= " AND cd.user_id = ?";
+        $params[] = $user_filter;
+    }
+
+    if (!empty($status_filter) && $status_filter !== 'all') {
+        $query .= " AND cd.status = ?";
+        $params[] = $status_filter;
+    }
+
+    if (!empty($drop_type) && $drop_type !== 'all') {
+        $query .= " AND cd.drop_type = ?";
+        $params[] = $drop_type;
+    }
+
+    $query .= " ORDER BY cd.drop_date DESC";
+
+    $stmt = $conn->prepare($query);
+    $stmt->execute($params);
+    $cash_drops = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Calculate summary statistics
+    foreach ($cash_drops as $drop) {
+        $summary_stats['total_drops']++;
+        $summary_stats['total_amount'] += $drop['drop_amount'];
+
+        switch ($drop['status']) {
+            case 'pending':
+                $summary_stats['pending_drops']++;
+                $summary_stats['pending_amount'] += $drop['drop_amount'];
+                break;
+            case 'confirmed':
+                $summary_stats['confirmed_drops']++;
+                $summary_stats['confirmed_amount'] += $drop['drop_amount'];
+                break;
+            case 'cancelled':
+                $summary_stats['cancelled_drops']++;
+                $summary_stats['cancelled_amount'] += $drop['drop_amount'];
+                break;
+        }
+    }
+} else {
+    $error_message = "Cash drops table not found. Please run the database migration first.";
+}
+
+// Get tills for filter dropdown
+$stmt = $conn->query("SELECT id, till_name, till_code FROM register_tills ORDER BY till_name");
+$tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get users for filter dropdown
+$stmt = $conn->query("SELECT id, username FROM users ORDER BY username");
+$users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get settings for currency
+$settings = getSystemSettings($conn);
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cash Drop Report - POS System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="../assets/css/dashboard.css" rel="stylesheet">
+    <style>
+        .status-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .status-pending { background-color: #fff3cd; color: #856404; }
+        .status-confirmed { background-color: #d1edff; color: #0c5460; }
+        .status-cancelled { background-color: #f8d7da; color: #721c24; }
+        .drop-type-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background-color: #e9ecef;
+            color: #495057;
+        }
+        
+        /* Filter Form Improvements */
+        .form-label {
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+            color: #495057;
+        }
+        
+        .form-control, .form-select {
+            font-size: 0.875rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.375rem;
+            border: 1px solid #ced4da;
+            transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+        }
+        
+        .form-control:focus, .form-select:focus {
+            border-color: #86b7fe;
+            outline: 0;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        }
+        
+        /* Responsive field widths */
+        @media (min-width: 992px) {
+            .col-lg-1 { flex: 0 0 8.333333%; max-width: 8.333333%; }
+            .col-lg-2 { flex: 0 0 16.666667%; max-width: 16.666667%; }
+            .col-lg-3 { flex: 0 0 25%; max-width: 25%; }
+        }
+        
+        @media (min-width: 768px) and (max-width: 991px) {
+            .col-md-3 { flex: 0 0 25%; max-width: 25%; }
+            .col-md-4 { flex: 0 0 33.333333%; max-width: 33.333333%; }
+            .col-md-6 { flex: 0 0 50%; max-width: 50%; }
+        }
+        
+        @media (max-width: 767px) {
+            .col-sm-6 { flex: 0 0 50%; max-width: 50%; }
+        }
+        
+        /* Action buttons styling */
+        .btn {
+            font-size: 0.875rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+        }
+        
+        .btn-group .btn {
+            border-radius: 0.375rem;
+        }
+        
+        .btn-group .btn:not(:last-child) {
+            margin-right: 0.25rem;
+        }
+        
+        /* Filter card improvements */
+        .card-body {
+            padding: 1.5rem;
+        }
+        
+        .row.g-3 > * {
+            padding-right: calc(var(--bs-gutter-x) * 0.5);
+            padding-left: calc(var(--bs-gutter-x) * 0.5);
+        }
+    </style>
+</head>
+<body>
+    <?php include '../include/navmenu.php'; ?>
+
+    <div class="main-content">
+        <div class="container-fluid">
+            <!-- Header -->
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2><i class="bi bi-cash-coin"></i> Cash Drop Report</h2>
+                    <p class="text-muted">Detailed cash drop tracking and management</p>
+                </div>
+                <div>
+                    <a href="index.php" class="btn btn-outline-secondary me-2">
+                        <i class="bi bi-arrow-left"></i> Back to Reports
+                    </a>
+                    <a href="daily_cash_drop_summary.php" class="btn btn-info me-2">
+                        <i class="bi bi-calendar-week"></i> Daily Summary
+                    </a>
+                    <button class="btn btn-success" onclick="exportReport()">
+                        <i class="bi bi-download"></i> Export
+                    </button>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="card mb-4">
+                <div class="card-body">
+                    <form method="GET" class="row g-3">
+                        <!-- First Row -->
+                        <div class="col-lg-2 col-md-4 col-sm-6">
+                            <label class="form-label fw-semibold">From Date</label>
+                            <input type="date" class="form-control" name="date_from" value="<?php echo $date_from; ?>">
+                        </div>
+                        <div class="col-lg-2 col-md-4 col-sm-6">
+                            <label class="form-label fw-semibold">To Date</label>
+                            <input type="date" class="form-control" name="date_to" value="<?php echo $date_to; ?>">
+                        </div>
+                        <div class="col-lg-2 col-md-4 col-sm-6">
+                            <label class="form-label fw-semibold">Till</label>
+                            <select class="form-select" name="till_id">
+                                <option value="">All Tills</option>
+                                <?php foreach ($tills as $till): ?>
+                                <option value="<?php echo $till['id']; ?>" <?php echo ($till_id == $till['id']) ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($till['till_name']); ?>
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-lg-3 col-md-6 col-sm-6">
+                            <label class="form-label fw-semibold">Cashier</label>
+                            <select class="form-select" name="user_id">
+                                <option value="">All Cashiers</option>
+                                <?php foreach ($users as $user): ?>
+                                <option value="<?php echo $user['id']; ?>" <?php echo ($user_filter == $user['id']) ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($user['username']); ?>
+                                </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-lg-1 col-md-3 col-sm-6">
+                            <label class="form-label fw-semibold">Status</label>
+                            <select class="form-select" name="status">
+                                <option value="all" <?php echo ($status_filter === 'all' || empty($status_filter)) ? 'selected' : ''; ?>>All</option>
+                                <option value="pending" <?php echo ($status_filter === 'pending') ? 'selected' : ''; ?>>Pending</option>
+                                <option value="confirmed" <?php echo ($status_filter === 'confirmed') ? 'selected' : ''; ?>>Confirmed</option>
+                                <option value="cancelled" <?php echo ($status_filter === 'cancelled') ? 'selected' : ''; ?>>Cancelled</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-6 col-sm-6">
+                            <label class="form-label fw-semibold">Drop Type</label>
+                            <select class="form-select" name="drop_type">
+                                <option value="all" <?php echo ($drop_type === 'all' || empty($drop_type)) ? 'selected' : ''; ?>>All Types</option>
+                                <option value="cashier_drop" <?php echo ($drop_type === 'cashier_drop') ? 'selected' : ''; ?>>Cashier Drop</option>
+                                <option value="manager_drop" <?php echo ($drop_type === 'manager_drop') ? 'selected' : ''; ?>>Manager Drop</option>
+                                <option value="end_of_day_drop" <?php echo ($drop_type === 'end_of_day_drop') ? 'selected' : ''; ?>>End of Day</option>
+                                <option value="emergency_drop" <?php echo ($drop_type === 'emergency_drop') ? 'selected' : ''; ?>>Emergency</option>
+                                <option value="bank_deposit" <?php echo ($drop_type === 'bank_deposit') ? 'selected' : ''; ?>>Bank Deposit</option>
+                                <option value="safe_drop" <?php echo ($drop_type === 'safe_drop') ? 'selected' : ''; ?>>Safe Drop</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Action Buttons Row -->
+                        <div class="col-12">
+                            <div class="d-flex flex-wrap gap-2 mt-3">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-search me-1"></i> Filter
+                                </button>
+                                <a href="?date_from=<?php echo date('Y-m-d', strtotime('-30 days')); ?>&date_to=<?php echo date('Y-m-d'); ?>" class="btn btn-outline-secondary">
+                                    <i class="bi bi-arrow-clockwise me-1"></i> Reset
+                                </a>
+                                <button type="button" class="btn btn-outline-info" onclick="exportReport()">
+                                    <i class="bi bi-download me-1"></i> Export
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+
+            <?php if (isset($error_message)): ?>
+            <div class="alert alert-warning alert-dismissible fade show">
+                <i class="bi bi-exclamation-triangle"></i> <?php echo htmlspecialchars($error_message); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            <?php endif; ?>
+
+            <!-- Summary Statistics -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card bg-primary text-white">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h6 class="card-title">Total Drops</h6>
+                                    <h3><?php echo $summary_stats['total_drops']; ?></h3>
+                                    <small><?php echo formatCurrency($summary_stats['total_amount'], $settings); ?> total</small>
+                                </div>
+                                <i class="bi bi-cash-coin fs-1 opacity-75"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-warning text-white">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h6 class="card-title">Pending</h6>
+                                    <h3><?php echo $summary_stats['pending_drops']; ?></h3>
+                                    <small><?php echo formatCurrency($summary_stats['pending_amount'], $settings); ?></small>
+                                </div>
+                                <i class="bi bi-clock fs-1 opacity-75"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-success text-white">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h6 class="card-title">Confirmed</h6>
+                                    <h3><?php echo $summary_stats['confirmed_drops']; ?></h3>
+                                    <small><?php echo formatCurrency($summary_stats['confirmed_amount'], $settings); ?></small>
+                                </div>
+                                <i class="bi bi-check-circle fs-1 opacity-75"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card bg-danger text-white">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h6 class="card-title">Cancelled</h6>
+                                    <h3><?php echo $summary_stats['cancelled_drops']; ?></h3>
+                                    <small><?php echo formatCurrency($summary_stats['cancelled_amount'], $settings); ?></small>
+                                </div>
+                                <i class="bi bi-x-circle fs-1 opacity-75"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bulk Actions -->
+            <div class="row mb-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-check-square me-2"></i>Bulk Actions
+                                    </h6>
+                                    <small class="text-muted">Select multiple pending drops to approve or deny at once</small>
+                                </div>
+                                <div class="btn-group">
+                                    <button class="btn btn-success btn-sm" onclick="bulkApproveSelected()" id="bulkApproveBtn" disabled>
+                                        <i class="bi bi-check-circle me-1"></i>Approve Selected
+                                    </button>
+                                    <button class="btn btn-warning btn-sm" onclick="bulkDenySelected()" id="bulkDenyBtn" disabled>
+                                        <i class="bi bi-x-circle me-1"></i>Deny Selected
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cash Drops Table -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Cash Drop Details</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>
+                                        <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                                    </th>
+                                    <th>Date & Time</th>
+                                    <th>Till</th>
+                                    <th>Drop Type</th>
+                                    <th>Amount</th>
+                                    <th>Dropped By</th>
+                                    <th>Status</th>
+                                    <th>Confirmed By</th>
+                                    <th>Balance After Drop</th>
+                                    <th>Time to Confirm</th>
+                                    <th>Notes</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($cash_drops as $drop): ?>
+                                <tr>
+                                    <td>
+                                        <?php if ($drop['status'] === 'pending'): ?>
+                                        <input type="checkbox" class="drop-checkbox" value="<?php echo $drop['id']; ?>" onchange="updateBulkButtons()">
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php echo date('M d, Y H:i:s', strtotime($drop['drop_date'])); ?>
+                                        <br>
+                                        <small class="text-muted"><?php echo date('l', strtotime($drop['drop_date'])); ?></small>
+                                    </td>
+                                    <td>
+                                        <strong><?php echo htmlspecialchars($drop['till_name'] ?? 'N/A'); ?></strong>
+                                        <br>
+                                        <small class="text-muted"><?php echo htmlspecialchars($drop['till_code'] ?? ''); ?></small>
+                                    </td>
+                                    <td>
+                                        <span class="drop-type-badge">
+                                            <?php
+                                            switch ($drop['drop_type']) {
+                                                case 'cashier_drop': echo 'Cashier'; break;
+                                                case 'manager_drop': echo 'Manager'; break;
+                                                case 'end_of_day_drop': echo 'End of Day'; break;
+                                                case 'emergency_drop': echo 'Emergency'; break;
+                                                default: echo ucfirst(str_replace('_', ' ', $drop['drop_type'] ?? 'Unknown'));
+                                            }
+                                            ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <strong class="text-primary"><?php echo formatCurrency($drop['drop_amount'], $settings); ?></strong>
+                                    </td>
+                                    <td><?php echo htmlspecialchars($drop['dropped_by_name']); ?></td>
+                                    <td>
+                                        <span class="status-badge status-<?php echo $drop['status']; ?>">
+                                            <?php echo htmlspecialchars($drop['status_text']); ?>
+                                        </span>
+                                        <?php if ($drop['status'] === 'confirmed' && $drop['confirmed_at']): ?>
+                                        <br>
+                                        <small class="text-muted"><?php echo date('M d, H:i', strtotime($drop['confirmed_at'])); ?></small>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($drop['confirmed_by_name']): ?>
+                                            <?php echo htmlspecialchars($drop['confirmed_by_name']); ?>
+                                            <?php if ($drop['confirmed_at']): ?>
+                                            <br>
+                                            <small class="text-muted"><?php echo date('M d, H:i', strtotime($drop['confirmed_at'])); ?></small>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            <span class="text-muted">-</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($drop['till_current_balance'] !== null): ?>
+                                            <span class="text-success"><?php echo formatCurrency($drop['till_current_balance'], $settings); ?></span>
+                                            <br>
+                                            <small class="text-muted">
+                                                <?php
+                                                $balance_after_drop = $drop['till_current_balance'];
+                                                $original_balance = $balance_after_drop + $drop['drop_amount'];
+                                                echo "Before: " . formatCurrency($original_balance, $settings);
+                                                ?>
+                                            </small>
+                                        <?php else: ?>
+                                            <span class="text-muted">-</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($drop['confirmed_at'] && $drop['drop_date']): ?>
+                                            <?php
+                                            $drop_time = strtotime($drop['drop_date']);
+                                            $confirm_time = strtotime($drop['confirmed_at']);
+                                            $time_diff = $confirm_time - $drop_time;
+
+                                            if ($time_diff < 3600) { // Less than 1 hour
+                                                $minutes = round($time_diff / 60);
+                                                echo $minutes . ' min';
+                                            } elseif ($time_diff < 86400) { // Less than 24 hours
+                                                $hours = round($time_diff / 3600);
+                                                echo $hours . ' hrs';
+                                            } else {
+                                                $days = round($time_diff / 86400);
+                                                echo $days . ' days';
+                                            }
+                                            ?>
+                                        <?php else: ?>
+                                            <?php if ($drop['status'] === 'pending'): ?>
+                                                <span class="text-warning">Pending</span>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($drop['notes']): ?>
+                                            <div class="d-flex align-items-center">
+                                                <span class="text-truncate d-inline-block" style="max-width: 150px;" title="<?php echo htmlspecialchars($drop['notes']); ?>">
+                                                    <?php echo htmlspecialchars($drop['notes']); ?>
+                                                </span>
+                                                <button class="btn btn-sm btn-outline-info ms-1" onclick="showFullNotes('<?php echo htmlspecialchars(addslashes($drop['notes'])); ?>')" title="View full notes">
+                                                    <i class="bi bi-eye"></i>
+                                                </button>
+                                            </div>
+                                        <?php else: ?>
+                                            <span class="text-muted">-</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <div class="d-flex flex-wrap gap-1 justify-content-start">
+                                            <!-- Primary Action - View Details -->
+                                            <button class="btn btn-outline-primary btn-sm" onclick="viewDropDetails(<?php echo $drop['id']; ?>)" title="View complete drop details">
+                                                <i class="bi bi-eye"></i>
+                                            </button>
+
+                                            <!-- Notes Action (if notes exist) -->
+                                            <?php if ($drop['notes']): ?>
+                                            <button class="btn btn-outline-info btn-sm" onclick="showFullNotes('<?php echo htmlspecialchars(addslashes($drop['notes'])); ?>')" title="View full notes">
+                                                <i class="bi bi-sticky"></i>
+                                            </button>
+                                            <?php endif; ?>
+
+                                            <!-- Status-based Actions -->
+                                            <?php if ($drop['status'] === 'pending'): ?>
+                                            <div class="btn-group btn-group-sm ms-1">
+                                                <button class="btn btn-outline-success btn-sm" onclick="approveDrop(<?php echo $drop['id']; ?>, '<?php echo htmlspecialchars($drop['till_name']); ?>', '<?php echo formatCurrency($drop['drop_amount'], $settings); ?>')" title="Approve this cash drop">
+                                                    <i class="bi bi-check-circle"></i>
+                                                </button>
+                                                <button class="btn btn-outline-warning btn-sm" onclick="denyDrop(<?php echo $drop['id']; ?>, '<?php echo htmlspecialchars($drop['till_name']); ?>', '<?php echo formatCurrency($drop['drop_amount'], $settings); ?>')" title="Deny this cash drop">
+                                                    <i class="bi bi-x-circle"></i>
+                                                </button>
+                                            </div>
+                                            <?php elseif ($drop['status'] === 'confirmed'): ?>
+                                            <button class="btn btn-outline-success btn-sm" onclick="printDropReceipt(<?php echo $drop['id']; ?>)" title="Print receipt">
+                                                <i class="bi bi-printer"></i>
+                                            </button>
+                                            <button class="btn btn-outline-warning btn-sm" onclick="editDrop(<?php echo $drop['id']; ?>)" title="Edit drop details">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                            <?php endif; ?>
+
+                                            <!-- Admin Actions -->
+                                            <?php if (isAdmin($role_name) && $drop['status'] === 'confirmed'): ?>
+                                            <button class="btn btn-outline-secondary btn-sm ms-1" onclick="viewAuditTrail(<?php echo $drop['id']; ?>)" title="View audit trail">
+                                                <i class="bi bi-clock-history"></i>
+                                            </button>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <?php if (empty($cash_drops)): ?>
+                    <div class="text-center py-5">
+                        <i class="bi bi-cash-coin fs-1 text-muted mb-3"></i>
+                        <h5 class="text-muted">No cash drops found</h5>
+                        <p class="text-muted">Try adjusting your filters or check if cash drops have been recorded in the selected date range.</p>
+                    </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notes Modal -->
+    <div class="modal fade" id="notesModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Drop Notes</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="fullNotes"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Approve Drop Modal -->
+    <div class="modal fade" id="approveDropModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-check-circle me-2"></i>Approve Cash Drop
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-success">
+                        <h6>Confirm Drop Approval</h6>
+                        <p id="approveDropDetails"></p>
+                    </div>
+                    <form id="approveDropForm">
+                        <input type="hidden" id="approve_drop_id" name="drop_id">
+                        <input type="hidden" name="action" value="approve_drop">
+                        <div class="mb-3">
+                            <label for="approve_notes" class="form-label">Approval Notes (Optional)</label>
+                            <textarea class="form-control" id="approve_notes" name="notes" rows="2" placeholder="Add any notes about this approval..."></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success" onclick="confirmApproveDrop()">
+                        <i class="bi bi-check-circle me-1"></i>Approve Drop
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Deny Drop Modal -->
+    <div class="modal fade" id="denyDropModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-x-circle me-2"></i>Deny Cash Drop
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger">
+                        <h6>Confirm Drop Denial</h6>
+                        <p id="denyDropDetails"></p>
+                    </div>
+                    <form id="denyDropForm">
+                        <input type="hidden" id="deny_drop_id" name="drop_id">
+                        <input type="hidden" name="action" value="deny_drop">
+                        <div class="mb-3">
+                            <label for="deny_reason" class="form-label">Reason for Denial <span class="text-danger">*</span></label>
+                            <select class="form-select" id="deny_reason" name="reason" required>
+                                <option value="">Select reason...</option>
+                                <option value="insufficient_funds">Insufficient Funds</option>
+                                <option value="incorrect_amount">Incorrect Amount</option>
+                                <option value="suspicious_activity">Suspicious Activity</option>
+                                <option value="policy_violation">Policy Violation</option>
+                                <option value="documentation_missing">Documentation Missing</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="deny_notes" class="form-label">Additional Notes</label>
+                            <textarea class="form-control" id="deny_notes" name="notes" rows="3" placeholder="Provide additional details about the denial..."></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" onclick="confirmDenyDrop()">
+                        <i class="bi bi-x-circle me-1"></i>Deny Drop
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Drop Details Modal -->
+    <div class="modal fade" id="viewDropModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-info text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-eye me-2"></i>Cash Drop Details
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="dropDetailsContent">
+                    <!-- Content will be loaded dynamically -->
+                    <div class="text-center">
+                        <div class="spinner-border text-info" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading drop details...</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="printDropBtn" style="display: none;">
+                        <i class="bi bi-printer me-1"></i>Print Details
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function exportReport() {
+            const url = new URL(window.location);
+            url.searchParams.set('export', 'csv');
+            window.open(url, '_blank');
+        }
+
+        function showFullNotes(notes) {
+            document.getElementById('fullNotes').textContent = notes;
+            new bootstrap.Modal(document.getElementById('notesModal')).show();
+        }
+
+        function viewDropDetails(dropId) {
+            // Show loading state
+            const modal = new bootstrap.Modal(document.getElementById('viewDropModal'));
+            const content = document.getElementById('dropDetailsContent');
+            const printBtn = document.getElementById('printDropBtn');
+
+            content.innerHTML = `
+                <div class="text-center">
+                    <div class="spinner-border text-info" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading drop details...</p>
+                </div>
+            `;
+
+            printBtn.style.display = 'none';
+            modal.show();
+
+            // Fetch drop details
+            fetch('cash_drop_details.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    'action': 'get_drop_details',
+                    'drop_id': dropId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    content.innerHTML = generateDropDetailsHTML(data.drop);
+                    printBtn.style.display = 'inline-block';
+                    printBtn.onclick = () => printDropDetails(data.drop);
+                } else {
+                    content.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            Error loading drop details: ${data.message || 'Unknown error'}
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                content.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        Network error occurred while loading drop details.
+                    </div>
+                `;
+            });
+        }
+
+        function generateDropDetailsHTML(drop) {
+            const statusClass = drop.status === 'confirmed' ? 'success' :
+                              drop.status === 'pending' ? 'warning' :
+                              drop.status === 'cancelled' ? 'danger' : 'secondary';
+
+            const dropTypeLabel = drop.drop_type === 'cashier_drop' ? 'Cashier Drop' :
+                                drop.drop_type === 'manager_drop' ? 'Manager Drop' :
+                                drop.drop_type === 'end_of_day_drop' ? 'End of Day' :
+                                drop.drop_type === 'emergency_drop' ? 'Emergency' :
+                                drop.drop_type === 'bank_deposit' ? 'Bank Deposit' :
+                                drop.drop_type === 'safe_drop' ? 'Safe Drop' :
+                                drop.drop_type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+            return `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6 class="text-primary mb-3"><i class="bi bi-info-circle me-2"></i>Drop Information</h6>
+                        <table class="table table-sm">
+                            <tr>
+                                <td class="fw-bold">Drop ID:</td>
+                                <td>${drop.id}</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Till:</td>
+                                <td>${drop.till_name || 'N/A'} (${drop.till_code || ''})</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Amount:</td>
+                                <td class="fw-bold text-success">${drop.formatted_amount || drop.drop_amount}</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Drop Type:</td>
+                                <td><span class="badge bg-info">${dropTypeLabel}</span></td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Status:</td>
+                                <td><span class="badge bg-${statusClass}">${drop.status_text || drop.status}</span></td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Dropped By:</td>
+                                <td>${drop.dropped_by_name || 'N/A'}</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Drop Date:</td>
+                                <td>${new Date(drop.drop_date).toLocaleString()}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-primary mb-3"><i class="bi bi-check-circle me-2"></i>Approval Information</h6>
+                        <table class="table table-sm">
+                            <tr>
+                                <td class="fw-bold">Confirmed By:</td>
+                                <td>${drop.confirmed_by_name || 'Not confirmed'}</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Confirmed At:</td>
+                                <td>${drop.confirmed_at ? new Date(drop.confirmed_at).toLocaleString() : 'Not confirmed'}</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Time to Confirm:</td>
+                                <td>${drop.time_to_confirm || 'N/A'}</td>
+                            </tr>
+                            <tr>
+                                <td class="fw-bold">Balance After:</td>
+                                <td class="fw-bold text-info">${drop.till_current_balance ? drop.formatted_balance : 'N/A'}</td>
+                            </tr>
+                        </table>
+
+                        ${drop.notes ? `
+                        <h6 class="text-primary mb-2"><i class="bi bi-sticky me-2"></i>Notes</h6>
+                        <div class="bg-light p-2 rounded small">
+                            ${drop.notes.replace(/\n/g, '<br>')}
+                        </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        function printDropDetails(drop) {
+            const printWindow = window.open('', '_blank');
+            const statusClass = drop.status === 'confirmed' ? 'success' :
+                              drop.status === 'pending' ? 'warning' :
+                              drop.status === 'cancelled' ? 'danger' : 'secondary';
+
+            printWindow.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Cash Drop Details - ID: ${drop.id}</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 20px; }
+                        .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 20px; }
+                        .details { margin: 20px 0; }
+                        .status { padding: 5px 10px; border-radius: 3px; color: white; }
+                        .status-confirmed { background-color: #28a745; }
+                        .status-pending { background-color: #ffc107; color: #000; }
+                        .status-cancelled { background-color: #dc3545; }
+                        table { width: 100%; border-collapse: collapse; }
+                        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+                        .notes { background-color: #f8f9fa; padding: 10px; margin-top: 20px; }
+                        @media print { body { margin: 0; } }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">
+                        <h2>Cash Drop Details</h2>
+                        <p>Drop ID: ${drop.id}</p>
+                    </div>
+
+                    <div class="details">
+                        <h3>Drop Information</h3>
+                        <table>
+                            <tr><th>Till:</th><td>${drop.till_name || 'N/A'} (${drop.till_code || ''})</td></tr>
+                            <tr><th>Amount:</th><td>${drop.formatted_amount || drop.drop_amount}</td></tr>
+                            <tr><th>Status:</th><td><span class="status status-${drop.status}">${drop.status_text || drop.status}</span></td></tr>
+                            <tr><th>Dropped By:</th><td>${drop.dropped_by_name || 'N/A'}</td></tr>
+                            <tr><th>Drop Date:</th><td>${new Date(drop.drop_date).toLocaleString()}</td></tr>
+                        </table>
+
+                        <h3 style="margin-top: 30px;">Approval Information</h3>
+                        <table>
+                            <tr><th>Confirmed By:</th><td>${drop.confirmed_by_name || 'Not confirmed'}</td></tr>
+                            <tr><th>Confirmed At:</th><td>${drop.confirmed_at ? new Date(drop.confirmed_at).toLocaleString() : 'Not confirmed'}</td></tr>
+                            <tr><th>Balance After:</th><td>${drop.till_current_balance ? drop.formatted_balance : 'N/A'}</td></tr>
+                        </table>
+
+                        ${drop.notes ? `
+                        <div class="notes">
+                            <h4>Notes:</h4>
+                            <p>${drop.notes.replace(/\n/g, '<br>')}</p>
+                        </div>
+                        ` : ''}
+                    </div>
+
+                    <div style="text-align: center; margin-top: 40px; font-size: 12px; color: #666;">
+                        Generated on ${new Date().toLocaleString()}
+                    </div>
+                </body>
+                </html>
+            `);
+
+            printWindow.document.close();
+            printWindow.print();
+        }
+
+        function printDropReceipt(dropId) {
+            // Print drop receipt
+            window.open('print_drop_receipt.php?id=' + dropId, '_blank', 'width=400,height=600');
+        }
+
+        // Approve Drop Functions
+        function approveDrop(dropId, tillName, amount) {
+            document.getElementById('approve_drop_id').value = dropId;
+            document.getElementById('approveDropDetails').innerHTML =
+                `You are about to approve a cash drop of <strong>${amount}</strong> from <strong>${tillName}</strong>.<br>
+                This will confirm the cash drop and update the till balance.`;
+            document.getElementById('approve_notes').value = '';
+            new bootstrap.Modal(document.getElementById('approveDropModal')).show();
+        }
+
+        function confirmApproveDrop() {
+            const formData = new FormData(document.getElementById('approveDropForm'));
+            const dropId = formData.get('drop_id');
+            const notes = formData.get('notes');
+
+            if (!dropId) {
+                alert('Invalid drop ID');
+                return;
+            }
+
+            // Show loading
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-hourglass me-1"></i>Processing...';
+            button.disabled = true;
+
+            // Send AJAX request
+            fetch('cash_drop_actions.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    'action': 'approve_drop',
+                    'drop_id': dropId,
+                    'notes': notes
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Cash drop approved successfully!');
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.message || 'Failed to approve drop'));
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Network error occurred');
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
+        }
+
+        // Deny Drop Functions
+        function denyDrop(dropId, tillName, amount) {
+            document.getElementById('deny_drop_id').value = dropId;
+            document.getElementById('denyDropDetails').innerHTML =
+                `You are about to deny a cash drop of <strong>${amount}</strong> from <strong>${tillName}</strong>.<br>
+                The drop will be marked as cancelled and the till balance will be restored.`;
+            document.getElementById('deny_reason').value = '';
+            document.getElementById('deny_notes').value = '';
+            new bootstrap.Modal(document.getElementById('denyDropModal')).show();
+        }
+
+        function confirmDenyDrop() {
+            const reason = document.getElementById('deny_reason').value;
+            const notes = document.getElementById('deny_notes').value;
+
+            if (!reason) {
+                alert('Please select a reason for denial');
+                return;
+            }
+
+            const formData = new FormData(document.getElementById('denyDropForm'));
+            const dropId = formData.get('drop_id');
+
+            // Show loading
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-hourglass me-1"></i>Processing...';
+            button.disabled = true;
+
+            // Send AJAX request
+            fetch('cash_drop_actions.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    'action': 'deny_drop',
+                    'drop_id': dropId,
+                    'reason': reason,
+                    'notes': notes
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Cash drop denied successfully!');
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.message || 'Failed to deny drop'));
+                    button.innerHTML = originalText;
+                    button.disabled = false;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Network error occurred');
+                button.innerHTML = originalText;
+                button.disabled = false;
+            });
+        }
+
+
+        // Edit Drop Function
+        function editDrop(dropId) {
+            window.open('edit_cash_drop.php?id=' + dropId, '_blank', 'width=800,height=600');
+        }
+
+        // View Audit Trail Function
+        function viewAuditTrail(dropId) {
+            window.open('cash_drop_audit.php?id=' + dropId, '_blank', 'width=1000,height=700');
+        }
+
+        // Bulk Actions Functions
+        function toggleSelectAll() {
+            const selectAllCheckbox = document.getElementById('selectAll');
+            const checkboxes = document.querySelectorAll('.drop-checkbox');
+
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+            });
+
+            updateBulkButtons();
+        }
+
+        function updateBulkButtons() {
+            const checkboxes = document.querySelectorAll('.drop-checkbox:checked');
+            const bulkApproveBtn = document.getElementById('bulkApproveBtn');
+            const bulkDenyBtn = document.getElementById('bulkDenyBtn');
+
+            const hasSelection = checkboxes.length > 0;
+            bulkApproveBtn.disabled = !hasSelection;
+            bulkDenyBtn.disabled = !hasSelection;
+        }
+
+        function bulkApproveSelected() {
+            const selectedIds = Array.from(document.querySelectorAll('.drop-checkbox:checked')).map(cb => cb.value);
+
+            if (selectedIds.length === 0) {
+                alert('Please select drops to approve');
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to approve ${selectedIds.length} cash drop(s)?`)) {
+                return;
+            }
+
+            // Show loading
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-hourglass me-1"></i>Processing...';
+            button.disabled = true;
+
+            // Process each selected drop
+            let completed = 0;
+            let failed = 0;
+
+            selectedIds.forEach(dropId => {
+                fetch('cash_drop_actions.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        'action': 'approve_drop',
+                        'drop_id': dropId,
+                        'notes': 'Bulk approval'
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        completed++;
+                    } else {
+                        failed++;
+                        console.error('Failed to approve drop', dropId, data.message);
+                    }
+
+                    // Check if all requests are complete
+                    if (completed + failed === selectedIds.length) {
+                        const message = `Bulk approval completed!\nApproved: ${completed}\nFailed: ${failed}`;
+                        alert(message);
+                        location.reload();
+                    }
+                })
+                .catch(error => {
+                    failed++;
+                    console.error('Error approving drop', dropId, error);
+
+                    if (completed + failed === selectedIds.length) {
+                        const message = `Bulk approval completed!\nApproved: ${completed}\nFailed: ${failed}`;
+                        alert(message);
+                        location.reload();
+                    }
+                });
+            });
+        }
+
+        function bulkDenySelected() {
+            const selectedIds = Array.from(document.querySelectorAll('.drop-checkbox:checked')).map(cb => cb.value);
+
+            if (selectedIds.length === 0) {
+                alert('Please select drops to deny');
+                return;
+            }
+
+            const reason = prompt('Please enter a reason for denying these cash drops:', 'Bulk denial');
+
+            if (!reason || reason.trim() === '') {
+                alert('Reason is required for denial');
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to deny ${selectedIds.length} cash drop(s) with reason: "${reason}"?`)) {
+                return;
+            }
+
+            // Show loading
+            const button = event.target;
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="bi bi-hourglass me-1"></i>Processing...';
+            button.disabled = true;
+
+            // Process each selected drop
+            let completed = 0;
+            let failed = 0;
+
+            selectedIds.forEach(dropId => {
+                fetch('cash_drop_actions.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        'action': 'deny_drop',
+                        'drop_id': dropId,
+                        'reason': 'bulk_denial',
+                        'notes': `Bulk denial: ${reason}`
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        completed++;
+                    } else {
+                        failed++;
+                        console.error('Failed to deny drop', dropId, data.message);
+                    }
+
+                    // Check if all requests are complete
+                    if (completed + failed === selectedIds.length) {
+                        const message = `Bulk denial completed!\nDenied: ${completed}\nFailed: ${failed}`;
+                        alert(message);
+                        location.reload();
+                    }
+                })
+                .catch(error => {
+                    failed++;
+                    console.error('Error denying drop', dropId, error);
+
+                    if (completed + failed === selectedIds.length) {
+                        const message = `Bulk denial completed!\nDenied: ${completed}\nFailed: ${failed}`;
+                        location.reload();
+                    }
+                });
+            });
+        }
+
+        // Enhanced table interactions
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add row highlighting on hover
+            const rows = document.querySelectorAll('tbody tr');
+            rows.forEach(row => {
+                row.addEventListener('mouseenter', function() {
+                    this.style.backgroundColor = '#f8f9fa';
+                });
+                row.addEventListener('mouseleave', function() {
+                    this.style.backgroundColor = '';
+                });
+
+                // Highlight large amounts
+                const amountCell = row.cells[3]; // Amount column
+                if (amountCell) {
+                    const amountText = amountCell.textContent;
+                    const amount = parseFloat(amountText.replace(/[^\d.-]/g, ''));
+                    if (amount > 50000) { // Highlight amounts over 50,000
+                        row.classList.add('table-warning');
+                        row.title = 'Large cash drop amount';
+                    }
+                }
+            });
+
+            // Add search functionality
+            const searchInput = document.createElement('input');
+            searchInput.type = 'text';
+            searchInput.className = 'form-control form-control-sm';
+            searchInput.placeholder = 'Search drops...';
+            searchInput.style.marginBottom = '10px';
+
+            const tableContainer = document.querySelector('.table-responsive');
+            tableContainer.parentNode.insertBefore(searchInput, tableContainer);
+
+            searchInput.addEventListener('input', function() {
+                const searchTerm = this.value.toLowerCase();
+                const rows = document.querySelectorAll('tbody tr');
+
+                rows.forEach(row => {
+                    const text = row.textContent.toLowerCase();
+                    if (text.includes(searchTerm)) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                });
+            });
+        });
+
+    </script>
+</body>
+</html>

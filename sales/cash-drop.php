@@ -65,25 +65,48 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             case 'add_cash_drop':
                 try {
                     $till_id = $_POST['till_id'];
-                    $drop_amount = $_POST['drop_amount'];
+                    $drop_amount = floatval($_POST['drop_amount']);
+                    $drop_type = $_POST['drop_type'] ?? 'cashier_drop';
                     $notes = $_POST['notes'];
-                    
-                    // Add cash drop
+
+                    // Validate drop amount is not negative
+                    if ($drop_amount <= 0) {
+                        $error = 'Drop amount must be greater than zero!';
+                        break;
+                    }
+
+                    // Get current till balance before drop
+                    $stmt = $conn->prepare("SELECT current_balance FROM register_tills WHERE id = ?");
+                    $stmt->execute([$till_id]);
+                    $till_balance = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                    if (!$till_balance) {
+                        $error = 'Till not found!';
+                        break;
+                    }
+
+                    // Check if drop amount exceeds available balance
+                    if ($drop_amount > $till_balance['current_balance']) {
+                        $error = 'Drop amount (' . formatCurrency($drop_amount) . ') exceeds available till balance (' . formatCurrency($till_balance['current_balance']) . ')!';
+                        break;
+                    }
+
+                    // Add cash drop with enhanced tracking
                     $stmt = $conn->prepare("
-                        INSERT INTO cash_drops (till_id, user_id, drop_amount, notes) 
-                        VALUES (?, ?, ?, ?)
+                        INSERT INTO cash_drops (till_id, user_id, drop_amount, drop_type, notes, status)
+                        VALUES (?, ?, ?, ?, ?, 'pending')
                     ");
-                    $stmt->execute([$till_id, $user_id, $drop_amount, $notes]);
-                    
+                    $stmt->execute([$till_id, $user_id, $drop_amount, $drop_type, $notes]);
+
                     // Update till current balance
                     $stmt = $conn->prepare("
-                        UPDATE register_tills 
-                        SET current_balance = current_balance - ? 
+                        UPDATE register_tills
+                        SET current_balance = current_balance - ?
                         WHERE id = ?
                     ");
                     $stmt->execute([$drop_amount, $till_id]);
-                    
-                    $success = 'Cash drop recorded successfully!';
+
+                    $success = 'Cash drop of ' . formatCurrency($drop_amount) . ' recorded successfully! Balance updated.';
                 } catch (Exception $e) {
                     $error = 'Error recording cash drop: ' . $e->getMessage();
                 }
@@ -130,7 +153,7 @@ $stmt = $conn->query("
 ");
 $tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get recent cash drops
+// Get only pending cash drops that need action
 $stmt = $conn->query("
     SELECT cd.*, rt.till_name, u.username as dropped_by, 
            cu.username as confirmed_by_name
@@ -138,6 +161,7 @@ $stmt = $conn->query("
     LEFT JOIN register_tills rt ON cd.till_id = rt.id
     LEFT JOIN users u ON cd.user_id = u.id
     LEFT JOIN users cu ON cd.confirmed_by = cu.id
+    WHERE cd.status = 'pending'
     ORDER BY cd.drop_date DESC
     LIMIT 50
 ");
@@ -271,57 +295,63 @@ $today_stats = [
             <!-- Cash Drops Table -->
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0">Recent Cash Drops</h5>
+                    <h5 class="mb-0">Pending Cash Drops (Require Action)</h5>
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
                         <table class="table table-hover">
                             <thead>
                                 <tr>
+                                    <th>Drop ID</th>
                                     <th>Date & Time</th>
                                     <th>Till</th>
+                                    <th>Drop Type</th>
                                     <th>Amount</th>
                                     <th>Dropped By</th>
                                     <th>Status</th>
-                                    <th>Confirmed By</th>
                                     <th>Notes</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
+                                <?php if (empty($cash_drops)): ?>
+                                <tr>
+                                    <td colspan="9" class="text-center py-4">
+                                        <i class="bi bi-check-circle fs-1 text-success mb-3"></i>
+                                        <h5 class="text-muted">No Pending Cash Drops</h5>
+                                        <p class="text-muted">All cash drops have been processed. Great job!</p>
+                                    </td>
+                                </tr>
+                                <?php else: ?>
                                 <?php foreach ($cash_drops as $drop): ?>
                                 <tr>
+                                    <td>
+                                        <span class="badge bg-secondary">#<?php echo $drop['id']; ?></span>
+                                    </td>
                                     <td><?php echo date('M d, Y H:i', strtotime($drop['drop_date'])); ?></td>
                                     <td><?php echo htmlspecialchars($drop['till_name']); ?></td>
+                                    <td>
+                                        <?php
+                                        $drop_type_labels = [
+                                            'cashier_drop' => 'Cashier Drop',
+                                            'manager_drop' => 'Manager Drop',
+                                            'end_of_day_drop' => 'End of Day',
+                                            'emergency_drop' => 'Emergency',
+                                            'bank_deposit' => 'Bank Deposit',
+                                            'safe_drop' => 'Safe Drop'
+                                        ];
+                                        $drop_type_label = $drop_type_labels[$drop['drop_type']] ?? ucfirst(str_replace('_', ' ', $drop['drop_type']));
+                                        ?>
+                                        <span class="badge bg-info">
+                                            <?php echo $drop_type_label; ?>
+                                        </span>
+                                    </td>
                                     <td><strong>KES <?php echo number_format($drop['drop_amount'], 2); ?></strong></td>
                                     <td><?php echo htmlspecialchars($drop['dropped_by']); ?></td>
                                     <td>
-                                        <?php
-                                        $status_class = '';
-                                        switch ($drop['status']) {
-                                            case 'confirmed':
-                                                $status_class = 'bg-success';
-                                                break;
-                                            case 'pending':
-                                                $status_class = 'bg-warning';
-                                                break;
-                                            case 'cancelled':
-                                                $status_class = 'bg-danger';
-                                                break;
-                                        }
-                                        ?>
-                                        <span class="badge <?php echo $status_class; ?>">
-                                            <?php echo ucfirst($drop['status']); ?>
+                                        <span class="badge bg-warning">
+                                            Pending
                                         </span>
-                                    </td>
-                                    <td>
-                                        <?php if ($drop['confirmed_by_name']): ?>
-                                            <?php echo htmlspecialchars($drop['confirmed_by_name']); ?>
-                                            <br>
-                                            <small class="text-muted"><?php echo date('M d, H:i', strtotime($drop['confirmed_at'])); ?></small>
-                                        <?php else: ?>
-                                            <span class="text-muted">-</span>
-                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <?php if ($drop['notes']): ?>
@@ -333,21 +363,18 @@ $today_stats = [
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <?php if ($drop['status'] == 'pending'): ?>
                                         <div class="btn-group btn-group-sm">
-                                            <button class="btn btn-outline-success" onclick="confirmDrop(<?php echo $drop['id']; ?>)">
-                                                <i class="bi bi-check"></i>
+                                            <button class="btn btn-outline-success" onclick="confirmDrop(<?php echo $drop['id']; ?>)" title="Confirm this cash drop">
+                                                <i class="bi bi-check"></i> Confirm
                                             </button>
-                                            <button class="btn btn-outline-danger" onclick="cancelDrop(<?php echo $drop['id']; ?>)">
-                                                <i class="bi bi-x"></i>
+                                            <button class="btn btn-outline-danger" onclick="cancelDrop(<?php echo $drop['id']; ?>)" title="Cancel this cash drop">
+                                                <i class="bi bi-x"></i> Cancel
                                             </button>
                                         </div>
-                                        <?php else: ?>
-                                        <span class="text-muted">-</span>
-                                        <?php endif; ?>
                                     </td>
                                 </tr>
                                 <?php endforeach; ?>
+                                <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
@@ -380,8 +407,19 @@ $today_stats = [
                             </select>
                         </div>
                         <div class="mb-3">
+                            <label class="form-label">Drop Type</label>
+                            <select class="form-select" name="drop_type" id="drop_type">
+                                <option value="cashier_drop">Cashier Drop</option>
+                                <option value="manager_drop">Manager Drop</option>
+                                <option value="end_of_day_drop">End of Day Drop</option>
+                                <option value="emergency_drop">Emergency Drop</option>
+                                <option value="bank_deposit">Bank Deposit</option>
+                                <option value="safe_drop">Safe Drop</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
                             <label class="form-label">Drop Amount *</label>
-                            <input type="number" class="form-control" name="drop_amount" step="0.01" required>
+                            <input type="number" class="form-control" name="drop_amount" step="0.01" min="0.01" required>
                             <div class="form-text">Available balance: <span id="available_balance">-</span></div>
                         </div>
                         <div class="mb-3">

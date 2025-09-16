@@ -1,4 +1,5 @@
 <?php
+// Cache bust - Fixed cashier_id to user_id issue - Version 2.1 - Force refresh
 session_start();
 require_once __DIR__ . '/../include/db.php';
 require_once __DIR__ . '/../include/functions.php';
@@ -24,7 +25,27 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 // Load role-based permissions for current user into $permissions to use with hasPermission()
 $permissions = [];
 $role_id = $_SESSION['role_id'] ?? 0;
-if ($role_id) {
+
+// Check if user is admin (case insensitive)
+error_log("Admin Debug - User role value: '" . $user_role . "'");
+$is_admin_user = (strtolower($user_role) === 'admin');
+error_log("Admin Debug - Is admin user check result: " . ($is_admin_user ? 'Yes' : 'No'));
+
+if ($is_admin_user) {
+    // Admin users get all permissions
+    try {
+        $perm_stmt = $conn->prepare("SELECT name FROM permissions");
+        $perm_stmt->execute();
+        $permissions = $perm_stmt->fetchAll(PDO::FETCH_COLUMN);
+        error_log("Admin Debug - Loaded " . count($permissions) . " permissions for admin user");
+        error_log("Admin Debug - First few permissions: " . implode(', ', array_slice($permissions, 0, 5)));
+        error_log("Admin Debug - Cash drop permission exists: " . (in_array('cash_drop', $permissions) ? 'Yes' : 'No'));
+    } catch (Exception $e) {
+        error_log('Could not load all permissions for admin user: ' . $e->getMessage());
+        $permissions = [];
+    }
+} elseif ($role_id) {
+    // Regular users get permissions based on their role
     try {
         $perm_stmt = $conn->prepare("SELECT p.name FROM permissions p JOIN role_permissions rp ON p.id = rp.permission_id WHERE rp.role_id = :role_id");
         $perm_stmt->execute([':role_id' => $role_id]);
@@ -36,13 +57,19 @@ if ($role_id) {
     }
 }
 
-// Get register tills
-$stmt = $conn->query("
-    SELECT * FROM register_tills
-    WHERE is_active = 1
-    ORDER BY till_name
-");
-$register_tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// Get register tills with error handling
+try {
+    $stmt = $conn->query("
+        SELECT * FROM register_tills
+        WHERE is_active = 1
+        ORDER BY till_name
+    ");
+    $register_tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    error_log("Error fetching register tills: " . $e->getMessage());
+    $register_tills = [];
+    $_SESSION['error_message'] = "Error loading tills. Please refresh the page.";
+}
 
 // Check if no tills exist
 $no_tills_available = empty($register_tills);
@@ -50,9 +77,21 @@ $no_tills_available = empty($register_tills);
 // Check if user has selected a till for this session
 $selected_till = null;
 if (isset($_SESSION['selected_till_id'])) {
-    $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
-    $stmt->execute([$_SESSION['selected_till_id']]);
-    $selected_till = $stmt->fetch(PDO::FETCH_ASSOC);
+    try {
+        $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
+        $stmt->execute([$_SESSION['selected_till_id']]);
+        $selected_till = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // If till was deleted or deactivated, clear the session
+        if (!$selected_till) {
+            unset($_SESSION['selected_till_id']);
+            $_SESSION['error_message'] = "The selected till is no longer available. Please select a different till.";
+        }
+    } catch (PDOException $e) {
+        error_log("Error fetching selected till: " . $e->getMessage());
+        unset($_SESSION['selected_till_id']);
+        $_SESSION['error_message'] = "Error loading selected till. Please select a till again.";
+    }
 }
 
 // Get tills available for switching (excludes current till)
@@ -185,8 +224,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
+// Security check: Prevent unauthorized access to till closing functionality
+if (isset($_GET['action']) && $_GET['action'] === 'close_till') {
+    if (!isset($_SESSION['till_close_authenticated']) || !$_SESSION['till_close_authenticated']) {
+        $_SESSION['error_message'] = "You must authenticate before accessing till closing operations.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+}
+
 // Handle till closing
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'close_till') {
+    // Check if user is authenticated for till close operations
+    if (!isset($_SESSION['till_close_authenticated']) || !$_SESSION['till_close_authenticated']) {
+        $_SESSION['error_message'] = "You must authenticate before performing till close operations.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    
+    // Additional security: Verify the authenticated user has permission
+    if (!isset($_SESSION['till_close_user_id']) || !isset($_SESSION['till_close_username'])) {
+        $_SESSION['error_message'] = "Authentication session is invalid. Please authenticate again.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+
     // Check if cart has active products
     if (!empty($cart)) {
         $_SESSION['error_message'] = "Cannot close till with active products in cart. Please complete the current transaction or clear the cart first.";
@@ -201,6 +263,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit();
     }
 
+    // Validate confirmation step
+    $confirm_close_till = $_POST['confirm_close_till'] ?? '';
+    $confirm_balance_checked = isset($_POST['confirm_balance_checked']);
+    
+    if (strtoupper(trim($confirm_close_till)) !== 'CLOSE TILL') {
+        $_SESSION['error_message'] = "Please type 'CLOSE TILL' exactly to confirm the action.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+    
+    if (!$confirm_balance_checked) {
+        $_SESSION['error_message'] = "Please confirm that you have physically counted the cash in the till.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+
     $cash_amount = floatval($_POST['cash_amount'] ?? 0);
     $voucher_amount = floatval($_POST['voucher_amount'] ?? 0);
     $loyalty_points = floatval($_POST['loyalty_points'] ?? 0);
@@ -210,27 +288,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $allow_exceed = isset($_POST['allow_exceed']) ? 1 : 0;
 
     if ($selected_till) {
+        // Additional security check: Verify user has access to this specific till
+        $stmt = $conn->prepare("
+            SELECT rt.*, u.username as assigned_user_name 
+            FROM register_tills rt 
+            LEFT JOIN users u ON rt.assigned_user_id = u.id 
+            WHERE rt.id = ? AND (rt.assigned_user_id = ? OR rt.assigned_user_id IS NULL OR ? = 1)
+        ");
+        $stmt->execute([$selected_till['id'], $user_id, $is_admin_user ? 1 : 0]);
+        $till_access = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$till_access) {
+            $_SESSION['error_message'] = "You do not have access to close this till. Please contact your administrator.";
+            header('Location: ' . $_SERVER['PHP_SELF']);
+            exit();
+        }
+        
+        // Check if till is currently open and assigned to this user (or admin can close any till)
+        if ($till_access['till_status'] === 'closed' && !$is_admin_user) {
+            $_SESSION['error_message'] = "This till is already closed or not assigned to you.";
+            header('Location: ' . $_SERVER['PHP_SELF']);
+            exit();
+        }
+        
+        // Get opening amount from session
+        $opening_amount = floatval($_SESSION['till_opening_amount'] ?? 0);
+        
+        // Get total sales for today for this cashier
+        $today = date('Y-m-d');
+        
+        // Get total sales for the current cashier (user_id) for today using the new function
+        $total_sales = getCashierSalesTotal($conn, $selected_till['id'], $user_id, $today);
+        
+        // Get total cash drops for today for this cashier using the new function
+        $total_drops = getTotalCashDrops($conn, $selected_till['id'], $user_id, $today);
+        
+        // Calculate expected balance: opening + sales - drops
+        $expected_balance = $opening_amount + $total_sales - $total_drops;
+        
         // Calculate total closing amount
         $total_closing = $cash_amount + $voucher_amount + $loyalty_points + $other_amount;
 
-        // Check if closing exceeds balance (unless allowed)
-        if (!$allow_exceed && $total_closing > $selected_till['current_balance']) {
-            $_SESSION['error_message'] = "Closing amount exceeds till balance. Please check amounts or enable 'Allow Exceed' option.";
+        // Calculate difference between expected and actual
+        $difference = $total_closing - $expected_balance;
+
+        // Check if closing amount is reasonable (unless allowed to exceed)
+        if (!$allow_exceed && abs($difference) > 0.01) { // Allow for small rounding differences
+            if ($difference > 0) {
+                $_SESSION['error_message'] = "Closing amount (" . formatCurrency($total_closing, $settings) . ") exceeds expected balance (" . formatCurrency($expected_balance, $settings) . ") by " . formatCurrency($difference, $settings) . ". Please check amounts or enable 'Allow Exceed' option.";
         } else {
-            // Create till closing record
+                $_SESSION['error_message'] = "Closing amount (" . formatCurrency($total_closing, $settings) . ") is less than expected balance (" . formatCurrency($expected_balance, $settings) . ") by " . formatCurrency(abs($difference), $settings) . ". Please check amounts or enable 'Allow Exceed' option.";
+            }
+        } else {
+            // Determine shortage type
+            $shortage_type = 'exact';
+            if ($difference < -0.01) {
+                $shortage_type = 'shortage'; // Less money than expected
+            } elseif ($difference > 0.01) {
+                $shortage_type = 'excess'; // More money than expected
+            }
+
+            // Log the till closing action for audit trail
+            error_log("Till Closing - User: $username (ID: $user_id) closing Till: {$selected_till['till_name']} (ID: {$selected_till['id']})");
+            error_log("Till Closing - Opening: $opening_amount, Sales: $total_sales, Drops: $total_drops, Expected: $expected_balance, Actual: $total_closing, Difference: $difference");
+
+            // Create till closing record with additional calculation details
             $stmt = $conn->prepare("
-                INSERT INTO till_closings (till_id, user_id, cash_amount, voucher_amount, loyalty_points, other_amount, other_description, total_amount, closing_notes, allow_exceed, closed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                INSERT INTO till_closings (till_id, user_id, opening_amount, total_sales, total_drops, expected_balance, cash_amount, voucher_amount, loyalty_points, other_amount, other_description, actual_counted_amount, total_amount, difference, shortage_type, closing_notes, allow_exceed, closed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ");
             $stmt->execute([
                 $selected_till['id'],
                 $user_id,
+                $opening_amount,
+                $total_sales,
+                $total_drops,
+                $expected_balance,
                 $cash_amount,
                 $voucher_amount,
                 $loyalty_points,
                 $other_amount,
                 $other_description,
+                $cash_amount, // actual_counted_amount (focusing on cash for now)
                 $total_closing,
+                $difference,
+                $shortage_type,
                 $closing_notes,
                 $allow_exceed
             ]);
@@ -246,7 +388,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             unset($_SESSION['till_opening_amount']);
             $selected_till = null;
 
-            $_SESSION['success_message'] = "Till closed successfully. You can now select a new till.";
+            $success_message = "Till closed successfully. ";
+            $success_message .= "Opening: " . formatCurrency($opening_amount, $settings) . ", ";
+            $success_message .= "Sales: " . formatCurrency($total_sales, $settings) . ", ";
+            $success_message .= "Drops: " . formatCurrency($total_drops, $settings) . ", ";
+            $success_message .= "Expected: " . formatCurrency($expected_balance, $settings) . ", ";
+            $success_message .= "Actual: " . formatCurrency($total_closing, $settings);
+            if (abs($difference) > 0.01) {
+                $success_message .= ", Difference: " . formatCurrency($difference, $settings);
+            }
+            $success_message .= " <a href='#' onclick='showTillClosingSlipModal(); return false;' class='text-decoration-none'><i class='bi bi-printer'></i> Print slips manually if needed</a>";
+            $_SESSION['success_message'] = $success_message;
+
+            // Generate till closing slip
+            $till_closing_slip_data = [
+                'till_id' => $selected_till['id'],
+                'till_name' => $selected_till['till_name'],
+                'till_code' => $selected_till['till_code'],
+                'cashier_name' => $username,
+                'closing_user_name' => $_SESSION['till_close_username'] ?? $username,
+                'closing_date' => date('Y-m-d H:i:s'),
+                'opening_amount' => $opening_amount,
+                'total_sales' => $total_sales,
+                'total_drops' => $total_drops,
+                'expected_balance' => $expected_balance,
+                'actual_cash' => $cash_amount,
+                'voucher_amount' => $voucher_amount,
+                'loyalty_points' => $loyalty_points,
+                'other_amount' => $other_amount,
+                'other_description' => $other_description,
+                'total_closing' => $total_closing,
+                'difference' => $difference,
+                'closing_notes' => $closing_notes,
+                'company_name' => $settings['company_name'] ?? 'Point of Sale System',
+                'company_address' => $settings['company_address'] ?? '',
+                'company_phone' => $settings['company_phone'] ?? '',
+                'currency_symbol' => $settings['currency_symbol'] ?? 'KES'
+            ];
+
+            // Generate till closing slip HTML
+            $till_closing_slip_html = generateTillClosingSlipHTML($till_closing_slip_data);
+            
+            // Store for printing
+            $_SESSION['till_closing_slip_html'] = $till_closing_slip_html;
+            $_SESSION['auto_print_till_closing'] = true;
         }
     }
 
@@ -261,26 +446,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $auth_password = $_POST['password'] ?? '';
 
     if ($auth_user_id && $auth_password) {
-        // Verify user credentials
-        $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE id = ? AND status = 'active'");
-        $stmt->execute([$auth_user_id]);
-        $auth_user = $stmt->fetch(PDO::FETCH_ASSOC);
+        try {
+            // Validate input
+            $auth_user_id = trim($auth_user_id);
+            $auth_password = trim($auth_password);
+            
+            if (empty($auth_user_id) || empty($auth_password)) {
+                throw new Exception("Please enter both User ID/Username and password.");
+            }
 
-        if ($auth_user && password_verify($auth_password, $auth_user['password'])) {
-            // Check if user has cash drop permission
-            if ($auth_user['role'] === 'admin' || hasPermission('cash_drop', $permissions)) {
+            // Verify user credentials - check multiple possible identifiers
+            $stmt = $conn->prepare("
+                SELECT id, username, password, role, employment_id, user_id, employee_id
+                FROM users
+                WHERE (id = ? OR employment_id = ? OR user_id = ? OR username = ? OR employee_id = ?)
+                AND status = 'active'
+            ");
+            $stmt->execute([$auth_user_id, $auth_user_id, $auth_user_id, $auth_user_id, $auth_user_id]);
+            $auth_user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$auth_user) {
+                throw new Exception("User not found or account is inactive. Please check your User ID, Username, or Employee ID.");
+            }
+
+            if (!password_verify($auth_password, $auth_user['password'])) {
+                throw new Exception("Invalid password. Please check your password and try again.");
+            }
+
+            // Check if user has cash drop permission (case insensitive for admin)
+            if (strtolower($auth_user['role']) === 'admin' || hasPermission('cash_drop', $permissions)) {
                 $_SESSION['cash_drop_authenticated'] = true;
                 $_SESSION['cash_drop_user_id'] = $auth_user['id'];
                 $_SESSION['cash_drop_username'] = $auth_user['username'];
-                $_SESSION['success_message'] = "Authentication successful. You can now proceed with cash drop.";
+                
+                $intended_action = $_POST['intended_action'] ?? 'drop';
+                $_SESSION['intended_action'] = $intended_action;
+                
+                $_SESSION['success_message'] = "Authentication successful. You can now proceed with drop.";
+                
+                // Log successful authentication
+                error_log("Drop authentication successful: User ID {$auth_user['id']} ({$auth_user['username']})");
             } else {
-                $_SESSION['error_message'] = "You don't have permission to perform cash drop operations.";
+                throw new Exception("You don't have permission to perform drop operations. Please contact your administrator.");
             }
-        } else {
-            $_SESSION['error_message'] = "Invalid user ID or password.";
+        } catch (Exception $e) {
+            // Log failed authentication attempts
+            error_log("Drop authentication failed: " . $e->getMessage() . " | Attempted ID: " . $auth_user_id);
+            $_SESSION['error_message'] = $e->getMessage();
         }
     } else {
-        $_SESSION['error_message'] = "Please enter both user ID and password.";
+        $_SESSION['error_message'] = "Please enter both User ID/Employment ID and password.";
     }
 
     // Redirect to prevent form resubmission
@@ -288,54 +503,162 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// Handle cash drop
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cash_drop') {
+// Handle drop (automatic based on sales)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'drop') {
+    $drop_amount = floatval($_POST['drop_amount'] ?? 0);
     $notes = $_POST['notes'] ?? '';
 
-    // Check if user is authenticated for cash drop
+    // Check if user is authenticated for drop operations
     if (!isset($_SESSION['cash_drop_authenticated']) || !$_SESSION['cash_drop_authenticated']) {
-        $_SESSION['error_message'] = "You must authenticate before performing cash drop operations.";
+        $_SESSION['error_message'] = "You must authenticate before performing drop operations.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+
+    // Validate drop amount
+    if ($drop_amount <= 0) {
+        $_SESSION['error_message'] = "Please enter a valid drop amount greater than zero.";
+        header('Location: ' . $_SERVER['PHP_SELF']);
+        exit();
+    }
+
+    // Validate confirmation checkbox
+    if (!isset($_POST['confirm_drop']) || $_POST['confirm_drop'] !== 'on') {
+        $_SESSION['error_message'] = "Please check the confirmation box to acknowledge this action cannot be undone.";
         header('Location: ' . $_SERVER['PHP_SELF']);
         exit();
     }
 
     if ($selected_till) {
-        // Get total sales amount for this till today
-        $today = date('Y-m-d');
-        $stmt = $conn->prepare("
-            SELECT COALESCE(SUM(final_amount), 0) as total_sales
-            FROM sales
-            WHERE DATE(sale_date) = ? AND till_id = ?
-        ");
-        $stmt->execute([$today, $selected_till['id']]);
-        $sales_data = $stmt->fetch(PDO::FETCH_ASSOC);
-        $total_sales = floatval($sales_data['total_sales']);
+        try {
+            // Validate required session data
+            if (!isset($_SESSION['cash_drop_user_id']) || !isset($_SESSION['cash_drop_username'])) {
+                throw new Exception("Authentication session data is missing. Please authenticate again.");
+            }
 
-        if ($total_sales > 0) {
-            // Drop the total sales amount
-            $stmt = $conn->prepare("
-                INSERT INTO cash_drops (till_id, user_id, drop_amount, notes, status)
-                VALUES (?, ?, ?, ?, 'pending')
-            ");
-            $stmt->execute([$selected_till['id'], $user_id, $total_sales, $notes]);
+            // Validate till balance (optional - allow drops even if insufficient balance)
+            if ($selected_till['current_balance'] < $drop_amount) {
+                $warning_msg = "Warning: Insufficient till balance. Available: " . formatCurrency($selected_till['current_balance'], $settings) . ", Requested: " . formatCurrency($drop_amount, $settings) . ". ";
+                // Still allow the drop but add warning to notes
+                $notes = $warning_msg . $notes;
+            }
 
-            // Update till balance
-            $new_balance = $selected_till['current_balance'] - $total_sales;
+            // Create drop record using the new function
+            $drop_data = [
+                'till_id' => $selected_till['id'],
+                'user_id' => $_SESSION['cash_drop_user_id'],
+                'drop_amount' => $drop_amount,
+                'drop_type' => 'drop',
+                'notes' => 'Manual drop: ' . formatCurrency($drop_amount, $settings) . ' on ' . date('Y-m-d H:i:s') . ($notes ? " | Notes: {$notes}" : "")
+            ];
+
+            $drop_id = createCashDrop($conn, $drop_data);
+            if (!$drop_id) {
+                throw new Exception("Failed to create drop record in database.");
+            }
+
+            // Update till balance (remove money from till)
+            $new_balance = $selected_till['current_balance'] - $drop_amount;
             $stmt = $conn->prepare("UPDATE register_tills SET current_balance = ? WHERE id = ?");
-            $stmt->execute([$new_balance, $selected_till['id']]);
+            $update_result = $stmt->execute([$new_balance, $selected_till['id']]);
+
+            if (!$update_result || $stmt->rowCount() === 0) {
+                throw new Exception("Failed to update till balance. Please try again.");
+            }
 
             // Update session
             $selected_till['current_balance'] = $new_balance;
             $_SESSION['till_opening_amount'] = $new_balance;
-            $_SESSION['success_message'] = "Cash drop processed successfully by " . $_SESSION['cash_drop_username'] . ". Dropped " . formatCurrency($total_sales, $settings) . " (total sales amount).";
+            $_SESSION['success_message'] = "Drop processed successfully by " . $_SESSION['cash_drop_username'] . ". Dropped " . formatCurrency($drop_amount, $settings) . " from the till. Printing slips...";
+
+            // Generate drop slips and auto-print
+            $drop_slips_html = generateDropSlipsHTML([
+                'drop_id' => $drop_id,
+                'drop_amount' => $drop_amount,
+                'till_name' => $selected_till['till_name'],
+                'till_number' => $selected_till['id'],
+                'cashier_name' => $_SESSION['cash_drop_username'],
+                'dropper_name' => $_SESSION['cash_drop_username'],
+                'company_name' => $settings['company_name'] ?? 'Point of Sale System',
+                'drop_date' => date('Y-m-d H:i:s'),
+                'notes' => $notes
+            ]);
+
+            // Store for potential manual printing if auto-print fails
+            $_SESSION['drop_slips_html'] = $drop_slips_html;
+            $_SESSION['auto_print_drop'] = true;
 
             // Clear authentication after successful drop
             unset($_SESSION['cash_drop_authenticated']);
             unset($_SESSION['cash_drop_user_id']);
             unset($_SESSION['cash_drop_username']);
-        } else {
-            $_SESSION['error_message'] = "No sales found for today. Nothing to drop.";
+
+        } catch (Exception $e) {
+            // Log the error for debugging
+            error_log("Drop processing error: " . $e->getMessage() . " | User: " . ($_SESSION['cash_drop_username'] ?? 'Unknown') . " | Till: " . ($selected_till['id'] ?? 'Unknown'));
+            $_SESSION['error_message'] = "Error processing drop: " . $e->getMessage();
         }
+    } else {
+        $_SESSION['error_message'] = "No till selected. Please select a till first.";
+    }
+
+    // Redirect to prevent form resubmission
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle till close authentication
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'till_close_auth') {
+    $auth_user_id = $_POST['user_id'] ?? '';
+    $auth_password = $_POST['password'] ?? '';
+
+    if ($auth_user_id && $auth_password) {
+        try {
+            // Validate input
+            $auth_user_id = trim($auth_user_id);
+            $auth_password = trim($auth_password);
+            
+            if (empty($auth_user_id) || empty($auth_password)) {
+                throw new Exception("Please enter both User ID/Username and password.");
+            }
+
+            // Verify user credentials - check multiple possible identifiers
+            $stmt = $conn->prepare("
+                SELECT id, username, password, role, employment_id, user_id, employee_id
+                FROM users
+                WHERE (id = ? OR employment_id = ? OR user_id = ? OR username = ? OR employee_id = ?)
+                AND status = 'active'
+            ");
+            $stmt->execute([$auth_user_id, $auth_user_id, $auth_user_id, $auth_user_id, $auth_user_id]);
+            $auth_user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$auth_user || !password_verify($auth_password, $auth_user['password'])) {
+                throw new Exception("Invalid password. Please check your password and try again.");
+            }
+
+            // Check if user has till close permission (case insensitive for admin)
+            if (strtolower($auth_user['role']) === 'admin' || hasPermission('close_till', $permissions)) {
+                $_SESSION['till_close_authenticated'] = true;
+                $_SESSION['till_close_user_id'] = $auth_user['id'];
+                $_SESSION['till_close_username'] = $auth_user['username'];
+                
+                $intended_action = $_POST['intended_action'] ?? 'close_till';
+                $_SESSION['intended_action'] = $intended_action;
+                
+                $_SESSION['success_message'] = "Authentication successful. You can now proceed with till closing.";
+                
+                // Log successful authentication
+                error_log("Till close authentication successful: User ID {$auth_user['id']} ({$auth_user['username']})");
+            } else {
+                throw new Exception("You don't have permission to close tills. Please contact your administrator.");
+            }
+        } catch (Exception $e) {
+            // Log failed authentication attempts
+            error_log("Till close authentication failed: " . $e->getMessage() . " | Attempted ID: " . $auth_user_id);
+            $_SESSION['error_message'] = $e->getMessage();
+        }
+    } else {
+        $_SESSION['error_message'] = "Please enter both User ID/Employment ID and password.";
     }
 
     // Redirect to prevent form resubmission
@@ -349,6 +672,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'logout_cash_drop') {
     unset($_SESSION['cash_drop_user_id']);
     unset($_SESSION['cash_drop_username']);
     $_SESSION['success_message'] = "Logged out from cash drop operations.";
+    header('Location: ' . $_SERVER['PHP_SELF']);
+    exit();
+}
+
+// Handle till close logout
+if (isset($_GET['action']) && $_GET['action'] === 'logout_till_close') {
+    unset($_SESSION['till_close_authenticated']);
+    unset($_SESSION['till_close_user_id']);
+    unset($_SESSION['till_close_username']);
+    $_SESSION['success_message'] = "Logged out from till close operations.";
     header('Location: ' . $_SERVER['PHP_SELF']);
     exit();
 }
@@ -431,7 +764,8 @@ try {
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         $permOk = hasPermission('view_dashboard', $permissions)
                || hasPermission('view_reports', $permissions)
-               || hasPermission('view_analytics', $permissions);
+               || hasPermission('view_analytics', $permissions)
+               || $is_admin_user;
         $canSeeDashboard = $permOk && (!empty($row) && (int)($row['is_visible'] ?? 0) === 1);
     }
 } catch (Exception $e) {
@@ -1190,6 +1524,26 @@ try {
             font-size: 1rem;
         }
         
+        /* Till Display Styling */
+        .till-display-info {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        
+        .till-display-info .badge {
+            font-size: 0.8rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .till-display-info .badge.fs-6 {
+            font-size: 0.9rem !important;
+            font-weight: 600;
+        }
+
         /* Responsive adjustments */
         @media (max-width: 576px) {
             .quotation-btn,
@@ -1202,6 +1556,34 @@ try {
             .payment-btn i {
                 font-size: 0.9rem;
             }
+            
+            .till-display-info {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.25rem;
+            }
+            
+            .till-display-info .badge {
+                font-size: 0.7rem;
+                padding: 0.4rem 0.6rem;
+            }
+        }
+
+        /* Modal focus management */
+        .modal[inert] {
+            pointer-events: none;
+        }
+        
+        .modal[inert] * {
+            pointer-events: none;
+        }
+        
+        .modal:not([inert]) {
+            pointer-events: auto;
+        }
+        
+        .modal:not([inert]) * {
+            pointer-events: auto;
         }
     </style>
 </head>
@@ -1212,12 +1594,17 @@ try {
             <h3 class="mb-0 me-3 text-white fw-bold"><?php echo htmlspecialchars($settings['company_name'] ?? 'POS System'); ?></h3>
             <?php if ($selected_till): ?>
             <div class="ms-3 d-flex align-items-center gap-2">
-                <span class="badge bg-success">
-                    <i class="bi bi-cash-register"></i> <?php echo htmlspecialchars($selected_till['till_name']); ?>
-                </span>
-                <span class="badge bg-success text-white">
-                    <i class="bi bi-unlock"></i> Opened
-                </span>
+                <div class="till-display-info">
+                    <span class="badge bg-success fs-6">
+                        <i class="bi bi-cash-register"></i> <?php echo htmlspecialchars($selected_till['till_name']); ?>
+                    </span>
+                    <span class="badge bg-success text-white">
+                        <i class="bi bi-unlock"></i> Opened
+                    </span>
+                    <span class="badge bg-primary text-white">
+                        <i class="bi bi-person"></i> <?php echo htmlspecialchars($username); ?>
+                    </span>
+                </div>
                 <button type="button" class="btn btn-sm btn-primary till-action-btn" onclick="showSwitchTill()" title="Switch Till">
                     <i class="bi bi-arrow-repeat"></i> Switch Till
                 </button>
@@ -1230,9 +1617,27 @@ try {
                 <button type="button" class="btn btn-sm btn-info till-action-btn refresh-btn" onclick="refreshPage()" title="Refresh Page">
                     <i class="bi bi-arrow-clockwise"></i> Refresh
                 </button>
-                <?php if (hasPermission('cash_drop', $permissions) || $user_role === 'admin'): ?>
-                <button type="button" class="btn btn-sm btn-warning till-action-btn" onclick="showCashDropAuth()" title="Cash Drop">
-                    <i class="bi bi-cash-stack"></i> Cash Drop
+                <?php 
+                // Check permissions - admins automatically have all permissions
+                $has_cash_drop_permission = hasPermission('cash_drop', $permissions);
+                // For admins, always show cash drop regardless of permission in database
+                $show_cash_drop = $has_cash_drop_permission || $is_admin_user;
+                
+                // Debug: Log permission information
+                error_log("Admin Debug - User Role: " . $user_role);
+                error_log("Admin Debug - Is Admin User: " . ($is_admin_user ? 'Yes' : 'No'));
+                error_log("Admin Debug - Permissions Count: " . count($permissions));
+                error_log("Admin Debug - Has Cash Drop Permission: " . ($has_cash_drop_permission ? 'Yes' : 'No'));
+                error_log("Admin Debug - Show Cash Drop: " . ($show_cash_drop ? 'Yes' : 'No'));
+                ?>
+                <?php if ($show_cash_drop): ?>
+                <button type="button" class="btn btn-sm btn-warning till-action-btn" onclick="showDropAuth()" title="Drop">
+                    <i class="bi bi-cash-stack"></i> Drop
+                </button>
+                <?php else: ?>
+                <!-- Debug: Show button for testing even without permission -->
+                <button type="button" class="btn btn-sm btn-warning till-action-btn" onclick="alert('Drop Debug Info:\nRole: <?php echo $user_role; ?>\nIs Admin: <?php echo $is_admin_user ? 'Yes' : 'No'; ?>\nPermissions Count: <?php echo count($permissions); ?>\nHas Permission: <?php echo $has_cash_drop_permission ? 'Yes' : 'No'; ?>\nShow Drop: <?php echo $show_cash_drop ? 'Yes' : 'No'; ?>')" title="Drop (Debug)">
+                    <i class="bi bi-cash-stack"></i> Drop
                 </button>
                 <?php endif; ?>
             </div>
@@ -1293,6 +1698,11 @@ try {
     <?php if (isset($_SESSION['success_message'])): ?>
     <div class="alert alert-success alert-dismissible fade show" role="alert">
         <i class="bi bi-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+        <?php if (isset($_SESSION['drop_slips_html']) && !isset($_SESSION['till_closing_slip_html'])): ?>
+            <a href="#" onclick="showDropSlipsModal(); return false;" class="alert-link ms-2">
+                <i class="bi bi-printer"></i> Print slips manually if needed
+            </a>
+        <?php endif; ?>
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
     <?php unset($_SESSION['success_message']); ?>
@@ -2308,14 +2718,12 @@ try {
 
             // Prevent duplicate calls for the same product and quantity
             if (pendingApiCalls.has(`${productId}-${quantityInt}`)) {
-                console.log('Duplicate API call prevented');
                 return;
             }
 
             pendingApiCalls.add(`${productId}-${quantityInt}`);
 
             try {
-                console.log('addToCartAsync called with:', { productId, quantity, quantityInt, fallbackCart });
                 const response = await fetch('add_to_cart.php', {
                     method: 'POST',
                     headers: {
@@ -2427,7 +2835,6 @@ try {
                 }
 
                 const data = await response.json();
-                console.log('Customer API response:', data);
 
                 if (data.success) {
                     displayCustomers(data.customers);
@@ -3304,7 +3711,6 @@ try {
                     // Show success message
                     showCustomerSelectionSuccess(selectedCustomerData);
 
-                    console.log('Customer selected:', selectedCustomerData);
                 }
             }
         }
@@ -3346,7 +3752,47 @@ try {
         function showTillSelection() {
             const modalElement = document.getElementById('tillSelectionModal');
             if (modalElement && typeof bootstrap !== 'undefined') {
-                const modal = new bootstrap.Modal(modalElement);
+                // Ensure modal is properly prepared before showing
+                modalElement.removeAttribute('inert');
+                modalElement.setAttribute('aria-hidden', 'false');
+                
+                const modal = new bootstrap.Modal(modalElement, {
+                    focus: false, // We'll handle focus manually
+                    keyboard: false,
+                    backdrop: 'static'
+                });
+                
+                // Add event listeners (only once)
+                if (!modalElement.dataset.listenersAdded) {
+                    modalElement.addEventListener('show.bs.modal', function() {
+                        // Ensure proper state before showing
+                        this.removeAttribute('inert');
+                        this.setAttribute('aria-hidden', 'false');
+                    });
+                    
+                    modalElement.addEventListener('shown.bs.modal', function() {
+                        // Focus management after modal is fully shown
+                        setTimeout(() => {
+                            manageModalFocus(this);
+                            validateTillSelection();
+                        }, 100);
+                    });
+                    
+                    modalElement.addEventListener('hide.bs.modal', function() {
+                        // Remove focus before hiding
+                        const focusedElement = this.querySelector(':focus');
+                        if (focusedElement) {
+                            focusedElement.blur();
+                        }
+                    });
+                    
+                    modalElement.addEventListener('hidden.bs.modal', function() {
+                        hideModalProperly(this);
+                    });
+                    
+                    modalElement.dataset.listenersAdded = 'true';
+                }
+                
                 modal.show();
             }
         }
@@ -3386,6 +3832,63 @@ try {
             }
         }
 
+        // JavaScript currency formatting function
+        function formatCurrencyJS(amount) {
+            const symbol = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?>';
+            const position = '<?php echo $settings['currency_position'] ?? 'before'; ?>';
+            const decimals = <?php echo intval($settings['currency_decimal_places'] ?? 2); ?>;
+            
+            // Format amount with k/m notation for large numbers
+            let formattedAmount;
+            if (amount >= 1000000) {
+                formattedAmount = (amount / 1000000).toFixed(1) + 'm';
+            } else if (amount >= 10000) {
+                formattedAmount = (amount / 1000).toFixed(1) + 'k';
+            } else {
+                formattedAmount = amount.toFixed(decimals);
+            }
+            
+            if (position === 'before') {
+                return symbol + ' ' + formattedAmount;
+            } else {
+                return formattedAmount + ' ' + symbol;
+            }
+        }
+
+        // Focus management for modals
+        function manageModalFocus(modalElement) {
+            if (!modalElement) return;
+            
+            // Remove aria-hidden and inert when modal is shown
+            modalElement.setAttribute('aria-hidden', 'false');
+            modalElement.removeAttribute('inert');
+            
+            // Find all focusable elements
+            const focusableElements = modalElement.querySelectorAll(
+                'input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]):not([disabled])'
+            );
+            
+            if (focusableElements.length > 0) {
+                // Focus on the first focusable element
+                focusableElements[0].focus();
+            }
+        }
+
+        // Hide modal properly
+        function hideModalProperly(modalElement) {
+            if (!modalElement) return;
+            
+            // Set aria-hidden and inert when modal is hidden
+            modalElement.setAttribute('aria-hidden', 'true');
+            modalElement.setAttribute('inert', '');
+            
+            // Remove focus from any focused elements inside the modal
+            const focusedElement = modalElement.querySelector(':focus');
+            if (focusedElement) {
+                focusedElement.blur();
+            }
+        }
+
         // Check for held transactions before till operations
         function checkHeldTransactionsBeforeTillOperation(operation, button) {
             fetch('get_held_transactions.php')
@@ -3419,36 +3922,14 @@ try {
                 case 'switch':
                     const modalElement = document.getElementById('switchTillModal');
                     if (modalElement) {
-                        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
-                            const modal = new bootstrap.Modal(modalElement);
-                            modal.show();
+                        showModal(modalElement);
                         } else {
-                            // Fallback: show modal manually
-                            modalElement.style.display = 'block';
-                            modalElement.classList.add('show');
-                            document.body.classList.add('modal-open');
-                        }
-                    } else {
-                        console.error('Switch Till modal not found in DOM');
                         alert('Switch Till modal not found. Please refresh the page.');
                     }
                     break;
                 case 'close':
-                    const closeModalElement = document.getElementById('closeTillModal');
-                    if (closeModalElement) {
-                        if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
-                            const modal = new bootstrap.Modal(closeModalElement);
-                            modal.show();
-                        } else {
-                            // Fallback: show modal manually
-                            closeModalElement.style.display = 'block';
-                            closeModalElement.classList.add('show');
-                            document.body.classList.add('modal-open');
-                        }
-                    } else {
-                        console.error('Close Till modal not found in DOM');
-                        alert('Close Till modal not found. Please refresh the page.');
-                    }
+                    // Always require authentication for till closing
+                    showCloseTillAuth();
                     break;
                 case 'release':
                     if (confirm('Are you sure you want to release this till? Other cashiers will be able to use it.')) {
@@ -3458,7 +3939,8 @@ try {
             }
         }
 
-        function showCashDropAuth() {
+        function showDropAuth() {
+            document.getElementById('intended_action').value = 'drop';
             const modalElement = document.getElementById('cashDropAuthModal');
             if (modalElement && typeof bootstrap !== 'undefined') {
                 const modal = new bootstrap.Modal(modalElement);
@@ -3466,8 +3948,8 @@ try {
             }
         }
 
-        function showCashDrop() {
-            const modalElement = document.getElementById('cashDropModal');
+        function showDrop() {
+            const modalElement = document.getElementById('dropModal');
             if (modalElement && typeof bootstrap !== 'undefined') {
                 const modal = new bootstrap.Modal(modalElement);
                 modal.show();
@@ -3498,6 +3980,174 @@ try {
             checkHeldTransactionsBeforeTillOperation('close', button);
         }
 
+        function showCloseTillDirect() {
+            // Direct function to show close till modal (bypasses held transaction check)
+            showCloseTillModal();
+        }
+
+        function showCloseTillAuth() {
+            const modalElement = document.getElementById('tillCloseAuthModal');
+            
+            if (modalElement) {
+                if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                    const modal = new bootstrap.Modal(modalElement);
+                    modal.show();
+                } else {
+                    // Fallback for manual modal display
+                    modalElement.style.display = 'block';
+                    modalElement.classList.add('show');
+                    modalElement.removeAttribute('aria-hidden');
+                    document.body.classList.add('modal-open');
+                }
+            } else {
+                console.error('Till Close Authentication Modal not found!');
+                alert('Authentication modal not found. Please refresh the page.');
+            }
+        }
+
+        function showCloseTillModal() {
+            // Always require authentication for till closing
+            showCloseTillAuth();
+        }
+
+        function showCloseTillForm() {
+            // Show the actual till closing form (called after authentication)
+            let attempts = 0;
+            const maxAttempts = 5;
+            
+            function tryShowModal() {
+                attempts++;
+                const closeModalElement = document.getElementById('closeTillModal');
+                
+                if (closeModalElement) {
+                    showModal(closeModalElement);
+                } else if (attempts < maxAttempts) {
+                    // Retry after a short delay
+                    setTimeout(tryShowModal, 300);
+                } else {
+                    // Final attempt: try to find modal by content or create a basic one
+                    const alternativeModal = findModalByContent();
+                    if (alternativeModal) {
+                        showModal(alternativeModal);
+                    } else {
+                        createFallbackCloseTillModal();
+                    }
+                }
+            }
+            
+            tryShowModal();
+        }
+
+        function findModalByContent() {
+            // Try to find modal by searching for specific content
+            const allModals = document.querySelectorAll('.modal');
+            for (let modal of allModals) {
+                // Check if this modal contains "Close Till" content
+                if (modal.textContent.includes('Close Till') && 
+                    modal.textContent.includes('close_till') &&
+                    modal.textContent.includes('Expected Balance')) {
+                    return modal;
+                }
+            }
+            return null;
+        }
+
+        function showModal(modalElement) {
+            if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+                
+                // Ensure proper focus management when modal is shown
+                modalElement.addEventListener('shown.bs.modal', function() {
+                    // Remove aria-hidden when modal is fully shown
+                    modalElement.removeAttribute('aria-hidden');
+                    
+                    // Focus on the first focusable element
+                    const firstFocusable = modalElement.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                    if (firstFocusable) {
+                        firstFocusable.focus();
+                    }
+                });
+                
+                // Restore aria-hidden when modal is hidden
+                modalElement.addEventListener('hidden.bs.modal', function() {
+                    modalElement.setAttribute('aria-hidden', 'true');
+                });
+            } else {
+                // Fallback for manual modal display
+                modalElement.style.display = 'block';
+                modalElement.classList.add('show');
+                modalElement.removeAttribute('aria-hidden');
+                document.body.classList.add('modal-open');
+                
+                // Focus management for fallback
+                const firstFocusable = modalElement.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                if (firstFocusable) {
+                    firstFocusable.focus();
+                }
+            }
+        }
+
+        function hideModal(modalElement) {
+            if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+                const modal = bootstrap.Modal.getInstance(modalElement);
+                if (modal) {
+                    modal.hide();
+                }
+            } else {
+                // Fallback for manual modal hiding
+                modalElement.style.display = 'none';
+                modalElement.classList.remove('show');
+                modalElement.setAttribute('aria-hidden', 'true');
+                document.body.classList.remove('modal-open');
+            }
+        }
+
+        function createFallbackCloseTillModal() {
+            // Create a basic close till modal if the original one is not found
+            const modalHtml = `
+                <div class="modal fade" id="closeTillModal" tabindex="-1" aria-labelledby="closeTillModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header bg-danger text-white">
+                                <h5 class="modal-title" id="closeTillModalLabel">
+                                    <i class="bi bi-x-circle"></i> Close Till
+                                </h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <form method="POST" action="">
+                                <input type="hidden" name="action" value="close_till">
+                                <div class="modal-body">
+                                    <div class="alert alert-warning">
+                                        <i class="bi bi-exclamation-triangle"></i>
+                                        <strong>Close Till:</strong> This will permanently close the current till and reset its balance to zero. This action cannot be undone.
+                                    </div>
+                                    <p>Are you sure you want to close this till?</p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                    <button type="submit" class="btn btn-danger">
+                                        <i class="bi bi-x-circle"></i> Close Till
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Add the modal to the body
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            
+            // Now try to show it
+            setTimeout(() => {
+                const closeModalElement = document.getElementById('closeTillModal');
+                if (closeModalElement) {
+                    showModal(closeModalElement);
+                }
+            }, 100);
+        }
+
         function selectSwitchTill(tillId) {
             // Uncheck all radio buttons
             document.querySelectorAll('input[name="switch_till_id"]').forEach(radio => {
@@ -3517,31 +4167,208 @@ try {
             event.currentTarget.classList.add('border-primary', 'bg-light');
         }
 
+        // New till selection function for dropdown
+        function onTillSelection() {
+            const dropdown = document.getElementById('till_dropdown');
+            const selectedValue = dropdown ? dropdown.value : '';
+            const selectedOption = dropdown ? dropdown.options[dropdown.selectedIndex] : null;
+            
+            if (selectedValue && selectedOption) {
+                // Show till details
+                showTillDetails(selectedOption);
+                
+                // Show opening amount section - force display
+                const openingAmountSection = document.getElementById('opening_amount_section');
+                if (openingAmountSection) {
+                    openingAmountSection.style.display = 'block';
+                    openingAmountSection.style.visibility = 'visible';
+                    
+                    // Focus on the opening amount input for better UX
+                    setTimeout(() => {
+                        const openingAmountInput = document.getElementById('opening_amount');
+                        if (openingAmountInput) {
+                            openingAmountInput.focus();
+                        }
+                    }, 200);
+                }
+                
+                // Validate selection
+                validateTillSelection();
+            } else {
+                // Hide sections if no till selected
+                const tillDetailsCard = document.getElementById('till_details_card');
+                const openingAmountSection = document.getElementById('opening_amount_section');
+                const confirmBtn = document.getElementById('confirmTillSelection');
+                
+                if (tillDetailsCard) {
+                    tillDetailsCard.style.display = 'none';
+                    tillDetailsCard.style.visibility = 'hidden';
+                }
+                if (openingAmountSection) {
+                    openingAmountSection.style.display = 'none';
+                    openingAmountSection.style.visibility = 'hidden';
+                }
+                if (confirmBtn) confirmBtn.disabled = true;
+            }
+        }
+
+        function showTillDetails(option) {
+            const tillName = option.getAttribute('data-till-name') || '-';
+            const tillCode = option.getAttribute('data-till-code') || '-';
+            const location = option.getAttribute('data-location') || '-';
+            const status = option.getAttribute('data-status') || 'closed';
+            const currentUser = option.getAttribute('data-current-user') || '';
+            const currentBalance = parseFloat(option.getAttribute('data-current-balance') || 0);
+            
+            // Update till details display
+            document.getElementById('selected_till_name').textContent = tillName;
+            document.getElementById('selected_till_code').textContent = tillCode;
+            document.getElementById('selected_till_location').textContent = location;
+            
+            // Format status display
+            let statusDisplay = '';
+            let statusClass = '';
+            if (status === 'opened') {
+                if (currentUser) {
+                    statusDisplay = '<i class="bi bi-person-check text-warning"></i> In Use';
+                    statusClass = 'text-warning';
+                } else {
+                    statusDisplay = '<i class="bi bi-unlock text-success"></i> Available';
+                    statusClass = 'text-success';
+                }
+            } else {
+                statusDisplay = '<i class="bi bi-lock text-secondary"></i> Closed';
+                statusClass = 'text-secondary';
+            }
+            
+            document.getElementById('selected_till_status').innerHTML = statusDisplay;
+            document.getElementById('selected_till_balance').textContent = formatCurrencyJS(currentBalance);
+            
+            // Get current user name if available
+            let currentUserName = '-';
+            if (currentUser) {
+                // This would need to be populated from server data
+                currentUserName = 'User ID: ' + currentUser;
+            }
+            document.getElementById('selected_till_user').textContent = currentUserName;
+            
+            // Show the details card
+            document.getElementById('till_details_card').style.display = 'block';
+        }
+
+        function setOpeningAmount(amount) {
+            const openingAmountInput = document.getElementById('opening_amount');
+            if (openingAmountInput) {
+                openingAmountInput.value = amount;
+                validateTillSelection();
+            }
+        }
+
+        function refreshTillList() {
+            // Reload the page to refresh till data
+            window.location.reload();
+        }
+
+        function forceShowOpeningAmount() {
+            // Force show opening amount section (for backup)
+            const openingAmountSection = document.getElementById('opening_amount_section');
+            if (openingAmountSection) {
+                openingAmountSection.style.display = 'block';
+                openingAmountSection.style.visibility = 'visible';
+                
+                // Focus on input
+                setTimeout(() => {
+                    const openingAmountInput = document.getElementById('opening_amount');
+                    if (openingAmountInput) {
+                        openingAmountInput.focus();
+                    }
+                }, 100);
+            }
+        }
+
+        function forceValidateSelection() {
+            // Force validation of till selection (for backup)
+            validateTillSelection();
+        }
+
+        function autoFillExpectedAmount() {
+            // Get expected balance from the calculation summary
+            const expectedBalanceElement = document.getElementById('expected_balance_display');
+            const expectedBalance = parseFloat(expectedBalanceElement?.textContent?.replace(/[^\d.-]/g, '') || 0);
+            
+            if (expectedBalance > 0) {
+                // Auto-fill the cash amount with the expected balance
+                document.getElementById('cash_amount').value = expectedBalance.toFixed(2);
+                
+                // Clear other amounts
+                document.getElementById('voucher_amount').value = '';
+                document.getElementById('loyalty_points').value = '';
+                document.getElementById('other_amount').value = '';
+                
+                // Update the totals
+                updateCloseTillTotals();
+                
+                // Show success message
+                const cashInput = document.getElementById('cash_amount');
+                cashInput.classList.add('border-success');
+                setTimeout(() => {
+                    cashInput.classList.remove('border-success');
+                }, 2000);
+            }
+        }
+
         function selectTill(tillId) {
-            // Uncheck all radio buttons
-            document.querySelectorAll('input[name="till_id"]').forEach(radio => {
-                radio.checked = false;
-            });
-
-            // Check the selected till
-            document.getElementById('till_' + tillId).checked = true;
-
-            // Enable confirm button
-            document.getElementById('confirmTillSelection').disabled = false;
-
-            // Add visual feedback
-            document.querySelectorAll('.till-card').forEach(card => {
-                card.classList.remove('border-primary', 'bg-light');
-            });
-            event.currentTarget.classList.add('border-primary', 'bg-light');
+            // Legacy function - now handled by dropdown
+            const dropdown = document.getElementById('till_dropdown');
+            if (dropdown) {
+                dropdown.value = tillId;
+                onTillSelection();
+            }
         }
 
         function validateTillSelection() {
-            const tillSelected = document.querySelector('input[name="till_id"]:checked');
-            const openingAmount = document.getElementById('opening_amount').value;
+            const tillDropdown = document.getElementById('till_dropdown');
+            const openingAmount = document.getElementById('opening_amount');
             const confirmBtn = document.getElementById('confirmTillSelection');
+            const statusElement = document.getElementById('selection-status');
 
-            confirmBtn.disabled = !(tillSelected && openingAmount && parseFloat(openingAmount) >= 0);
+            if (tillDropdown && confirmBtn) {
+                const tillSelected = tillDropdown.value !== '';
+                
+                if (tillSelected) {
+                    // Till is selected, check if opening amount is entered
+                    const amountValue = openingAmount ? openingAmount.value : '';
+                    const amountParsed = parseFloat(amountValue);
+                    const amountEntered = openingAmount && amountValue !== '' && amountParsed >= 0;
+                    
+                    if (amountEntered) {
+                        confirmBtn.disabled = false;
+                        confirmBtn.innerHTML = '<i class="bi bi-check-circle"></i> Confirm Selection';
+                        confirmBtn.className = 'btn btn-success';
+                        if (statusElement) {
+                            statusElement.innerHTML = '<i class="bi bi-check-circle text-success"></i> Ready to confirm';
+                            statusElement.className = 'text-success';
+                        }
+                    } else {
+                        confirmBtn.disabled = true;
+                        confirmBtn.innerHTML = '<i class="bi bi-exclamation-circle"></i> Enter Opening Amount';
+                        confirmBtn.className = 'btn btn-primary';
+                        if (statusElement) {
+                            statusElement.innerHTML = '<i class="bi bi-exclamation-triangle text-warning"></i> Please enter opening amount';
+                            statusElement.className = 'text-warning';
+                        }
+                    }
+                } else {
+                    // No till selected
+                    confirmBtn.disabled = true;
+                    confirmBtn.innerHTML = '<i class="bi bi-check-circle"></i> Confirm Selection';
+                    confirmBtn.className = 'btn btn-primary';
+                    if (statusElement) {
+                        statusElement.innerHTML = '<i class="bi bi-info-circle text-info"></i> Please select a till';
+                        statusElement.className = 'text-info';
+                    }
+                }
+            }
         }
 
         function updateCloseTillTotals() {
@@ -3549,26 +4376,44 @@ try {
             const voucherAmount = parseFloat(document.getElementById('voucher_amount').value) || 0;
             const loyaltyAmount = parseFloat(document.getElementById('loyalty_points').value) || 0;
             const otherAmount = parseFloat(document.getElementById('other_amount').value) || 0;
-            const tillBalance = <?php echo $selected_till['current_balance'] ?? 0; ?>;
+            
+            // Get expected balance from the calculation summary
+            const expectedBalanceElement = document.getElementById('expected_balance_display');
+            const expectedBalance = parseFloat(expectedBalanceElement?.textContent?.replace(/[^\d.-]/g, '') || 0);
 
             const totalClosing = cashAmount + voucherAmount + loyaltyAmount + otherAmount;
-            const difference = totalClosing - tillBalance;
+            const difference = totalClosing - expectedBalance;
 
             document.getElementById('cash_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + cashAmount.toFixed(2);
             document.getElementById('voucher_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + voucherAmount.toFixed(2);
             document.getElementById('loyalty_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + loyaltyAmount.toFixed(2);
             document.getElementById('other_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + otherAmount.toFixed(2);
+            document.getElementById('total_counted_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + totalClosing.toFixed(2);
             document.getElementById('total_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + totalClosing.toFixed(2);
 
             const differenceElement = document.getElementById('difference_display');
+            const differenceAlert = document.getElementById('difference_alert');
+            const differenceMessage = document.getElementById('difference_message');
+            
             differenceElement.textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + difference.toFixed(2);
 
-            if (difference > 0) {
-                differenceElement.className = 'text-danger fw-bold';
-            } else if (difference < 0) {
-                differenceElement.className = 'text-warning fw-bold';
-            } else {
+            // Update styling and alerts based on difference
+            if (Math.abs(difference) <= 0.01) {
+                // Perfect match
                 differenceElement.className = 'text-success fw-bold';
+                differenceAlert.style.display = 'none';
+            } else if (difference > 0) {
+                // Over amount
+                differenceElement.className = 'text-danger fw-bold';
+                differenceAlert.className = 'alert alert-danger alert-sm mt-2 mb-0';
+                differenceAlert.style.display = 'block';
+                differenceMessage.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Closing amount exceeds expected balance by ${'<?php echo $settings['currency_symbol'] ?? 'KES'; ?>'} ${Math.abs(difference).toFixed(2)}.`;
+            } else {
+                // Under amount
+                differenceElement.className = 'text-warning fw-bold';
+                differenceAlert.className = 'alert alert-warning alert-sm mt-2 mb-0';
+                differenceAlert.style.display = 'block';
+                differenceMessage.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Closing amount is ${'<?php echo $settings['currency_symbol'] ?? 'KES'; ?>'} ${Math.abs(difference).toFixed(2)} less than expected balance.`;
             }
         }
 
@@ -3603,7 +4448,6 @@ try {
 
                 // Update product count display
                 const visibleProducts = document.querySelectorAll('.product-card[style*="block"], .product-card:not([style*="none"])').length;
-                console.log(`Showing ${visibleProducts} products for category: ${selectedCategory}`);
             });
         }
 
@@ -3632,15 +4476,44 @@ try {
             // Listen for online/offline events
             window.addEventListener('online', updateNetworkStatus);
             window.addEventListener('offline', updateNetworkStatus);
-
-            // Note: Periodic connectivity check disabled to avoid 404 errors
-            // The browser's built-in online/offline events are sufficient for most use cases
         }
 
         // Logout functionality
         function initializeLogout() {
-            // Logout function is already defined globally
-            // This is just for consistency with other initializations
+        }
+
+        // Modal accessibility functionality
+        function initializeModalAccessibility() {
+            // Add event listeners to all modals for proper accessibility
+            const modals = document.querySelectorAll('.modal');
+            
+            modals.forEach(modal => {
+                // When modal is shown, remove aria-hidden and manage focus
+                modal.addEventListener('shown.bs.modal', function() {
+                    modal.removeAttribute('aria-hidden');
+                    
+                    // Focus on the first focusable element
+                    const firstFocusable = modal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+                    if (firstFocusable) {
+                        firstFocusable.focus();
+                    }
+                });
+                
+                // When modal is hidden, restore aria-hidden
+                modal.addEventListener('hidden.bs.modal', function() {
+                    modal.setAttribute('aria-hidden', 'true');
+                });
+                
+                // Handle escape key to close modal
+                modal.addEventListener('keydown', function(e) {
+                    if (e.key === 'Escape') {
+                        const modalInstance = bootstrap.Modal.getInstance(modal);
+                        if (modalInstance) {
+                            modalInstance.hide();
+                        }
+                    }
+                });
+            });
         }
 
         // Global logout function
@@ -3725,7 +4598,7 @@ try {
     </div>
 
     <!-- Till Selection Modal -->
-    <div class="modal fade" id="tillSelectionModal" tabindex="-1" aria-labelledby="tillSelectionModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal fade" id="tillSelectionModal" tabindex="-1" aria-labelledby="tillSelectionModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false" data-bs-focus="true">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header bg-primary text-white">
@@ -3742,72 +4615,109 @@ try {
                             Please select a till and enter the opening amount to continue with sales operations. You can change this selection at any time.
                         </div>
 
+                        <!-- Till Selection Dropdown -->
                         <div class="row">
+                            <div class="col-md-8">
+                                <div class="mb-3">
+                                    <label for="till_dropdown" class="form-label">
+                                        <i class="bi bi-cash-register"></i> Select Till
+                                    </label>
+                                    <select class="form-select form-select-lg" name="till_id" id="till_dropdown" required>
+                                        <option value="">Choose a till...</option>
                             <?php foreach ($register_tills as $till): ?>
-                            <div class="col-md-6 mb-3">
-                                <div class="card h-100 till-card" onclick="selectTill(<?php echo $till['id']; ?>)">
-                                    <div class="card-body text-center">
-                                        <div class="till-icon mb-3">
-                                            <i class="bi bi-cash-register" style="font-size: 2rem; color: #667eea;"></i>
-                                        </div>
-                                        <h5 class="card-title"><?php echo htmlspecialchars($till['till_name']); ?></h5>
-                                        <p class="card-text">
-                                            <strong>Code:</strong> <?php echo htmlspecialchars($till['till_code']); ?><br>
-                                            <strong>Location:</strong> <?php echo htmlspecialchars($till['location'] ?? 'N/A'); ?><br>
-                                            <strong>Status:</strong>
-                                            <?php if (($till['till_status'] ?? 'closed') === 'opened'): ?>
-                                                <?php if ($till['current_user_id']): ?>
-                                                    <?php
-                                                    // Get username of current user
-                                                    $user_stmt = $conn->prepare("SELECT username FROM users WHERE id = ?");
-                                                    $user_stmt->execute([$till['current_user_id']]);
-                                                    $current_user = $user_stmt->fetch(PDO::FETCH_ASSOC);
-                                                    ?>
-                                                    <?php if ($till['current_user_id'] == $user_id): ?>
-                                                    <span class="text-success fw-bold">
-                                                        <i class="bi bi-person-check"></i> In Use (You)
-                                                    </span>
+                                        <option value="<?php echo $till['id']; ?>" 
+                                                data-till-name="<?php echo htmlspecialchars($till['till_name']); ?>"
+                                                data-till-code="<?php echo htmlspecialchars($till['till_code']); ?>"
+                                                data-location="<?php echo htmlspecialchars($till['location'] ?? 'N/A'); ?>"
+                                                data-status="<?php echo $till['till_status'] ?? 'closed'; ?>"
+                                                data-current-user="<?php echo $till['current_user_id'] ?? ''; ?>"
+                                                data-current-balance="<?php echo $till['current_balance'] ?? 0; ?>"
+                                                <?php if (($till['current_user_id'] ?? '') != '' && ($till['current_user_id'] ?? '') != $user_id): ?>disabled<?php endif; ?>>
+                                            <?php echo htmlspecialchars($till['till_name']); ?> 
+                                            (<?php echo htmlspecialchars($till['till_code']); ?>)
+                                            <?php if (($till['current_user_id'] ?? '') != '' && ($till['current_user_id'] ?? '') != $user_id): ?>
+                                                - In Use
+                                            <?php elseif (($till['till_status'] ?? 'closed') === 'opened'): ?>
+                                                - Available
                                                     <?php else: ?>
-                                                    <span class="text-warning fw-bold">
-                                                        <i class="bi bi-person-x"></i> In Use (<?php echo htmlspecialchars($current_user['username'] ?? 'Unknown'); ?>)
-                                                    </span>
+                                                - Closed
                                                     <?php endif; ?>
-                                                <?php else: ?>
-                                                <span class="text-success fw-bold">
-                                                    <i class="bi bi-unlock"></i> Available
-                                                </span>
-                                                <?php endif; ?>
-                                            <?php else: ?>
-                                            <span class="text-secondary fw-bold">
-                                                <i class="bi bi-lock"></i> Closed
-                                            </span>
-                                            <?php endif; ?>
-                                        </p>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" name="till_id" value="<?php echo $till['id']; ?>" id="till_<?php echo $till['id']; ?>">
-                                            <label class="form-check-label" for="till_<?php echo $till['id']; ?>">
-                                                Select This Till
-                                            </label>
+                                        </option>
+                                        <?php endforeach; ?>
+                                    </select>
                                         </div>
+                                    </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">&nbsp;</label>
+                                    <button type="button" class="btn btn-outline-primary w-100" onclick="refreshTillList()">
+                                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                                    </button>
+                                    <button type="button" class="btn btn-outline-success w-100 mt-2" onclick="forceShowOpeningAmount()" title="Force show opening amount section">
+                                        <i class="bi bi-eye"></i> Show Amount Input
+                                    </button>
+                                    <button type="button" class="btn btn-outline-warning w-100 mt-2" onclick="forceValidateSelection()" title="Force validate selection">
+                                        <i class="bi bi-check-circle"></i> Force Validate
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Till Details Card -->
+                        <div id="till_details_card" class="card mb-3" style="display: none;">
+                            <div class="card-header bg-light">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-info-circle"></i> Till Details
+                                </h6>
+                            </div>
+                                    <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <p><strong>Name:</strong> <span id="selected_till_name">-</span></p>
+                                        <p><strong>Code:</strong> <span id="selected_till_code">-</span></p>
+                                        <p><strong>Location:</strong> <span id="selected_till_location">-</span></p>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <p><strong>Status:</strong> <span id="selected_till_status">-</span></p>
+                                        <p><strong>Current Balance:</strong> <span id="selected_till_balance">-</span></p>
+                                        <p><strong>Current User:</strong> <span id="selected_till_user">-</span></p>
                                     </div>
                                 </div>
                             </div>
-                            <?php endforeach; ?>
                         </div>
 
-                        <div class="row mt-4">
-                            <div class="col-md-6">
-                                <div class="card">
-                                    <div class="card-body">
-                                        <h6 class="card-title">
+                        <!-- Opening Amount Input -->
+                        <div id="opening_amount_section" class="card" style="display: none;">
+                            <div class="card-header bg-success text-white">
+                                <h6 class="mb-0">
                                             <i class="bi bi-cash-coin"></i> Opening Amount
                                         </h6>
-                                        <div class="input-group">
-                                            <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-8">
+                                        <div class="input-group input-group-lg">
+                                            <span class="input-group-text bg-success text-white">
+                                                <i class="bi bi-currency-exchange"></i>
+                                                <?php echo $settings['currency_symbol'] ?? 'KES'; ?>
+                                            </span>
                                             <input type="number" class="form-control" name="opening_amount" id="opening_amount"
                                                    step="0.01" min="0" placeholder="0.00" required>
                                         </div>
-                                        <small class="text-muted">Enter the cash amount you're starting with in this till</small>
+                                        <div class="form-text">
+                                            <i class="bi bi-info-circle"></i>
+                                            Enter the cash amount you're starting with in this till. The confirm button will be enabled once you enter an amount.
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="d-grid gap-2">
+                                            <button type="button" class="btn btn-outline-secondary" onclick="setOpeningAmount(0)">
+                                                <i class="bi bi-0-circle"></i> Set to 0
+                                            </button>
+                                            <button type="button" class="btn btn-outline-secondary" onclick="setOpeningAmount(100)">
+                                                <i class="bi bi-100"></i> Set to 100
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -3822,9 +4732,57 @@ try {
                         <?php endif; ?>
                     </div>
                     <div class="modal-footer">
+                        <div class="me-auto">
+                            <small class="text-muted" id="selection-status">
+                                <i class="bi bi-info-circle"></i> Please select a till and enter opening amount
+                            </small>
+                        </div>
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <button type="submit" class="btn btn-primary" id="confirmTillSelection" disabled>
                             <i class="bi bi-check-circle"></i> Confirm Selection
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Till Close Authentication Modal -->
+    <div class="modal fade" id="tillCloseAuthModal" tabindex="-1" aria-labelledby="tillCloseAuthModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="tillCloseAuthModalLabel">
+                        <i class="bi bi-shield-lock"></i> Till Close Authentication
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form method="POST" action="">
+                    <input type="hidden" name="action" value="till_close_auth">
+                    <input type="hidden" name="intended_action" id="intended_till_close_action" value="close_till">
+                    <div class="modal-body">
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            Please enter your credentials to proceed with till closing operation. You can authenticate using your User ID, Username, or Employee ID.
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="till_close_auth_user_id" class="form-label">User ID, Username, or Employee ID</label>
+                            <input type="text" class="form-control" name="user_id" id="till_close_auth_user_id"
+                                   placeholder="Enter your User ID, Username, or Employee ID" autocomplete="username" required>
+                            <div class="form-text">You can use your User ID (e.g., USR1), Username, or Employee ID to authenticate.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="till_close_auth_password" class="form-label">Password</label>
+                            <input type="password" class="form-control" name="password" id="till_close_auth_password"
+                                   placeholder="Enter your password" autocomplete="current-password" required>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-danger">
+                            <i class="bi bi-shield-check"></i> Authenticate
                         </button>
                     </div>
                 </form>
@@ -3838,22 +4796,24 @@ try {
             <div class="modal-content">
                 <div class="modal-header bg-warning text-dark">
                     <h5 class="modal-title" id="cashDropAuthModalLabel">
-                        <i class="bi bi-shield-lock"></i> Cash Drop Authentication
+                        <i class="bi bi-shield-lock"></i> Drop Authentication
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <form method="POST" action="">
                     <input type="hidden" name="action" value="cash_drop_auth">
+                    <input type="hidden" name="intended_action" id="intended_action" value="drop">
                     <div class="modal-body">
                         <div class="alert alert-info">
                             <i class="bi bi-info-circle"></i>
-                            Please enter your credentials to proceed with cash drop operation.
+                            Please enter your credentials to proceed with drop operation. You can authenticate using your User ID, Username, or Employee ID.
                         </div>
 
                         <div class="mb-3">
-                            <label for="auth_user_id" class="form-label">User ID</label>
+                            <label for="auth_user_id" class="form-label">User ID, Username, or Employee ID</label>
                             <input type="text" class="form-control" name="user_id" id="auth_user_id"
-                                   placeholder="Enter your user ID" autocomplete="username" required>
+                                   placeholder="Enter your User ID, Username, or Employee ID" autocomplete="username" required>
+                            <div class="form-text">You can use your User ID (e.g., USR1), Username, or Employee ID to authenticate.</div>
                         </div>
 
                         <div class="mb-3">
@@ -3864,7 +4824,7 @@ try {
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-warning">
+                        <button type="submit" class="btn btn-warning" id="authSubmitBtn">
                             <i class="bi bi-shield-check"></i> Authenticate
                         </button>
                     </div>
@@ -3873,69 +4833,49 @@ try {
         </div>
     </div>
 
-    <!-- Cash Drop Modal -->
-    <div class="modal fade" id="cashDropModal" tabindex="-1" aria-labelledby="cashDropModalLabel" aria-hidden="true">
+
+    <!-- Drop Modal -->
+    <div class="modal fade" id="dropModal" tabindex="-1" aria-labelledby="dropModalLabel" aria-hidden="true">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header bg-warning text-dark">
-                    <h5 class="modal-title" id="cashDropModalLabel">
-                        <i class="bi bi-cash-stack"></i> Cash Drop
+                    <h5 class="modal-title" id="dropModalLabel">
+                        <i class="bi bi-cash-stack"></i> Drop
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <form method="POST" action="">
-                    <input type="hidden" name="action" value="cash_drop">
+                    <input type="hidden" name="action" value="drop">
                     <div class="modal-body">
-                        <?php if (isset($_SESSION['cash_drop_authenticated']) && $_SESSION['cash_drop_authenticated']): ?>
-                        <div class="alert alert-success">
-                            <i class="bi bi-shield-check"></i>
-                            <strong>Authenticated as:</strong> <?php echo htmlspecialchars($_SESSION['cash_drop_username']); ?>
-                            <a href="?action=logout_cash_drop" class="btn btn-sm btn-outline-danger ms-2">
-                                <i class="bi bi-box-arrow-right"></i> Logout
-                            </a>
-                        </div>
-                        <?php else: ?>
+                        <?php if (!isset($_SESSION['cash_drop_authenticated']) || !$_SESSION['cash_drop_authenticated']): ?>
                         <div class="alert alert-warning">
                             <i class="bi bi-exclamation-triangle"></i>
-                            You must authenticate before proceeding with cash drop operations.
+                            You must authenticate before proceeding with drop operations.
                         </div>
                         <?php endif; ?>
 
                         <div class="alert alert-info">
                             <i class="bi bi-info-circle"></i>
-                            This will drop the total amount of sales made today from the till. The amount is automatically calculated based on today's sales.
+                            <strong>Drop:</strong> Enter the amount you want to drop from the till. This can be for sales, petty cash, adjustments, or any other reason.
                         </div>
-
-                        <?php
-                        // Get total sales for today
-                        $today = date('Y-m-d');
-                        $stmt = $conn->prepare("
-                            SELECT COALESCE(SUM(final_amount), 0) as total_sales
-                            FROM sales
-                            WHERE DATE(sale_date) = ? AND till_id = ?
-                        ");
-                        $stmt->execute([$today, $selected_till['id'] ?? 0]);
-                        $sales_data = $stmt->fetch(PDO::FETCH_ASSOC);
-                        $total_sales = floatval($sales_data['total_sales']);
-                        ?>
 
                         <div class="card mb-3">
                             <div class="card-body text-center">
                                 <h6 class="card-title">
-                                    <i class="bi bi-calculator"></i> Today's Sales Summary
+                                    <i class="bi bi-calculator"></i> Till Information
                                 </h6>
                                 <div class="row">
                                     <div class="col-12">
                                         <div class="d-flex justify-content-between mb-2">
-                                            <span>Total Sales:</span>
-                                            <strong class="text-success">
-                                                <?php echo formatCurrency($total_sales, $settings); ?>
+                                            <span>Cashier:</span>
+                                            <strong class="text-primary">
+                                                <?php echo htmlspecialchars($_SESSION['cash_drop_username'] ?? 'Unknown'); ?>
                                             </strong>
                                         </div>
                                         <div class="d-flex justify-content-between mb-2">
-                                            <span>Status:</span>
+                                            <span>Current Till:</span>
                                             <strong class="text-info">
-                                                <i class="bi bi-shield-check"></i> Till Active
+                                                <?php echo htmlspecialchars($selected_till['till_name'] ?? 'Unknown'); ?>
                                             </strong>
                                         </div>
                                     </div>
@@ -3943,39 +4883,44 @@ try {
                             </div>
                         </div>
 
-                        <?php if ($total_sales > 0): ?>
-                        <div class="alert alert-warning">
-                            <i class="bi bi-exclamation-triangle"></i>
-                            <strong>Drop Amount:</strong> <?php echo formatCurrency($total_sales, $settings); ?>
-                            (Total sales for today)
+                        <div class="mb-3">
+                            <label for="drop_amount" class="form-label">
+                                <i class="bi bi-cash-stack"></i> Drop Amount <span class="text-danger">*</span>
+                            </label>
+                            <div class="input-group">
+                                <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? '$'; ?></span>
+                                <input type="number" class="form-control" name="drop_amount" id="drop_amount"
+                                       placeholder="0.00" step="0.01" min="0" required>
+                            </div>
+                            <div class="form-text">Enter the amount to drop from the till (positive value)</div>
                         </div>
-                        <?php else: ?>
-                        <div class="alert alert-info">
-                            <i class="bi bi-info-circle"></i>
-                            No sales found for today. Nothing to drop.
-                        </div>
-                        <?php endif; ?>
 
                         <div class="mb-3">
-                            <label for="notes" class="form-label">Notes (Optional)</label>
-                            <textarea class="form-control" name="notes" id="notes" rows="3"
-                                      placeholder="Enter any notes about this cash drop..."></textarea>
+                            <label for="drop_notes" class="form-label">Notes (Optional)</label>
+                            <textarea class="form-control" name="notes" id="drop_notes" rows="3"
+                                      placeholder="Enter reason for this drop (e.g., daily sales, petty cash, adjustment)..."></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="confirm_drop" id="confirm_drop" required>
+                                <label class="form-check-label" for="confirm_drop">
+                                    <strong>I confirm this drop action cannot be undone</strong>
+                                </label>
+                            </div>
+                            <div class="form-text text-muted">
+                                Please check this box to confirm you understand this action will permanently remove money from the till.
+                            </div>
                         </div>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                         <?php if (isset($_SESSION['cash_drop_authenticated']) && $_SESSION['cash_drop_authenticated']): ?>
-                            <?php if ($total_sales > 0): ?>
-                            <button type="submit" class="btn btn-warning">
-                                <i class="bi bi-cash-stack"></i> Drop <?php echo formatCurrency($total_sales, $settings); ?>
+                            <button type="submit" class="btn btn-warning" id="dropSubmitBtn">
+                                <i class="bi bi-cash-stack"></i> Process Drop
                             </button>
-                            <?php else: ?>
-                            <button type="submit" class="btn btn-warning" disabled>
-                                <i class="bi bi-cash-stack"></i> Nothing to Drop
-                            </button>
-                            <?php endif; ?>
                         <?php else: ?>
-                            <button type="button" class="btn btn-warning" onclick="showCashDropAuth()">
+                            <button type="button" class="btn btn-warning" onclick="showDropAuth()">
                                 <i class="bi bi-shield-lock"></i> Authenticate First
                             </button>
                         <?php endif; ?>
@@ -4088,10 +5033,85 @@ try {
                 <form method="POST" action="">
                     <input type="hidden" name="action" value="close_till">
                     <div class="modal-body">
-                        <div class="alert alert-warning">
+                        <?php if (!isset($_SESSION['till_close_authenticated']) || !$_SESSION['till_close_authenticated']): ?>
+                        <div class="alert alert-danger">
+                            <i class="bi bi-shield-exclamation"></i>
+                            <strong>Authentication Required:</strong> You must authenticate before accessing till closing operations.
+                        </div>
+                        <div class="text-center py-4">
+                            <button type="button" class="btn btn-danger btn-lg" onclick="showCloseTillAuth()">
+                                <i class="bi bi-shield-lock"></i> Authenticate to Continue
+                            </button>
+                        </div>
+                        <?php else: ?>
+                        <div class="alert alert-danger">
                             <i class="bi bi-exclamation-triangle"></i>
                             <strong>Close Till:</strong> This will permanently close the current till and reset its balance to zero. This action cannot be undone.
                         </div>
+
+                        <?php if ($selected_till): ?>
+                        <?php
+                        // Get calculation data for closing using the new functions
+                        $opening_amount = floatval($_SESSION['till_opening_amount'] ?? 0);
+                        $today = date('Y-m-d');
+                        
+                        // Get total sales for today for this cashier using the new function
+                        $total_sales = getCashierSalesTotal($conn, $selected_till['id'], $user_id, $today);
+                        
+                        // Get total cash drops for today for this cashier using the new function
+                        $total_drops = getTotalCashDrops($conn, $selected_till['id'], $user_id, $today);
+                        
+                        // Calculate expected balance: opening + sales - drops
+                        $expected_balance = $opening_amount + $total_sales - $total_drops;
+                        ?>
+
+                        <!-- Till Calculation Summary -->
+                        <div class="card mb-3">
+                            <div class="card-header bg-info text-white">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-calculator"></i> Till Calculation Summary
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-person"></i> Cashier:</span>
+                                            <strong class="text-primary"><?php echo htmlspecialchars($username); ?></strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-cash-coin"></i> Opening Amount:</span>
+                                            <strong class="text-primary"><?php echo formatCurrency($opening_amount, $settings); ?></strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-cart-plus"></i> Total Sales (This Cashier):</span>
+                                            <strong class="text-success"><?php echo formatCurrency($total_sales, $settings); ?></strong>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-cash-stack"></i> Total Drops (This Cashier):</span>
+                                            <strong class="text-warning"><?php echo formatCurrency($total_drops, $settings); ?></strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-equals"></i> Expected Balance:</span>
+                                            <strong class="text-info"><?php echo formatCurrency($expected_balance, $settings); ?></strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-info-circle"></i> Formula:</span>
+                                            <small class="text-muted">(Opening + Sales) - Drops</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <hr>
+                                <div class="alert alert-info mb-0">
+                                    <i class="bi bi-lightbulb"></i>
+                                    <strong>Expected Balance:</strong> <?php echo formatCurrency($expected_balance, $settings); ?> 
+                                    (Based on this cashier's sales and drops - should match your actual closing amount)
+                                </div>
+                            </div>
+                        </div>
+                        <?php endif; ?>
 
                         <div class="row">
                             <div class="col-md-6">
@@ -4100,12 +5120,16 @@ try {
                                 </h6>
 
                                 <div class="mb-3">
-                                    <label for="cash_amount" class="form-label">Cash Amount</label>
+                                    <label for="cash_amount" class="form-label">Actual Counted Cash Amount</label>
                                     <div class="input-group">
                                         <span class="input-group-text"><?php echo $settings['currency_symbol'] ?? 'KES'; ?></span>
                                         <input type="number" class="form-control" name="cash_amount" id="cash_amount"
-                                               step="0.01" min="0" placeholder="0.00" required>
+                                               step="0.01" placeholder="0.00" required>
+                                        <button type="button" class="btn btn-outline-secondary" onclick="autoFillExpectedAmount()" title="Auto-fill expected balance">
+                                            <i class="bi bi-magic"></i>
+                                        </button>
                                     </div>
+                                    <div class="form-text">Enter the actual cash amount counted in the till</div>
                                 </div>
 
                                 <div class="mb-3">
@@ -4146,12 +5170,12 @@ try {
                                 <div class="card">
                                     <div class="card-body">
                                         <div class="d-flex justify-content-between mb-2">
-                                            <span>Current Till Balance:</span>
-                                            <strong><?php echo formatCurrency($selected_till['current_balance'] ?? 0, $settings); ?></strong>
+                                            <span>Expected Balance:</span>
+                                            <strong class="text-info" id="expected_balance_display"><?php echo formatCurrency($expected_balance ?? 0, $settings); ?></strong>
                                         </div>
                                         <hr>
                                         <div class="d-flex justify-content-between mb-2">
-                                            <span>Cash:</span>
+                                            <span>Actual Cash Counted:</span>
                                             <span id="cash_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
                                         </div>
                                         <div class="d-flex justify-content-between mb-2">
@@ -4167,6 +5191,15 @@ try {
                                             <span id="other_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
                                         </div>
                                         <hr>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><strong>Total Counted:</strong></span>
+                                            <strong id="total_counted_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span>Difference:</span>
+                                            <span id="difference_display" class="text-muted"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
+                                        </div>
+                                        <hr>
                                         <div class="d-flex justify-content-between">
                                             <strong>Total Closing:</strong>
                                             <strong id="total_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</strong>
@@ -4174,6 +5207,10 @@ try {
                                         <div class="d-flex justify-content-between mt-2">
                                             <span>Difference:</span>
                                             <span id="difference_display" class="text-muted"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
+                                        </div>
+                                        <div class="alert alert-sm mt-2 mb-0" id="difference_alert" style="display: none;">
+                                            <i class="bi bi-info-circle"></i>
+                                            <span id="difference_message"></span>
                                         </div>
                                     </div>
                                 </div>
@@ -4192,12 +5229,45 @@ try {
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Security Confirmation -->
+                        <div class="card mb-3">
+                            <div class="card-header bg-warning text-dark">
+                                <h6 class="mb-0">
+                                    <i class="bi bi-shield-check"></i> Security Confirmation
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="confirm_close_till" class="form-label">Type "CLOSE TILL" to confirm:</label>
+                                    <input type="text" class="form-control" id="confirm_close_till" name="confirm_close_till" 
+                                           placeholder="Type CLOSE TILL to confirm" required>
+                                    <div class="form-text">This confirmation is required for security purposes.</div>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="confirm_balance_checked" name="confirm_balance_checked" required>
+                                    <label class="form-check-label" for="confirm_balance_checked">
+                                        I confirm that I have physically counted the cash in the till and verified the amounts.
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <?php endif; ?>
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-danger">
-                            <i class="bi bi-x-circle"></i> Close Till
-                        </button>
+                        <?php if (isset($_SESSION['till_close_authenticated']) && $_SESSION['till_close_authenticated']): ?>
+                            <button type="submit" class="btn btn-danger" id="closeTillSubmitBtn" disabled>
+                                <i class="bi bi-lock"></i> Complete Confirmation
+                            </button>
+                            <a href="?action=logout_till_close" class="btn btn-outline-warning">
+                                <i class="bi bi-person-dash"></i> Logout
+                            </a>
+                        <?php else: ?>
+                            <button type="button" class="btn btn-danger" onclick="showCloseTillAuth()">
+                                <i class="bi bi-shield-lock"></i> Authenticate First
+                            </button>
+                        <?php endif; ?>
                     </div>
                 </form>
             </div>
@@ -4266,10 +5336,126 @@ try {
     <script>
         // Till management event listeners
         document.addEventListener('DOMContentLoaded', function() {
-            // Till selection event listeners
-            document.querySelectorAll('input[name="till_id"]').forEach(radio => {
-                radio.addEventListener('change', validateTillSelection);
-            });
+            // Check if user is authenticated and show drop modal
+            <?php if (isset($_SESSION['cash_drop_authenticated']) && $_SESSION['cash_drop_authenticated']): ?>
+                setTimeout(function() {
+                    showDrop();
+                }, 500);
+                <?php unset($_SESSION['intended_action']); ?>
+            <?php endif; ?>
+            
+            // Check if user is authenticated and show close till modal
+            <?php if (isset($_SESSION['till_close_authenticated']) && $_SESSION['till_close_authenticated'] && isset($_SESSION['intended_action']) && $_SESSION['intended_action'] === 'close_till'): ?>
+                setTimeout(function() {
+                    showCloseTillForm();
+                }, 500);
+                <?php unset($_SESSION['intended_action']); ?>
+            <?php endif; ?>
+
+            // Add form validation for authentication
+            const authForm = document.querySelector('form[action=""][method="POST"]');
+            if (authForm) {
+                authForm.addEventListener('submit', function(e) {
+                    const userIdInput = document.getElementById('auth_user_id');
+                    const passwordInput = document.getElementById('auth_password');
+                    const submitBtn = document.getElementById('authSubmitBtn');
+                    
+                    if (!userIdInput || !passwordInput) return;
+                    
+                    // Validate inputs
+                    if (!userIdInput.value.trim()) {
+                        e.preventDefault();
+                        alert('Please enter your User ID, Username, or Employee ID.');
+                        userIdInput.focus();
+                        return;
+                    }
+                    
+                    if (!passwordInput.value.trim()) {
+                        e.preventDefault();
+                        alert('Please enter your password.');
+                        passwordInput.focus();
+                        return;
+                    }
+                    
+                    // Show loading state
+                    if (submitBtn) {
+                        submitBtn.disabled = true;
+                        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Authenticating...';
+                    }
+                });
+            }
+
+            // Add form validation for drop form
+            const dropForm = document.querySelector('form[method="POST"] input[name="action"][value="drop"]')?.closest('form');
+            if (dropForm) {
+                dropForm.addEventListener('submit', function(e) {
+                    const submitBtn = document.getElementById('dropSubmitBtn');
+                    const dropAmountInput = document.getElementById('drop_amount');
+                    const confirmCheckbox = document.getElementById('confirm_drop');
+                    const notesInput = document.getElementById('drop_notes');
+
+                    if (!submitBtn || submitBtn.disabled) return;
+
+                    // Validate drop amount
+                    if (!dropAmountInput || !dropAmountInput.value.trim()) {
+                        e.preventDefault();
+                        alert('Please enter a drop amount.');
+                        dropAmountInput.focus();
+                        return;
+                    }
+
+                    const dropAmount = parseFloat(dropAmountInput.value);
+                    if (isNaN(dropAmount) || dropAmount <= 0) {
+                        e.preventDefault();
+                        alert('Please enter a valid drop amount greater than zero.');
+                        dropAmountInput.focus();
+                        return;
+                    }
+
+                    // Validate confirmation checkbox
+                    if (!confirmCheckbox || !confirmCheckbox.checked) {
+                        e.preventDefault();
+                        alert('Please check the confirmation box to acknowledge this action cannot be undone.');
+                        confirmCheckbox.focus();
+                        return;
+                    }
+
+                    // Get notes for confirmation
+                    const notes = notesInput ? notesInput.value.trim() : '';
+                    const notesText = notes ? `\n\nNotes: "${notes}"` : '';
+
+                    // Detailed confirmation dialog
+                    const confirmMessage =
+                        '🚨 DROP CONFIRMATION 🚨\n\n' +
+                        `Amount to Drop: $${dropAmount.toFixed(2)}\n` +
+                        `Till: <?php echo htmlspecialchars($selected_till['till_name'] ?? 'Unknown'); ?>\n` +
+                        `Cashier: <?php echo htmlspecialchars($_SESSION['cash_drop_username'] ?? 'Unknown'); ?>${notesText}\n\n` +
+                        '⚠️  WARNING: This action will PERMANENTLY remove money from the till!\n\n' +
+                        'Are you absolutely sure you want to proceed?';
+
+                    if (!confirm(confirmMessage)) {
+                        e.preventDefault();
+                        return;
+                    }
+
+                    // Show loading state
+                    submitBtn.disabled = true;
+                    submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing Drop...';
+                });
+            }
+
+            // Till dropdown selection event listener
+            const tillDropdown = document.getElementById('till_dropdown');
+            if (tillDropdown) {
+                tillDropdown.addEventListener('change', function(e) {
+                    onTillSelection();
+                });
+                
+                // Also add input event listener as backup
+                tillDropdown.addEventListener('input', function(e) {
+                    onTillSelection();
+                });
+            }
 
             // Switch till event listeners
             document.querySelectorAll('input[name="switch_till_id"]').forEach(radio => {
@@ -4280,7 +5466,15 @@ try {
 
             const openingAmountInput = document.getElementById('opening_amount');
             if (openingAmountInput) {
-                openingAmountInput.addEventListener('input', validateTillSelection);
+                openingAmountInput.addEventListener('input', function() {
+                    validateTillSelection();
+                });
+                openingAmountInput.addEventListener('change', function() {
+                    validateTillSelection();
+                });
+                openingAmountInput.addEventListener('keyup', function() {
+                    validateTillSelection();
+                });
             }
 
             // Close till calculations event listeners
@@ -4303,6 +5497,10 @@ try {
             // Logout functionality
             initializeLogout();
 
+            // Initialize modal accessibility
+            initializeModalAccessibility();
+
+
             // Show appropriate modal on page load if no till is selected
             <?php if (!$selected_till): ?>
                 <?php if ($no_tills_available): ?>
@@ -4311,6 +5509,7 @@ try {
                 showTillSelection();
                 <?php endif; ?>
             <?php endif; ?>
+
         });
 
         // Cart verification functions for till actions
@@ -5146,5 +6345,746 @@ try {
             transform: scale(1.1);
         }
     </style>
+
+    <!-- Drop Slips Modal -->
+    <div class="modal fade" id="dropSlipsModal" tabindex="-1" aria-labelledby="dropSlipsModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title" id="dropSlipsModalLabel">
+                        <i class="bi bi-printer"></i> Drop Slips Generated
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <?php if (isset($_SESSION['drop_slips_html'])): ?>
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle"></i>
+                            Auto-printing failed or you requested manual printing. Use the buttons below to print the slips manually.
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6 class="text-center mb-3">
+                                    <i class="bi bi-building"></i> OFFICE COPY
+                                </h6>
+                                <div class="border rounded p-2 bg-light">
+                                    <iframe id="officeSlipFrame" style="width: 100%; height: 400px; border: none;"></iframe>
+                                </div>
+                                <div class="text-center mt-2">
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="printSlip('office')">
+                                        <i class="bi bi-printer"></i> Print Office Copy
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-center mb-3">
+                                    <i class="bi bi-person-badge"></i> CASHIER COPY
+                                </h6>
+                                <div class="border rounded p-2 bg-light">
+                                    <iframe id="cashierSlipFrame" style="width: 100%; height: 400px; border: none;"></iframe>
+                                </div>
+                                <div class="text-center mt-2">
+                                    <button type="button" class="btn btn-success btn-sm" onclick="printSlip('cashier')">
+                                        <i class="bi bi-printer"></i> Print Cashier Copy
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="printBothSlips()">
+                        <i class="bi bi-printer"></i> Print Both Copies
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Till Closing Slip Modal -->
+    <div class="modal fade" id="tillClosingSlipModal" tabindex="-1" aria-labelledby="tillClosingSlipModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title" id="tillClosingSlipModalLabel">
+                        <i class="bi bi-printer"></i> Till Closing Slip Generated
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle"></i>
+                        <strong>Till closing slip generated successfully!</strong> You can print the slip manually if needed.
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-primary text-white">
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-building"></i> Office Copy
+                                    </h6>
+                                </div>
+                                <div class="card-body p-0">
+                                    <iframe id="officeTillClosingSlipFrame" style="width: 100%; height: 500px; border: none;"></iframe>
+                                </div>
+                                <div class="card-footer">
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="printTillClosingSlip('office')">
+                                        <i class="bi bi-printer"></i> Print Office Copy
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header bg-info text-white">
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-person"></i> Cashier Copy
+                                    </h6>
+                                </div>
+                                <div class="card-body p-0">
+                                    <iframe id="cashierTillClosingSlipFrame" style="width: 100%; height: 500px; border: none;"></iframe>
+                                </div>
+                                <div class="card-footer">
+                                    <button type="button" class="btn btn-info btn-sm" onclick="printTillClosingSlip('cashier')">
+                                        <i class="bi bi-printer"></i> Print Cashier Copy
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-danger" onclick="printBothTillClosingSlips()">
+                        <i class="bi bi-printer"></i> Print Both Copies
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load drop slips into iframes when modal is shown
+        document.getElementById('dropSlipsModal').addEventListener('show.bs.modal', function() {
+            setTimeout(() => {
+                const officeFrame = document.getElementById('officeSlipFrame');
+                const cashierFrame = document.getElementById('cashierSlipFrame');
+
+                if (officeFrame && cashierFrame) {
+                    // Load office slip
+                    const officeDoc = officeFrame.contentDocument || officeFrame.contentWindow.document;
+                    officeDoc.open();
+                    officeDoc.write(`
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <title>Office Drop Slip</title>
+                            <style>
+                                @page { size: 80mm auto; margin: 0mm; }
+                                @media print {
+                                    html, body { margin: 0 !important; padding: 0 !important; font-size: 13px !important; line-height: 1.35 !important; color: #000 !important; background: white !important; -webkit-print-color-adjust: exact !important; }
+                                    .no-print { display: none !important; }
+                                    .receipt-container { max-width: 80mm !important; width: 80mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; page-break-inside: avoid; padding: 4px 2px !important; font-family: 'Courier New', monospace !important; font-weight: bold !important; display: block !important; height: auto !important; }
+                                }
+                                body { font-family: 'Courier New', monospace; margin: 0; padding: 10px; }
+                                .receipt-container { max-width: 300px; margin: 0 auto; border: 1px solid #ccc; padding: 10px; background: white; }
+                                .header { text-align: center; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 10px; }
+                                .content { margin: 10px 0; }
+                                .footer { text-align: center; border-top: 1px solid #000; padding-top: 5px; margin-top: 10px; font-size: 10px; }
+                                .label { font-weight: bold; }
+                                .office-copy { background: #f8f9fa; padding: 5px; text-align: center; margin-bottom: 10px; font-size: 12px; font-weight: bold; }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="receipt-container">
+                                <div class="office-copy">OFFICE COPY</div>
+                                <?php echo $_SESSION['drop_slips_html'] ?? ''; ?>
+                            </div>
+                        </body>
+                        </html>
+                    `);
+                    officeDoc.close();
+
+                    // Load cashier slip
+                    const cashierDoc = cashierFrame.contentDocument || cashierFrame.contentWindow.document;
+                    cashierDoc.open();
+                    cashierDoc.write(`
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <title>Cashier Drop Slip</title>
+                            <style>
+                                @page { size: 80mm auto; margin: 0mm; }
+                                @media print {
+                                    html, body { margin: 0 !important; padding: 0 !important; font-size: 13px !important; line-height: 1.35 !important; color: #000 !important; background: white !important; -webkit-print-color-adjust: exact !important; }
+                                    .no-print { display: none !important; }
+                                    .receipt-container { max-width: 80mm !important; width: 80mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; page-break-inside: avoid; padding: 4px 2px !important; font-family: 'Courier New', monospace !important; font-weight: bold !important; display: block !important; height: auto !important; }
+                                }
+                                body { font-family: 'Courier New', monospace; margin: 0; padding: 10px; }
+                                .receipt-container { max-width: 300px; margin: 0 auto; border: 1px solid #ccc; padding: 10px; background: white; }
+                                .header { text-align: center; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 10px; }
+                                .content { margin: 10px 0; }
+                                .footer { text-align: center; border-top: 1px solid #000; padding-top: 5px; margin-top: 10px; font-size: 10px; }
+                                .label { font-weight: bold; }
+                                .cashier-copy { background: #e8f5e8; padding: 5px; text-align: center; margin-bottom: 10px; font-size: 12px; font-weight: bold; }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="receipt-container">
+                                <div class="cashier-copy">CASHIER COPY</div>
+                                <?php echo $_SESSION['drop_slips_html'] ?? ''; ?>
+                            </div>
+                        </body>
+                        </html>
+                    `);
+                    cashierDoc.close();
+                }
+            }, 100);
+        });
+
+        // Print individual slips
+        function printSlip(type) {
+            const frameId = type === 'office' ? 'officeSlipFrame' : 'cashierSlipFrame';
+            const frame = document.getElementById(frameId);
+            if (frame) {
+                try {
+                    frame.contentWindow.focus();
+                    frame.contentWindow.print();
+                } catch (e) {
+                    alert('Printing failed. Please use Ctrl+P (or Cmd+P on Mac) to print manually.');
+                }
+            }
+        }
+
+        // Print both slips
+        function printBothSlips() {
+            printSlip('office');
+            setTimeout(() => printSlip('cashier'), 1000);
+        }
+
+        // Show drop slips modal for manual printing
+        function showDropSlipsModal() {
+            const modal = new bootstrap.Modal(document.getElementById('dropSlipsModal'));
+            modal.show();
+        }
+
+        // Show till closing slip modal for manual printing
+        function showTillClosingSlipModal() {
+            const modal = new bootstrap.Modal(document.getElementById('tillClosingSlipModal'));
+            modal.show();
+        }
+
+        // Print individual till closing slips
+        function printTillClosingSlip(type) {
+            const frameId = type === 'office' ? 'officeTillClosingSlipFrame' : 'cashierTillClosingSlipFrame';
+            const frame = document.getElementById(frameId);
+            if (frame) {
+                try {
+                    frame.contentWindow.focus();
+                    frame.contentWindow.print();
+                } catch (e) {
+                    console.error('Error printing till closing slip:', e);
+                }
+            }
+        }
+
+        // Print both till closing slips
+        function printBothTillClosingSlips() {
+            printTillClosingSlip('office');
+            setTimeout(() => printTillClosingSlip('cashier'), 1000);
+        }
+
+        // Auto-print drop slips if needed
+        <?php if (isset($_SESSION['auto_print_drop']) && $_SESSION['auto_print_drop']): ?>
+            setTimeout(function() {
+                showSuccessNotification('Printing drop slips...');
+                autoPrintDropSlips();
+                <?php
+                unset($_SESSION['auto_print_drop']);
+                // Clear drop slips HTML after 30 seconds to free memory
+                ?>
+                setTimeout(() => {
+                    fetch(window.location.href, { method: 'POST', body: new FormData() });
+                }, 30000);
+            }, 500);
+        <?php endif; ?>
+
+        // Auto-print till closing slip if needed
+        <?php if (isset($_SESSION['auto_print_till_closing']) && $_SESSION['auto_print_till_closing']): ?>
+            setTimeout(function() {
+                showSuccessNotification('Printing till closing slip...');
+                autoPrintTillClosingSlip();
+                <?php unset($_SESSION['auto_print_till_closing']); ?>
+            }, 2000);
+        <?php endif; ?>
+
+        // Global modal focus management
+        document.addEventListener('DOMContentLoaded', function() {
+            // Handle all modals for proper focus management
+            const modals = document.querySelectorAll('.modal');
+            modals.forEach(modal => {
+                // Initialize modal with proper attributes
+                modal.setAttribute('aria-hidden', 'true');
+                modal.setAttribute('inert', '');
+                
+                modal.addEventListener('show.bs.modal', function() {
+                    // Prepare modal before showing
+                    this.removeAttribute('inert');
+                });
+                
+                modal.addEventListener('shown.bs.modal', function() {
+                    manageModalFocus(this);
+                });
+                
+                modal.addEventListener('hide.bs.modal', function() {
+                    // Prepare modal before hiding
+                    const focusedElement = this.querySelector(':focus');
+                    if (focusedElement) {
+                        focusedElement.blur();
+                    }
+                });
+                
+                modal.addEventListener('hidden.bs.modal', function() {
+                    hideModalProperly(this);
+                });
+            });
+        });
+
+        // Success notification function
+        function showSuccessNotification(message) {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.className = 'alert alert-success alert-dismissible fade show position-fixed';
+            notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+            notification.innerHTML = `
+                <i class="bi bi-check-circle"></i> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+
+            document.body.appendChild(notification);
+
+            // Auto-remove after 3 seconds
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.remove();
+                }
+            }, 3000);
+        }
+
+        // Auto-print drop slips
+        function autoPrintDropSlips() {
+            // Create hidden iframes for printing
+            const officeFrame = document.createElement('iframe');
+            const cashierFrame = document.createElement('iframe');
+
+            officeFrame.style.display = 'none';
+            cashierFrame.style.display = 'none';
+            officeFrame.id = 'auto_office_frame';
+            cashierFrame.id = 'auto_cashier_frame';
+
+            document.body.appendChild(officeFrame);
+            document.body.appendChild(cashierFrame);
+
+            // Load office slip
+            const officeDoc = officeFrame.contentDocument || officeFrame.contentWindow.document;
+            officeDoc.open();
+            officeDoc.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Office Drop Slip</title>
+                    <style>
+                        @page { size: 80mm auto; margin: 0mm; }
+                        @media print {
+                            html, body { margin: 0 !important; padding: 0 !important; font-size: 13px !important; line-height: 1.35 !important; color: #000 !important; background: white !important; -webkit-print-color-adjust: exact !important; }
+                            .no-print { display: none !important; }
+                            .receipt-container { max-width: 80mm !important; width: 80mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; page-break-inside: avoid; padding: 4px 2px !important; font-family: 'Courier New', monospace !important; font-weight: bold !important; display: block !important; height: auto !important; }
+                        }
+                        body { font-family: 'Courier New', monospace; margin: 0; padding: 0; }
+                        .receipt-container { max-width: 300px; margin: 0; padding: 10px; background: white; }
+                        .header { text-align: center; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 10px; }
+                        .content { margin: 10px 0; }
+                        .footer { text-align: center; border-top: 1px solid #000; padding-top: 5px; margin-top: 10px; font-size: 10px; }
+                        .label { font-weight: bold; }
+                        .office-copy { background: #f8f9fa; padding: 5px; text-align: center; margin-bottom: 10px; font-size: 12px; font-weight: bold; }
+                    </style>
+                </head>
+                <body>
+                    <div class="receipt-container">
+                        <div class="office-copy">OFFICE COPY</div>
+                        <?php echo $_SESSION['drop_slips_html'] ?? ''; ?>
+                    </div>
+                </body>
+                </html>
+            `);
+            officeDoc.close();
+
+            // Load cashier slip
+            const cashierDoc = cashierFrame.contentDocument || cashierFrame.contentWindow.document;
+            cashierDoc.open();
+            cashierDoc.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Cashier Drop Slip</title>
+                    <style>
+                        @page { size: 80mm auto; margin: 0mm; }
+                        @media print {
+                            html, body { margin: 0 !important; padding: 0 !important; font-size: 13px !important; line-height: 1.35 !important; color: #000 !important; background: white !important; -webkit-print-color-adjust: exact !important; }
+                            .no-print { display: none !important; }
+                            .receipt-container { max-width: 80mm !important; width: 80mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; page-break-inside: avoid; padding: 4px 2px !important; font-family: 'Courier New', monospace !important; font-weight: bold !important; display: block !important; height: auto !important; }
+                        }
+                        body { font-family: 'Courier New', monospace; margin: 0; padding: 0; }
+                        .receipt-container { max-width: 300px; margin: 0; padding: 10px; background: white; }
+                        .header { text-align: center; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 10px; }
+                        .content { margin: 10px 0; }
+                        .footer { text-align: center; border-top: 1px solid #000; padding-top: 5px; margin-top: 10px; font-size: 10px; }
+                        .label { font-weight: bold; }
+                        .cashier-copy { background: #e8f5e8; padding: 5px; text-align: center; margin-bottom: 10px; font-size: 12px; font-weight: bold; }
+                    </style>
+                </head>
+                <body>
+                    <div class="receipt-container">
+                        <div class="cashier-copy">CASHIER COPY</div>
+                        <?php echo $_SESSION['drop_slips_html'] ?? ''; ?>
+                    </div>
+                </body>
+                </html>
+            `);
+            cashierDoc.close();
+
+            // Print office copy first
+            setTimeout(() => {
+                try {
+                    officeFrame.contentWindow.focus();
+                    officeFrame.contentWindow.print();
+                } catch (e) {
+                    console.warn('Auto print failed for office copy:', e);
+                }
+            }, 100);
+
+            // Print cashier copy after delay
+            setTimeout(() => {
+                try {
+                    cashierFrame.contentWindow.focus();
+                    cashierFrame.contentWindow.print();
+                } catch (e) {
+                    console.warn('Auto print failed for cashier copy:', e);
+                }
+
+                // Clean up iframes
+                setTimeout(() => {
+                    document.body.removeChild(officeFrame);
+                    document.body.removeChild(cashierFrame);
+                }, 2000);
+            }, 1500);
+        }
+
+        // Auto-print till closing slip
+        function autoPrintTillClosingSlip() {
+            // Create hidden iframes for printing
+            const officeFrame = document.createElement('iframe');
+            const cashierFrame = document.createElement('iframe');
+
+            officeFrame.style.display = 'none';
+            cashierFrame.style.display = 'none';
+            officeFrame.id = 'auto_office_till_closing_frame';
+            cashierFrame.id = 'auto_cashier_till_closing_frame';
+
+            document.body.appendChild(officeFrame);
+            document.body.appendChild(cashierFrame);
+
+            // Load office slip
+            const officeDoc = officeFrame.contentDocument || officeFrame.contentWindow.document;
+            officeDoc.open();
+            officeDoc.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Office Till Closing Slip</title>
+                    <style>
+                        @page { size: 80mm auto; margin: 0mm; }
+                        @media print {
+                            html, body { margin: 0 !important; padding: 0 !important; font-size: 13px !important; line-height: 1.35 !important; color: #000 !important; background: white !important; -webkit-print-color-adjust: exact !important; }
+                            .no-print { display: none !important; }
+                            .receipt-container { max-width: 80mm !important; width: 80mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; page-break-inside: avoid; padding: 4px 2px !important; font-family: 'Courier New', monospace !important; font-weight: bold !important; display: block !important; height: auto !important; }
+                        }
+                        body { font-family: 'Courier New', monospace; margin: 0; padding: 0; }
+                        .receipt-container { max-width: 300px; margin: 0; padding: 10px; background: white; }
+                        .header { text-align: center; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 10px; }
+                        .content { margin: 10px 0; }
+                        .footer { text-align: center; border-top: 1px solid #000; padding-top: 5px; margin-top: 10px; font-size: 10px; }
+                        .label { font-weight: bold; }
+                        .office-copy { background: #f8f9fa; padding: 5px; text-align: center; margin-bottom: 10px; font-size: 12px; font-weight: bold; }
+                    </style>
+                </head>
+                <body>
+                    <div class="receipt-container">
+                        <div class="office-copy">OFFICE COPY</div>
+                        ${<?php echo json_encode($_SESSION['till_closing_slip_html'] ?? ''); ?>}
+                    </div>
+                </body>
+                </html>
+            `);
+            officeDoc.close();
+
+            // Load cashier slip
+            const cashierDoc = cashierFrame.contentDocument || cashierFrame.contentWindow.document;
+            cashierDoc.open();
+            cashierDoc.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Cashier Till Closing Slip</title>
+                    <style>
+                        @page { size: 80mm auto; margin: 0mm; }
+                        @media print {
+                            html, body { margin: 0 !important; padding: 0 !important; font-size: 13px !important; line-height: 1.35 !important; color: #000 !important; background: white !important; -webkit-print-color-adjust: exact !important; }
+                            .no-print { display: none !important; }
+                            .receipt-container { max-width: 80mm !important; width: 80mm !important; margin: 0 auto !important; box-shadow: none !important; border: none !important; page-break-inside: avoid; padding: 4px 2px !important; font-family: 'Courier New', monospace !important; font-weight: bold !important; display: block !important; height: auto !important; }
+                        }
+                        body { font-family: 'Courier New', monospace; margin: 0; padding: 0; }
+                        .receipt-container { max-width: 300px; margin: 0; padding: 10px; background: white; }
+                        .header { text-align: center; border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 10px; }
+                        .content { margin: 10px 0; }
+                        .footer { text-align: center; border-top: 1px solid #000; padding-top: 5px; margin-top: 10px; font-size: 10px; }
+                        .label { font-weight: bold; }
+                        .cashier-copy { background: #e3f2fd; padding: 5px; text-align: center; margin-bottom: 10px; font-size: 12px; font-weight: bold; }
+                    </style>
+                </head>
+                <body>
+                    <div class="receipt-container">
+                        <div class="cashier-copy">CASHIER COPY</div>
+                        ${<?php echo json_encode($_SESSION['till_closing_slip_html'] ?? ''); ?>}
+                    </div>
+                </body>
+                </html>
+            `);
+            cashierDoc.close();
+
+            // Print office copy first
+            setTimeout(() => {
+                try {
+                    officeFrame.contentWindow.focus();
+                    officeFrame.contentWindow.print();
+                } catch (e) {
+                    console.warn('Auto print failed for office copy:', e);
+                }
+            }, 100);
+
+            // Print cashier copy after delay
+            setTimeout(() => {
+                try {
+                    cashierFrame.contentWindow.focus();
+                    cashierFrame.contentWindow.print();
+                } catch (e) {
+                    console.warn('Auto print failed for cashier copy:', e);
+                }
+
+                // Clean up iframes
+                setTimeout(() => {
+                    document.body.removeChild(officeFrame);
+                    document.body.removeChild(cashierFrame);
+                }, 2000);
+            }, 1500);
+        }
+
+        // Close Till Confirmation Validation
+        function validateCloseTillForm() {
+            const confirmInput = document.getElementById('confirm_close_till');
+            const balanceCheckbox = document.getElementById('confirm_balance_checked');
+            const submitButton = document.getElementById('closeTillSubmitBtn');
+            
+            if (confirmInput && balanceCheckbox && submitButton) {
+                function checkValidation() {
+                    const isConfirmed = confirmInput.value.toUpperCase().trim() === 'CLOSE TILL';
+                    const isBalanceChecked = balanceCheckbox.checked;
+                    
+                    if (isConfirmed && isBalanceChecked) {
+                        submitButton.disabled = false;
+                        submitButton.classList.remove('btn-secondary');
+                        submitButton.classList.add('btn-danger');
+                        submitButton.innerHTML = '<i class="bi bi-x-circle"></i> Close Till';
+                    } else {
+                        submitButton.disabled = true;
+                        submitButton.classList.remove('btn-danger');
+                        submitButton.classList.add('btn-secondary');
+                        submitButton.innerHTML = '<i class="bi bi-lock"></i> Complete Confirmation';
+                    }
+                }
+                
+                // Initial check
+                checkValidation();
+                
+                // Add event listeners
+                confirmInput.addEventListener('input', checkValidation);
+                balanceCheckbox.addEventListener('change', checkValidation);
+            }
+        }
+
+        // Initialize close till validation when modal is shown
+        document.addEventListener('DOMContentLoaded', function() {
+            const closeTillModal = document.getElementById('closeTillModal');
+            if (closeTillModal) {
+                closeTillModal.addEventListener('shown.bs.modal', function() {
+                    validateCloseTillForm();
+                });
+            }
+        });
+    </script>
 </body>
 </html>
+
+<?php
+/**
+ * Generate HTML content for drop slips
+ */
+function generateDropSlipsHTML($data) {
+    $company_name = htmlspecialchars($data['company_name']);
+    $drop_amount = number_format($data['drop_amount'], 2);
+    $till_name = htmlspecialchars($data['till_name']);
+    $till_number = $data['till_number'];
+    $cashier_name = htmlspecialchars($data['cashier_name']);
+    $dropper_name = htmlspecialchars($data['dropper_name']);
+    $drop_date = date('d/m/Y H:i', strtotime($data['drop_date']));
+    $drop_id = $data['drop_id'];
+    $notes = htmlspecialchars($data['notes']);
+
+    $html = "
+        <div class='header'>
+            <div style='font-size: 14px; font-weight: bold;'>{$company_name}</div>
+            <div style='font-size: 12px;'>DROP SLIP</div>
+        </div>
+
+        <div class='content'>
+            <div style='margin: 5px 0;'><span class='label'>Drop ID:</span> {$drop_id}</div>
+            <div style='margin: 5px 0;'><span class='label'>Date/Time:</span> {$drop_date}</div>
+            <div style='margin: 5px 0;'><span class='label'>Till:</span> {$till_name} (ID: {$till_number})</div>
+            <div style='margin: 5px 0;'><span class='label'>Cashier:</span> {$cashier_name}</div>
+            <div style='margin: 5px 0;'><span class='label'>Dropped By:</span> {$dropper_name}</div>
+            <div style='margin: 10px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 5px 0; text-align: center;'>
+                <div style='font-size: 16px; font-weight: bold;'>AMOUNT DROPPED</div>
+                <div style='font-size: 18px; font-weight: bold;'>\${$drop_amount}</div>
+            </div>";
+
+    if (!empty($notes)) {
+        $html .= "<div style='margin: 5px 0; font-size: 10px;'><span class='label'>Notes:</span> {$notes}</div>";
+    }
+
+    $html .= "
+            <div style='margin: 10px 0; text-align: center; font-size: 10px;'>
+                This drop has been recorded in the system.<br>
+                Keep this slip for your records.
+            </div>
+        </div>
+
+        <div class='footer'>
+            <div>Generated by POS System</div>
+            <div style='margin-top: 3px;'>Thank you!</div>
+        </div>
+    ";
+
+    return $html;
+}
+
+/**
+ * Generate HTML content for till closing slip
+ */
+function generateTillClosingSlipHTML($data) {
+    $company_name = htmlspecialchars($data['company_name']);
+    $company_address = htmlspecialchars($data['company_address']);
+    $company_phone = htmlspecialchars($data['company_phone']);
+    $till_name = htmlspecialchars($data['till_name']);
+    $till_code = htmlspecialchars($data['till_code']);
+    $cashier_name = htmlspecialchars($data['cashier_name']);
+    $closing_user_name = htmlspecialchars($data['closing_user_name']);
+    $closing_date = date('d/m/Y H:i', strtotime($data['closing_date']));
+    $currency_symbol = $data['currency_symbol'];
+    
+    // Format amounts
+    $opening_amount = number_format($data['opening_amount'], 2);
+    $total_sales = number_format($data['total_sales'], 2);
+    $total_drops = number_format($data['total_drops'], 2);
+    $expected_balance = number_format($data['expected_balance'], 2);
+    $actual_cash = number_format($data['actual_cash'], 2);
+    $voucher_amount = number_format($data['voucher_amount'], 2);
+    $loyalty_points = number_format($data['loyalty_points'], 2);
+    $other_amount = number_format($data['other_amount'], 2);
+    $total_closing = number_format($data['total_closing'], 2);
+    $difference = number_format($data['difference'], 2);
+    
+    $closing_notes = htmlspecialchars($data['closing_notes']);
+    $other_description = htmlspecialchars($data['other_description']);
+
+    $html = "
+        <div class='header'>
+            <div style='font-size: 16px; font-weight: bold; text-align: center;'>{$company_name}</div>";
+    
+    if (!empty($company_address)) {
+        $html .= "<div style='font-size: 12px; text-align: center;'>{$company_address}</div>";
+    }
+    
+    if (!empty($company_phone)) {
+        $html .= "<div style='font-size: 12px; text-align: center;'>{$company_phone}</div>";
+    }
+    
+    $html .= "
+            <div style='font-size: 14px; font-weight: bold; text-align: center; margin-top: 10px;'>TILL CLOSING SLIP</div>
+        </div>
+
+        <div class='content'>
+            <div style='margin: 5px 0;'><span class='label'>Till:</span> {$till_name} ({$till_code})</div>
+            <div style='margin: 5px 0;'><span class='label'>Closing Date:</span> {$closing_date}</div>
+            <div style='margin: 5px 0;'><span class='label'>Cashier:</span> {$cashier_name}</div>
+            <div style='margin: 5px 0;'><span class='label'>Closed By:</span> {$closing_user_name}</div>
+            
+            <div style='margin: 15px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0;'>
+                <div style='font-size: 14px; font-weight: bold; text-align: center; margin-bottom: 10px;'>TILL CALCULATION</div>
+                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Opening Amount:</span><span>{$currency_symbol} {$opening_amount}</span></div>
+                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Total Sales:</span><span>{$currency_symbol} {$total_sales}</span></div>
+                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Total Drops:</span><span>{$currency_symbol} {$total_drops}</span></div>
+                <div style='margin: 8px 0; padding-top: 5px; border-top: 1px solid #000; display: flex; justify-content: space-between; font-weight: bold;'><span>Expected Balance:</span><span>{$currency_symbol} {$expected_balance}</span></div>
+            </div>
+            
+            <div style='margin: 15px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0;'>
+                <div style='font-size: 14px; font-weight: bold; text-align: center; margin-bottom: 10px;'>ACTUAL COUNT</div>
+                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Cash Counted:</span><span>{$currency_symbol} {$actual_cash}</span></div>
+                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Voucher Amount:</span><span>{$currency_symbol} {$voucher_amount}</span></div>
+                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Loyalty Points:</span><span>{$currency_symbol} {$loyalty_points}</span></div>";
+    
+    if ($data['other_amount'] > 0) {
+        $html .= "<div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Other ({$other_description}):</span><span>{$currency_symbol} {$other_amount}</span></div>";
+    }
+    
+    $html .= "
+                <div style='margin: 8px 0; padding-top: 5px; border-top: 1px solid #000; display: flex; justify-content: space-between; font-weight: bold;'><span>Total Counted:</span><span>{$currency_symbol} {$total_closing}</span></div>
+            </div>
+            
+            <div style='margin: 15px 0; text-align: center; padding: 10px; background-color: #f8f9fa; border: 1px solid #000;'>
+                <div style='font-size: 14px; font-weight: bold; margin-bottom: 5px;'>DIFFERENCE</div>
+                <div style='font-size: 18px; font-weight: bold; color: " . (abs($data['difference']) <= 0.01 ? '#28a745' : ($data['difference'] > 0 ? '#dc3545' : '#ffc107')) . ";'>{$currency_symbol} {$difference}</div>
+            </div>";
+
+    if (!empty($closing_notes)) {
+        $html .= "<div style='margin: 10px 0; padding: 5px; background-color: #f8f9fa; border: 1px dashed #000;'><span class='label'>Notes:</span> {$closing_notes}</div>";
+    }
+
+    $html .= "
+            <div style='margin: 15px 0; text-align: center; font-size: 10px;'>
+                Till has been closed and reset to zero.<br>
+                This slip serves as proof of till closing.
+            </div>
+        </div>
+
+        <div class='footer'>
+            <div style='text-align: center; font-size: 10px;'>Generated by POS System</div>
+            <div style='text-align: center; font-size: 10px; margin-top: 3px;'>Thank you!</div>
+        </div>
+    ";
+
+    return $html;
+}
+?>

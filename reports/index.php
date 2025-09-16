@@ -454,6 +454,50 @@ $stats['total_customers'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
                         </div>
                     </div>
 
+                    <!-- Cash Drop Report -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='cash_drop_report.php'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-cash-stack fs-1 text-info"></i>
+                                </div>
+                                <h5 class="card-title">Cash Drop Report</h5>
+                                <p class="card-text text-muted">Comprehensive cash drop tracking with status monitoring, amounts, and detailed transaction history</p>
+                                <div class="report-module-stats">
+                                    <small class="text-info"><i class="bi bi-graph-up"></i> Drop Management</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-info"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Till Short/Excess Report -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='till_short_report.php'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-cash-coin fs-1 text-danger"></i>
+                                </div>
+                                <h5 class="card-title">Till Short/Excess Report</h5>
+                                <p class="card-text text-muted">Track till discrepancies, shortages, and excesses with detailed cash management analysis</p>
+                                <div class="report-module-stats">
+                                    <small class="text-danger"><i class="bi bi-exclamation-triangle"></i> Cash Variance Analysis</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-danger"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Held Transactions Report -->
                     <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
                         <div class="card report-module-card" onclick="location.href='held_transactions_report.php'" style="cursor: pointer;">
@@ -465,6 +509,184 @@ $stats['total_customers'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
                                 <p class="card-text text-muted">Report on held/suspended transactions and their resolution status</p>
                                 <div class="report-module-stats">
                                     <small class="text-warning"><i class="bi bi-clock-history"></i> Hold Analysis</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-warning"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Loyalty Points Reports Section -->
+                <div class="row mb-4">
+                    <div class="col-12 mb-3">
+                        <div class="report-category">
+                            <h4><i class="bi bi-gift"></i> Loyalty Points Reports</h4>
+                            <p class="mb-0">Customer loyalty program analytics, points tracking, and rewards management</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <!-- Loyalty Points Summary -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='loyalty_points_summary.php'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-graph-up fs-1 text-primary"></i>
+                                </div>
+                                <h5 class="card-title">Loyalty Points Summary</h5>
+                                <p class="card-text text-muted">Overall loyalty points statistics including earned, redeemed, and current balances</p>
+                                <div class="report-module-stats">
+                                    <small class="text-primary"><i class="bi bi-gift"></i> Points Analytics</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-primary"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loyalty Points Transactions -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='loyalty_points_transactions.php'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-list-ul fs-1 text-success"></i>
+                                </div>
+                                <h5 class="card-title">Points Transactions</h5>
+                                <p class="card-text text-muted">Detailed transaction history of points earned, redeemed, and adjustments</p>
+                                <div class="report-module-stats">
+                                    <small class="text-success"><i class="bi bi-list-ul"></i> Transaction History</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-success"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Customer Loyalty Ranking -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='loyalty_customer_ranking.php'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-trophy fs-1 text-warning"></i>
+                                </div>
+                                <h5 class="card-title">Customer Loyalty Ranking</h5>
+                                <p class="card-text text-muted">Customer ranking by loyalty points, membership levels, and engagement metrics</p>
+                                <div class="report-module-stats">
+                                    <small class="text-warning"><i class="bi bi-trophy"></i> Customer Rankings</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-warning"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- BOM Reports Section -->
+                <div class="row mb-4">
+                    <div class="col-12 mb-3">
+                        <div class="report-category">
+                            <h4><i class="bi bi-diagram-3"></i> BOM Reports</h4>
+                            <p class="mb-0">Bill of Materials analysis, cost calculations, and production planning reports</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <!-- BOM Cost Analysis -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='../bom/reports.php?type=cost_analysis'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-calculator fs-1 text-primary"></i>
+                                </div>
+                                <h5 class="card-title">BOM Cost Analysis</h5>
+                                <p class="card-text text-muted">Detailed cost breakdown for BOMs including material, labor, and overhead costs</p>
+                                <div class="report-module-stats">
+                                    <small class="text-primary"><i class="bi bi-calculator"></i> Cost Breakdown</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-primary"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Material Requirements Planning -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='../bom/reports.php?type=material_requirements'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-boxes fs-1 text-success"></i>
+                                </div>
+                                <h5 class="card-title">Material Requirements</h5>
+                                <p class="card-text text-muted">Material requirements planning with quantity calculations and stock availability</p>
+                                <div class="report-module-stats">
+                                    <small class="text-success"><i class="bi bi-boxes"></i> MRP Analysis</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-success"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Where Used Analysis -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='../bom/reports.php?type=where_used'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-search fs-1 text-info"></i>
+                                </div>
+                                <h5 class="card-title">Where Used Analysis</h5>
+                                <p class="card-text text-muted">Track component usage across different BOMs and production orders</p>
+                                <div class="report-module-stats">
+                                    <small class="text-info"><i class="bi bi-search"></i> Usage Tracking</small>
+                                </div>
+                            </div>
+                            <div class="card-footer bg-transparent border-0">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">View Report</small>
+                                    <i class="bi bi-arrow-right text-info"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Production Summary -->
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card report-module-card" onclick="location.href='../bom/reports.php?type=production_summary'" style="cursor: pointer;">
+                            <div class="card-body text-center p-4">
+                                <div class="report-module-icon mb-3">
+                                    <i class="bi bi-graph-up fs-1 text-warning"></i>
+                                </div>
+                                <h5 class="card-title">Production Summary</h5>
+                                <p class="card-text text-muted">Production order summaries with completion rates and cost analysis</p>
+                                <div class="report-module-stats">
+                                    <small class="text-warning"><i class="bi bi-graph-up"></i> Production Metrics</small>
                                 </div>
                             </div>
                             <div class="card-footer bg-transparent border-0">
