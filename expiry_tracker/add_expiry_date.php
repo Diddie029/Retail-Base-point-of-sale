@@ -73,6 +73,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $quantity = floatval($quantity);
     }
     
+    // Validate supplier_id - now required
+    if (empty($supplier_id)) {
+        $errors[] = "Supplier is required";
+    } elseif (!is_numeric($supplier_id) || intval($supplier_id) <= 0) {
+        $errors[] = "Please select a valid supplier";
+    } else {
+        $supplier_id = intval($supplier_id);
+    }
+    
     // Validate unit_cost - allow empty but ensure it's numeric if provided
     if (!empty($unit_cost)) {
         if (!is_numeric($unit_cost) || floatval($unit_cost) < 0) {
@@ -207,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Get products for dropdown
 $products = $conn->query("
-    SELECT p.id, p.name, p.sku, c.name as category_name
+    SELECT p.id, p.name, p.sku, p.cost_price, p.price, c.name as category_name
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
     WHERE p.status = 'active'
@@ -317,7 +326,7 @@ $page_title = "Add Expiry Date";
                         <input type="number" name="unit_cost" id="unit_cost" 
                                value="<?php echo htmlspecialchars($_POST['unit_cost'] ?? ''); ?>"
                                min="0" step="0.01" placeholder="0.00">
-                        <small class="form-help">Leave empty or enter 0.00 if not applicable</small>
+                        <small class="form-help">Auto-populated from product cost price. Leave empty or enter 0.00 if not applicable</small>
                     </div>
                 </div>
 
@@ -330,8 +339,8 @@ $page_title = "Add Expiry Date";
                     </div>
                     
                     <div class="form-group">
-                        <label for="supplier_id">Supplier</label>
-                        <select name="supplier_id" id="supplier_id">
+                        <label for="supplier_id">Supplier *</label>
+                        <select name="supplier_id" id="supplier_id" required>
                             <option value="">Select Supplier</option>
                             <?php foreach ($suppliers as $supplier): ?>
                                 <option value="<?php echo $supplier['id']; ?>" <?php echo (isset($_POST['supplier_id']) && $_POST['supplier_id'] == $supplier['id']) ? 'selected' : ''; ?>>
@@ -368,6 +377,35 @@ $page_title = "Add Expiry Date";
                     <label for="notes">Notes</label>
                     <textarea name="notes" id="notes" rows="3" 
                               placeholder="Additional notes about this expiry batch"><?php echo htmlspecialchars($_POST['notes'] ?? ''); ?></textarea>
+                </div>
+
+                <!-- Cost Summary -->
+                <div class="cost-summary">
+                    <div class="summary-header">
+                        <h4><i class="fas fa-calculator"></i> Cost Summary</h4>
+                    </div>
+                    <div class="summary-content">
+                        <div class="summary-row">
+                            <div class="summary-item">
+                                <label>Unit Cost:</label>
+                                <span id="summary-unit-cost">KES 0.00</span>
+                            </div>
+                            <div class="summary-item">
+                                <label>Quantity:</label>
+                                <span id="summary-quantity">0</span>
+                            </div>
+                        </div>
+                        <div class="summary-row">
+                            <div class="summary-item">
+                                <label>Total Value:</label>
+                                <span id="summary-total-value" class="total-value">KES 0.00</span>
+                            </div>
+                            <div class="summary-item">
+                                <label>Status:</label>
+                                <span id="summary-status" class="status-text">Ready to add</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="form-actions">
@@ -483,6 +521,29 @@ $page_title = "Add Expiry Date";
                 }
             });
 
+            // Auto-populate unit cost when product is selected
+            const productSelect = document.getElementById('product_id');
+            productSelect.addEventListener('change', function() {
+                const selectedProductId = this.value;
+                if (selectedProductId) {
+                    // Find the selected product data
+                    const products = <?php echo json_encode($products); ?>;
+                    const selectedProduct = products.find(p => p.id == selectedProductId);
+                    
+                    if (selectedProduct) {
+                        // Use cost_price if available, otherwise use price
+                        const unitCost = selectedProduct.cost_price > 0 ? selectedProduct.cost_price : selectedProduct.price;
+                        unitCostInput.value = unitCost.toFixed(2);
+                        
+                        // Trigger total cost calculation
+                        calculateTotalCost();
+                    }
+                } else {
+                    // Clear unit cost if no product selected
+                    unitCostInput.value = '';
+                }
+            });
+
             // Auto-calculate total cost
             quantityInput.addEventListener('input', calculateTotalCost);
             unitCostInput.addEventListener('input', calculateTotalCost);
@@ -492,8 +553,30 @@ $page_title = "Add Expiry Date";
                 const unitCost = parseFloat(unitCostInput.value) || 0;
                 const totalCost = quantity * unitCost;
                 
-                // You could display this somewhere if needed
+                // Update cost summary
+                updateCostSummary(unitCost, quantity, totalCost);
+                
                 console.log('Total cost:', totalCost);
+            }
+
+            function updateCostSummary(unitCost, quantity, totalCost) {
+                // Update summary display
+                document.getElementById('summary-unit-cost').textContent = `KES ${unitCost.toFixed(2)}`;
+                document.getElementById('summary-quantity').textContent = quantity.toString();
+                document.getElementById('summary-total-value').textContent = `KES ${totalCost.toFixed(2)}`;
+                
+                // Update status
+                const statusElement = document.getElementById('summary-status');
+                if (quantity > 0 && unitCost > 0) {
+                    statusElement.textContent = 'Ready to add';
+                    statusElement.className = 'status-text ready';
+                } else if (quantity > 0) {
+                    statusElement.textContent = 'Unit cost needed';
+                    statusElement.className = 'status-text warning';
+                } else {
+                    statusElement.textContent = 'Quantity needed';
+                    statusElement.className = 'status-text warning';
+                }
             }
         });
     </script>

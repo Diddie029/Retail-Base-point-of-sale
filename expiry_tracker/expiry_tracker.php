@@ -628,15 +628,21 @@ $page_title = "Expiry Tracker";
                                             </span>
                                         </td>
                                         <td>
-                                            <span class="<?php echo $is_critical ? 'text-warning fw-bold' : ($is_expired ? 'text-danger fw-bold' : ''); ?>">
-                                                <?php 
-                                                if ($is_expired) {
-                                                    echo 'Expired ' . abs(round($days_until_expiry)) . ' days ago';
-                                                } else {
-                                                    echo round($days_until_expiry) . ' days';
-                                                }
-                                                ?>
-                                            </span>
+                                            <?php if ($item['status'] === 'disposed' || $item['status'] === 'returned'): ?>
+                                                <span class="text-success fw-bold">
+                                                    <i class="bi bi-check-circle"></i> Action Taken
+                                                </span>
+                                            <?php else: ?>
+                                                <span class="<?php echo $is_critical ? 'text-warning fw-bold' : ($is_expired ? 'text-danger fw-bold' : ''); ?>">
+                                                    <?php 
+                                                    if ($is_expired) {
+                                                        echo 'Expired ' . abs(round($days_until_expiry)) . ' days ago';
+                                                    } else {
+                                                        echo round($days_until_expiry) . ' days';
+                                                    }
+                                                    ?>
+                                                </span>
+                                            <?php endif; ?>
                                         </td>
                                         <td>
                                             <span class="badge bg-primary">
@@ -653,7 +659,15 @@ $page_title = "Expiry Tracker";
                                                     default => 'light'
                                                 };
                                             ?>">
-                                                <?php echo ucfirst($item['status']); ?>
+                                                <?php 
+                                                echo match($item['status']) {
+                                                    'active' => 'Active',
+                                                    'expired' => 'Expired',
+                                                    'disposed' => 'Disposed',
+                                                    'returned' => 'Returned',
+                                                    default => ucfirst($item['status'])
+                                                };
+                                                ?>
                                             </span>
                                         </td>
                                         <td>

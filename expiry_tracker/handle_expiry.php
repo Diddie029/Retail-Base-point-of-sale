@@ -172,13 +172,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $new_remaining = $expiry_item['remaining_quantity'] - $quantity_affected;
             
             if ($new_remaining <= 0) {
-                // All items processed, update status
+                // All items processed, update status based on action type
+                $status = 'disposed'; // Default status
+                switch ($action_type) {
+                    case 'return':
+                        $status = 'returned';
+                        break;
+                    case 'dispose':
+                        $status = 'disposed';
+                        break;
+                    case 'sell_at_discount':
+                    case 'donate':
+                    case 'recall':
+                    case 'other':
+                        $status = 'disposed'; // These actions result in disposal
+                        break;
+                }
+                
                 $stmt = $conn->prepare("
                     UPDATE product_expiry_dates 
-                    SET status = 'disposed', remaining_quantity = 0, updated_at = NOW()
+                    SET status = ?, remaining_quantity = 0, updated_at = NOW()
                     WHERE id = ?
                 ");
-                $stmt->execute([$expiry_id]);
+                $stmt->execute([$status, $expiry_id]);
                 
                 // Update product quantity
                 $stmt = $conn->prepare("
@@ -444,6 +460,19 @@ $page_title = "Handle Expiry Item";
                                 <i class="fas fa-question-circle"></i> 
                                 <span id="action-description">Select an action type to see detailed description</span>
                             </small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <div class="auto-generate-section">
+                                <button type="button" id="auto-generate-btn" class="btn btn-outline-primary">
+                                    <i class="fas fa-magic"></i> Auto-Generate Return
+                                </button>
+                                <small class="form-help">
+                                    <i class="fas fa-lightbulb"></i> 
+                                    Automatically fill all fields for return action
+                                </small>
+                            </div>
                         </div>
                         
                         <div class="form-group">
@@ -747,6 +776,95 @@ $page_title = "Handle Expiry Item";
             } else {
                 netImpactElement.className = 'net-impact neutral';
             }
+        }
+
+        // Auto-generate return functionality
+        document.getElementById('auto-generate-btn').addEventListener('click', function() {
+            // Check if all required fields can be auto-filled
+            const canAutoFill = checkAutoFillAvailability();
+            
+            if (canAutoFill) {
+                autoFillReturnFields();
+                showToast('Return fields auto-filled successfully!', 'success');
+            } else {
+                if (confirm('Some fields are missing. Would you like to auto-fill the available fields and be prompted for the missing ones?')) {
+                    autoFillReturnFields();
+                    showToast('Available fields auto-filled. Please complete the missing fields.', 'info');
+                }
+            }
+        });
+
+        function checkAutoFillAvailability() {
+            // Check if we have all the data needed for auto-fill
+            const hasProductInfo = true; // We have product info from PHP
+            const hasSupplierInfo = <?php echo $expiry_item['supplier_id'] ? 'true' : 'false'; ?>;
+            const hasQuantity = true; // We have remaining quantity
+            
+            return hasProductInfo && hasSupplierInfo && hasQuantity;
+        }
+
+        function autoFillReturnFields() {
+            // Set action type to return
+            document.getElementById('action_type').value = 'return';
+            updateActionDescription();
+            
+            // Set quantity to remaining quantity
+            const remainingQuantity = <?php echo $expiry_item['remaining_quantity']; ?>;
+            document.getElementById('quantity_affected').value = remainingQuantity;
+            
+            // Set reason
+            const expiryDate = '<?php echo $expiry_item['expiry_date']; ?>';
+            const productName = '<?php echo addslashes($expiry_item['product_name']); ?>';
+            document.getElementById('reason').value = `Product ${productName} expired on ${expiryDate}. Returning to supplier for credit.`;
+            
+            // Set return reference (generate one)
+            const returnRef = 'RMA-' + Date.now().toString().slice(-6);
+            document.getElementById('return_reference').value = returnRef;
+            
+            // Set cost (unit cost * quantity)
+            const unitCost = <?php echo $expiry_item['unit_cost']; ?>;
+            const totalCost = unitCost * remainingQuantity;
+            document.getElementById('cost').value = totalCost.toFixed(2);
+            
+            // Set notes
+            document.getElementById('notes').value = `Auto-generated return for expired product. Batch: <?php echo $expiry_item['batch_number'] ?: 'N/A'; ?>, Location: <?php echo $expiry_item['location'] ?: 'N/A'; ?>`;
+            
+            // Show/hide relevant fields
+            const disposalMethodGroup = document.querySelector('label[for="disposal_method"]').parentElement;
+            const returnReferenceGroup = document.querySelector('label[for="return_reference"]').parentElement;
+            const costGroup = document.querySelector('label[for="cost"]').parentElement;
+            
+            disposalMethodGroup.style.display = 'none';
+            returnReferenceGroup.style.display = 'block';
+            costGroup.style.display = 'block';
+            
+            // Update financial summary
+            updateFinancialSummary();
+        }
+
+        function showToast(message, type = 'info') {
+            // Create toast element
+            const toast = document.createElement('div');
+            toast.className = `toast align-items-center text-white bg-${type === 'success' ? 'success' : type === 'error' ? 'danger' : 'info'} border-0`;
+            toast.setAttribute('role', 'alert');
+            toast.innerHTML = `
+                <div class="d-flex">
+                    <div class="toast-body">${message}</div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>
+            `;
+            
+            // Add to page
+            document.body.appendChild(toast);
+            
+            // Show toast
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+            
+            // Remove after hidden
+            toast.addEventListener('hidden.bs.toast', () => {
+                toast.remove();
+            });
         }
 
         // Form submission validation

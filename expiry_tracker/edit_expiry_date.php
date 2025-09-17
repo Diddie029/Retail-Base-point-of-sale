@@ -48,7 +48,9 @@ try {
         SELECT 
             ped.*,
             p.name as product_name,
-            p.sku
+            p.sku,
+            p.cost_price,
+            p.price
         FROM product_expiry_dates ped
         JOIN products p ON ped.product_id = p.id
         WHERE ped.id = ?
@@ -96,6 +98,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = "Quantity must be a positive number";
     } else {
         $quantity = floatval($quantity);
+    }
+    
+    // Validate supplier_id - now required
+    if (empty($supplier_id)) {
+        $errors[] = "Supplier is required";
+    } elseif (!is_numeric($supplier_id) || intval($supplier_id) <= 0) {
+        $errors[] = "Please select a valid supplier";
+    } else {
+        $supplier_id = intval($supplier_id);
     }
     
     // Validate unit_cost - allow empty but ensure it's numeric if provided
@@ -345,6 +356,7 @@ $page_title = "Edit Expiry Date";
                         <input type="number" name="unit_cost" id="unit_cost" 
                                value="<?php echo $expiry_item['unit_cost'] ?? ''; ?>"
                                min="0" step="0.01">
+                        <small class="form-help">Auto-populated from product cost price if empty</small>
                     </div>
                     
                     <div class="form-group">
@@ -357,8 +369,8 @@ $page_title = "Edit Expiry Date";
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="supplier_id">Supplier</label>
-                        <select name="supplier_id" id="supplier_id">
+                        <label for="supplier_id">Supplier *</label>
+                        <select name="supplier_id" id="supplier_id" required>
                             <option value="">Select Supplier</option>
                             <?php foreach ($suppliers as $supplier): ?>
                                 <option value="<?php echo $supplier['id']; ?>" <?php echo ($expiry_item['supplier_id'] == $supplier['id']) ? 'selected' : ''; ?>>
@@ -397,6 +409,35 @@ $page_title = "Edit Expiry Date";
                               placeholder="Additional notes about this expiry batch"><?php echo htmlspecialchars($expiry_item['notes'] ?? ''); ?></textarea>
                 </div>
 
+                <!-- Cost Summary -->
+                <div class="cost-summary">
+                    <div class="summary-header">
+                        <h4><i class="fas fa-calculator"></i> Cost Summary</h4>
+                    </div>
+                    <div class="summary-content">
+                        <div class="summary-row">
+                            <div class="summary-item">
+                                <label>Unit Cost:</label>
+                                <span id="summary-unit-cost">KES 0.00</span>
+                            </div>
+                            <div class="summary-item">
+                                <label>Quantity:</label>
+                                <span id="summary-quantity">0</span>
+                            </div>
+                        </div>
+                        <div class="summary-row">
+                            <div class="summary-item">
+                                <label>Total Value:</label>
+                                <span id="summary-total-value" class="total-value">KES 0.00</span>
+                            </div>
+                            <div class="summary-item">
+                                <label>Status:</label>
+                                <span id="summary-status" class="status-text">Ready to update</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="form-actions">
                     <button type="submit" class="btn btn-primary">
                         <i class="fas fa-save"></i> Update Expiry Date
@@ -424,6 +465,21 @@ $page_title = "Edit Expiry Date";
             }
         });
 
+        // Auto-populate unit cost if empty
+        const unitCostInput = document.getElementById('unit_cost');
+        const currentUnitCost = parseFloat(unitCostInput.value) || 0;
+        
+        if (currentUnitCost === 0) {
+            // Use cost_price if available, otherwise use price
+            const productCostPrice = <?php echo $expiry_item['cost_price'] ?? 0; ?>;
+            const productPrice = <?php echo $expiry_item['price'] ?? 0; ?>;
+            const unitCost = productCostPrice > 0 ? productCostPrice : productPrice;
+            
+            if (unitCost > 0) {
+                unitCostInput.value = unitCost.toFixed(2);
+            }
+        }
+
         // Auto-calculate total cost
         document.getElementById('quantity').addEventListener('input', calculateTotalCost);
         document.getElementById('unit_cost').addEventListener('input', calculateTotalCost);
@@ -433,7 +489,30 @@ $page_title = "Edit Expiry Date";
             const unitCost = parseFloat(document.getElementById('unit_cost').value) || 0;
             const totalCost = quantity * unitCost;
             
+            // Update cost summary
+            updateCostSummary(unitCost, quantity, totalCost);
+            
             console.log('Total cost:', totalCost);
+        }
+
+        function updateCostSummary(unitCost, quantity, totalCost) {
+            // Update summary display
+            document.getElementById('summary-unit-cost').textContent = `KES ${unitCost.toFixed(2)}`;
+            document.getElementById('summary-quantity').textContent = quantity.toString();
+            document.getElementById('summary-total-value').textContent = `KES ${totalCost.toFixed(2)}`;
+            
+            // Update status
+            const statusElement = document.getElementById('summary-status');
+            if (quantity > 0 && unitCost > 0) {
+                statusElement.textContent = 'Ready to update';
+                statusElement.className = 'status-text ready';
+            } else if (quantity > 0) {
+                statusElement.textContent = 'Unit cost needed';
+                statusElement.className = 'status-text warning';
+            } else {
+                statusElement.textContent = 'Quantity needed';
+                statusElement.className = 'status-text warning';
+            }
         }
     </script>
 </body>
