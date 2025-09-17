@@ -889,7 +889,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
         /* Activity History and Overview Layout */
         .activity-layout {
             display: flex;
-            gap: 2rem;
+            gap: 1rem;
         }
 
         .activity-history-section {
@@ -914,7 +914,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
         @media (max-width: 992px) {
             .activity-layout {
                 flex-direction: column;
-                gap: 2rem;
+                gap: 1rem;
             }
 
             .activity-history-section,
@@ -930,7 +930,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
 
         @media (max-width: 576px) {
             .activity-layout {
-                gap: 1rem;
+                gap: 0.5rem;
             }
 
             .activity-history-section .card-body-custom {
@@ -939,6 +939,19 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
 
             .activity-stat-card {
                 padding: 1rem !important;
+            }
+
+            /* Activity Summary responsive design */
+            .activity-summary .col-3 {
+                flex: 0 0 50%;
+                max-width: 50%;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .activity-summary .col-3 {
+                flex: 0 0 100%;
+                max-width: 100%;
             }
         }
 
@@ -1366,24 +1379,13 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                         </div>
                     </div>
 
-                    <!-- Activity Overview Chart -->
-                    <div class="content-card">
-                        <div class="card-header-custom">
-                            <h5><i class="bi bi-bar-chart"></i> Activity Overview</h5>
-                        </div>
-                        <div class="card-body-custom">
-                            <div class="chart-container">
-                                <canvas id="activityChart"></canvas>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
 
             <!-- Activity History and Overview Side by Side -->
             <div class="activity-layout">
-                <!-- Activity History - 50% width -->
-                <div class="activity-history-section">
+                <!-- Activity History - 60% width -->
+                <div class="activity-history-section" style="flex: 1.2;">
                     <div class="content-card">
                         <div class="card-header-custom">
                             <h5><i class="bi bi-clock-history"></i> Complete Activity History</h5>
@@ -1571,47 +1573,67 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                     </div>
                 </div>
 
-                <!-- Activity Overview - 50% width -->
-                <div class="activity-overview-section">
+                <!-- Activity Overview - 40% width -->
+                <div class="activity-overview-section" style="flex: 0.8;">
                     <div class="content-card">
                         <div class="card-header-custom">
                             <h5><i class="bi bi-bar-chart"></i> Activity Overview</h5>
                         </div>
                         <div class="card-body-custom">
-                            <div class="chart-container">
-                                <canvas id="activityChart"></canvas>
-                            </div>
-
-                            <!-- Activity Statistics -->
                             <?php if (!empty($comprehensive_activities)): ?>
-                            <div class="mt-3">
-                                <h6 class="mb-2"><i class="bi bi-pie-chart me-2"></i>Activity Breakdown</h6>
-                                <div class="row g-2">
+                                <!-- Activity Chart -->
+                                <div class="chart-container">
+                                    <canvas id="activityChart"></canvas>
+                                </div>
+
+
+                                <!-- Activity Summary Stats -->
+                                <div class="mt-4 activity-summary">
+                                    <h6 class="mb-3"><i class="bi bi-graph-up me-2"></i>Activity Summary</h6>
                                     <?php
+                                    // Calculate activity counts and totals
                                     $activity_counts = array_count_values(array_column($comprehensive_activities, 'activity_type'));
                                     $total_activities = count($comprehensive_activities);
-                                    $activity_labels = [
-                                        'expiry_action' => 'Expiry Actions',
-                                        'system_activity' => 'System Activities',
-                                        'alert_sent' => 'Alerts Sent',
-                                        'item_created' => 'Item Created',
-                                        'item_updated' => 'Item Updated',
-                                        'status_change' => 'Status Changes'
-                                    ];
                                     ?>
-                                    <?php foreach ($activity_counts as $type => $count): ?>
-                                        <div class="col-6">
-                                            <div class="activity-stat-card p-2 border rounded text-center">
-                                                <div class="fw-bold"><?php echo $count; ?></div>
-                                                <small class="text-muted"><?php echo $activity_labels[$type] ?? ucfirst(str_replace('_', ' ', $type)); ?></small>
-                                                <div class="progress mt-1" style="height: 4px;">
-                                                    <div class="progress-bar bg-primary" style="width: <?php echo ($count / $total_activities) * 100; ?>%"></div>
-                                                </div>
+                                    <div class="row g-3">
+                                        <div class="col-3">
+                                            <div class="p-3 bg-light rounded text-center">
+                                                <div class="h4 text-primary mb-1"><?php echo $total_activities; ?></div>
+                                                <small class="text-muted">Total Activities</small>
                                             </div>
                                         </div>
-                                    <?php endforeach; ?>
+                                        <div class="col-3">
+                                            <div class="p-3 bg-light rounded text-center">
+                                                <div class="h4 text-success mb-1">
+                                                    <?php echo isset($activity_counts['expiry_action']) ? $activity_counts['expiry_action'] : 0; ?>
+                                                </div>
+                                                <small class="text-muted">Expiry Actions</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-3">
+                                            <div class="p-3 bg-light rounded text-center">
+                                                <div class="h4 text-info mb-1">
+                                                    <?php echo isset($activity_counts['alert_sent']) ? $activity_counts['alert_sent'] : 0; ?>
+                                                </div>
+                                                <small class="text-muted">Alerts Sent</small>
+                                            </div>
+                                        </div>
+                                        <div class="col-3">
+                                            <div class="p-3 bg-light rounded text-center">
+                                                <div class="h4 text-warning mb-1">
+                                                    <?php echo isset($activity_counts['status_change']) ? $activity_counts['status_change'] : 0; ?>
+                                                </div>
+                                                <small class="text-muted">Status Changes</small>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
+                            <?php else: ?>
+                                <div class="text-center py-5 text-muted">
+                                    <i class="bi bi-bar-chart display-4 d-block mb-3"></i>
+                                    <h5>No Activity Data</h5>
+                                    <p>Activity overview will appear here once activities are recorded.</p>
+                                </div>
                             <?php endif; ?>
                         </div>
                     </div>
