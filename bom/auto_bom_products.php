@@ -84,7 +84,8 @@ $where_clause = !empty($where_conditions) ? 'WHERE ' . implode(' AND ', $where_c
 
 // Get Auto BOM products with pagination
 $page = max(1, intval($_GET['page'] ?? 1));
-$per_page = 12;
+$per_page = intval($_GET['per_page'] ?? 12);
+$per_page = in_array($per_page, [10, 20, 50, 100]) ? $per_page : 12; // Validate per_page value
 $offset = ($page - 1) * $per_page;
 
 $count_sql = "
@@ -200,255 +201,6 @@ foreach ($auto_bom_products as $product) {
             border-radius: 8px;
         }
 
-        .product-card {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            margin-bottom: 16px;
-            overflow: hidden;
-            transition: all 0.3s ease;
-            border: 1px solid #e5e7eb;
-            width: 100%;
-        }
-
-        .product-card:hover {
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        }
-
-        .product-header {
-            background: #ffffff;
-            padding: 16px 20px;
-            border-bottom: 1px solid #f3f4f6;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .product-name {
-            font-size: 1.125rem;
-            font-weight: 600;
-            color: #ef4444;
-            margin-bottom: 4px;
-        }
-
-        .product-meta {
-            color: #9ca3af;
-            font-size: 0.875rem;
-            margin: 0;
-        }
-
-        .status-badge {
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .status-active {
-            background: #dcfce7;
-            color: #16a34a;
-        }
-
-        .status-inactive {
-            background: #fef2f2;
-            color: #dc2626;
-        }
-
-        .product-body {
-            padding: 16px 20px;
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr auto auto;
-            gap: 20px;
-            align-items: center;
-        }
-
-        .base-product-section {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-left: 4px solid #ef4444;
-            padding: 12px 16px;
-            border-radius: 6px;
-        }
-
-        .base-product-title {
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 6px;
-            font-size: 0.875rem;
-        }
-
-        .base-product-name {
-            font-size: 0.95rem;
-            font-weight: 500;
-            color: #111827;
-            margin-bottom: 8px;
-        }
-
-        .base-product-details {
-            display: flex;
-            gap: 12px;
-            font-size: 0.8rem;
-            color: #6b7280;
-        }
-
-        .base-detail-item {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .base-detail-label {
-            font-weight: 500;
-            color: #374151;
-        }
-
-        .product-metrics {
-            display: contents;
-        }
-        
-        @media (max-width: 1200px) {
-            .product-body {
-                grid-template-columns: 1fr;
-                gap: 15px;
-            }
-            
-            .product-metrics {
-                display: flex;
-                gap: 10px;
-                justify-content: space-around;
-                flex-wrap: wrap;
-            }
-            
-            .action-buttons {
-                justify-content: center;
-            }
-        }
-
-        .metric-box {
-            text-align: center;
-            padding: 8px 12px;
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 6px;
-            min-width: 80px;
-        }
-
-        .metric-number {
-            font-size: 1.25rem;
-            font-weight: 700;
-            color: #ef4444;
-            display: block;
-            line-height: 1.2;
-        }
-
-        .metric-label {
-            font-size: 0.75rem;
-            color: #9ca3af;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            font-weight: 500;
-            margin-top: 4px;
-        }
-
-        .config-label {
-            color: #6b7280;
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            font-weight: 500;
-        }
-
-        .config-value {
-            color: #111827;
-            font-weight: 500;
-            font-size: 0.8rem;
-        }
-
-        .family-label {
-            color: #6b7280;
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            font-weight: 500;
-        }
-
-        .family-value {
-            color: #111827;
-            font-weight: 500;
-            font-size: 0.8rem;
-        }
-
-        .action-buttons {
-            display: flex;
-            gap: 8px;
-        }
-
-        .show-details-column {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .metric-card {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-            border: 1px solid #e9ecef;
-        }
-
-        .metric-value {
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: var(--primary-color);
-            display: block;
-        }
-
-        .selling-units-section {
-            grid-column: 1 / -1;
-            margin-top: 16px;
-            padding-top: 16px;
-            border-top: 1px solid #e9ecef;
-        }
-
-        .selling-units-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-
-        .selling-unit-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px;
-            border: 1px solid #e9ecef;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            background: #f8f9fa;
-        }
-
-        .selling-unit-info {
-            flex: 1;
-        }
-
-        .selling-unit-name {
-            font-weight: 600;
-            margin-bottom: 2px;
-        }
-
-        .selling-unit-details {
-            font-size: 0.8rem;
-            color: #64748b;
-        }
-
-        .selling-unit-price {
-            font-weight: 700;
-            color: var(--primary-color);
-        }
-
         .filters-section {
             background: white;
             border-radius: 12px;
@@ -483,51 +235,19 @@ foreach ($auto_bom_products as $product) {
             border-radius: 4px;
         }
 
-        .expand-toggle {
-            cursor: pointer;
+        .metric-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #e9ecef;
+        }
+
+        .metric-value {
+            font-size: 1.5rem;
+            font-weight: bold;
             color: var(--primary-color);
-            font-size: 0.9rem;
-            text-decoration: none;
-        }
-
-        .expand-toggle:hover {
-            text-decoration: underline;
-        }
-
-        .selling-units-container {
-            display: none;
-        }
-
-        .selling-units-container.expanded {
             display: block;
-        }
-
-        .auto-bom-indicator {
-            background: #06b6d4;
-            color: white;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            margin-left: 8px;
-        }
-
-        .base-product-info {
-            background: #f0f9ff;
-            padding: 10px;
-            border-radius: 6px;
-            margin-bottom: 15px;
-            border-left: 4px solid var(--primary-color);
-        }
-
-        .btn-small {
-            padding: 6px 12px;
-            font-size: 0.8rem;
-            white-space: nowrap;
-        }
-
-        .products-list {
-            max-width: 100%;
         }
         
         .dashboard-container {
@@ -640,6 +360,56 @@ foreach ($auto_bom_products as $product) {
                 </div>
             </div>
 
+            <!-- Display Controls and Product Count -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="d-flex align-items-center">
+                        <span class="me-3">
+                            <strong>Display Mode:</strong>
+                        </span>
+                        <div class="btn-group" role="group" aria-label="Display mode">
+                            <button type="button" class="btn btn-outline-primary active" id="table-view-btn">
+                                <i class="bi bi-table"></i> Table View
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="grid-view-btn">
+                                <i class="bi bi-grid-3x3"></i> Grid View
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-end align-items-center">
+                        <span class="me-3">
+                            <strong>Products per page:</strong>
+                        </span>
+                        <select class="form-select form-select-sm" id="per-page-select" style="width: auto;">
+                            <option value="10" <?php echo $per_page == 10 ? 'selected' : ''; ?>>10</option>
+                            <option value="20" <?php echo $per_page == 20 ? 'selected' : ''; ?>>20</option>
+                            <option value="50" <?php echo $per_page == 50 ? 'selected' : ''; ?>>50</option>
+                            <option value="100" <?php echo $per_page == 100 ? 'selected' : ''; ?>>100</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Product Count and Results Info -->
+            <div class="row mb-3">
+                <div class="col-12">
+                    <div class="alert alert-info d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi bi-info-circle me-2"></i>
+                            Showing <strong><?php echo number_format(count($auto_bom_products)); ?></strong> of <strong><?php echo number_format($total_records); ?></strong> Auto BOM products
+                            <?php if (!empty($search) || !empty($category_filter) || !empty($family_filter) || !empty($status_filter)): ?>
+                                (filtered results)
+                            <?php endif; ?>
+                        </div>
+                        <div>
+                            Page <strong><?php echo $page; ?></strong> of <strong><?php echo $total_pages; ?></strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Filters Section -->
             <div class="filters-section">
                 <form method="GET" class="filters-row">
@@ -698,168 +468,196 @@ foreach ($auto_bom_products as $product) {
                 </form>
             </div>
 
-            <!-- Products Grid -->
-            <div class="row">
-                <?php if (empty($auto_bom_products)): ?>
-                    <div class="col-12">
-                        <div class="text-center py-5">
-                            <i class="bi bi-gear-fill display-1 text-muted mb-3"></i>
-                            <h4 class="text-muted">No Auto BOM products found</h4>
-                            <p class="text-muted mb-4">Get started by creating Auto BOM configurations for your products</p>
-
-                            <!-- Unit System Example -->
-                            <div class="alert alert-info mt-4">
-                                <h6><i class="bi bi-lightbulb me-2"></i>How Auto BOM Units Work:</h6>
-                                <div class="row mt-3">
-                                    <div class="col-md-4">
-                                        <strong>Example 1 - Cooking Oil:</strong><br>
-                                        Base: 20L container<br>
-                                        Selling: 500ml bottles<br>
-                                        Conversion: 40 bottles = 1 container
+            <!-- Auto BOM Products Display -->
+            <?php if (empty($auto_bom_products)): ?>
+                <div class="text-center py-5">
+                    <i class="bi bi-gear-fill display-1 text-muted mb-3"></i>
+                    <h4 class="text-muted">No Auto BOM products found</h4>
+                    <p class="text-muted mb-4">Get started by creating Auto BOM configurations for your products</p>
+                    <?php if ($can_manage_auto_boms): ?>
+                        <a href="auto_bom_setup.php" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Create Auto BOM
+                        </a>
+                    <?php endif; ?>
+                </div>
+            <?php else: ?>
+                <!-- Table View -->
+                <div id="table-view" class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Configuration</th>
+                                <th>Sellable Product</th>
+                                <th>Base Product</th>
+                                <th>Base Unit</th>
+                                <th>Selling Units</th>
+                                <th>Family</th>
+                                <th>Stock</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($auto_bom_products as $product): ?>
+                            <tr>
+                                <td>
+                                    <strong><?php echo htmlspecialchars($product['config_name']); ?></strong>
+                                </td>
+                                <td>
+                                    <div>
+                                        <strong><?php echo htmlspecialchars($product['name']); ?></strong><br>
+                                        <small class="text-muted">SKU: <?php echo htmlspecialchars($product['sku']); ?></small><br>
+                                        <small class="text-muted">Category: <?php echo htmlspecialchars($product['category_name'] ?? 'N/A'); ?></small>
                                     </div>
-                                    <div class="col-md-4">
-                                        <strong>Example 2 - Rice:</strong><br>
-                                        Base: 50kg bag<br>
-                                        Selling: 1kg packs<br>
-                                        Conversion: 50 packs = 1 bag
+                                </td>
+                                <td>
+                                    <div>
+                                        <?php echo htmlspecialchars($product['base_product_name']); ?><br>
+                                        <small class="text-muted">SKU: <?php echo htmlspecialchars($product['base_product_sku']); ?></small>
                                     </div>
-                                    <div class="col-md-4">
-                                        <strong>Example 3 - Soap:</strong><br>
-                                        Base: Case of 24 bars<br>
-                                        Selling: Single bars<br>
-                                        Conversion: 24 bars = 1 case
-                                    </div>
-                                </div>
-                            </div>
-                            <?php if ($can_manage_auto_boms): ?>
-                                <a href="auto_bom_setup.php" class="btn btn-primary">
-                                    <i class="bi bi-plus-circle"></i> Create Auto BOM
-                                </a>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                <?php else: ?>
-                    <div class="products-list">
-                    <?php foreach ($auto_bom_products as $product): ?>
-                        <div class="product-card">
-                            <div class="product-header">
-                                <div>
-                                    <div class="product-name"><?php echo htmlspecialchars($product['name']); ?></div>
-                                    <div class="product-meta">
-                                        SKU: <?php echo htmlspecialchars($product['sku'] ?? 'SKU000001'); ?> | Category: <?php echo htmlspecialchars($product['category_name'] ?? 'Clothing'); ?>
-                                    </div>
-                                </div>
-                                <div class="d-flex align-items-center">
-                                    <span class="status-badge status-<?php echo $product['auto_bom_active'] ? 'active' : 'inactive'; ?>">
-                                        <?php echo $product['auto_bom_active'] ? 'Active' : 'Inactive'; ?>
+                                </td>
+                                <td>
+                                    <?php echo number_format($product['base_quantity']); ?> <?php echo htmlspecialchars($product['base_unit']); ?>
+                                </td>
+                                <td>
+                                    <span class="badge bg-primary"><?php echo number_format($product['selling_units_count']); ?> units</span>
+                                </td>
+                                <td>
+                                    <?php if ($product['family_name']): ?>
+                                        <span class="badge bg-info"><?php echo htmlspecialchars($product['family_name']); ?></span>
+                                    <?php else: ?>
+                                        <span class="text-muted">None</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <strong><?php echo number_format($product['base_stock']); ?></strong>
+                                    <?php if ($product['base_stock'] > 50): ?>
+                                        <span class="badge bg-success ms-1">Good</span>
+                                    <?php elseif ($product['base_stock'] > 10): ?>
+                                        <span class="badge bg-warning ms-1">Low</span>
+                                    <?php else: ?>
+                                        <span class="badge bg-danger ms-1">Critical</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span class="badge <?php echo $product['auto_bom_active'] ? 'bg-success' : 'bg-secondary'; ?>">
+                                        <?php echo $product['auto_bom_active'] ? 'ACTIVE' : 'INACTIVE'; ?>
                                     </span>
+                                </td>
+                                <td>
+                                    <?php echo date('M j, Y', strtotime($product['created_at'] ?? 'now')); ?>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <?php if ($can_manage_auto_boms): ?>
+                                        <a href="auto_bom_edit.php?id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-primary btn-sm" title="Edit">
+                                            <i class="bi bi-pencil"></i>
+                                        </a>
+                                        <a href="auto_bom_pricing.php?config_id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-secondary btn-sm" title="Pricing">
+                                            <i class="bi bi-tags"></i>
+                                        </a>
+                                        <?php endif; ?>
+                                        <?php if ($can_view_auto_boms): ?>
+                                        <a href="auto_bom_reports.php?config_id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-info btn-sm" title="Reports">
+                                            <i class="bi bi-graph-up"></i>
+                                        </a>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Grid View -->
+                <div id="grid-view" class="row" style="display: none;">
+                    <?php foreach ($auto_bom_products as $product): ?>
+                    <div class="col-xl-4 col-lg-6 col-md-6 mb-4">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header bg-primary text-white">
+                                <h6 class="card-title mb-0">
+                                    <i class="bi bi-gear-fill me-2"></i>
+                                    <?php echo htmlspecialchars($product['config_name']); ?>
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <!-- Sellable Product -->
+                                <div class="mb-3">
+                                    <h6 class="text-success">
+                                        <i class="bi bi-cart-check me-1"></i> Sellable Product
+                                    </h6>
+                                    <p class="mb-1"><strong><?php echo htmlspecialchars($product['name']); ?></strong></p>
+                                    <small class="text-muted">SKU: <?php echo htmlspecialchars($product['sku']); ?></small><br>
+                                    <small class="text-muted">Category: <?php echo htmlspecialchars($product['category_name'] ?? 'N/A'); ?></small>
+                                </div>
+
+                                <!-- Base Product -->
+                                <div class="mb-3">
+                                    <h6 class="text-warning">
+                                        <i class="bi bi-box me-1"></i> Base Product
+                                    </h6>
+                                    <p class="mb-1"><?php echo htmlspecialchars($product['base_product_name']); ?></p>
+                                    <small class="text-muted">SKU: <?php echo htmlspecialchars($product['base_product_sku']); ?></small>
+                                </div>
+
+                                <!-- Details -->
+                                <div class="row text-center mb-3">
+                                    <div class="col-4">
+                                        <div class="border rounded p-2">
+                                            <div class="fw-bold text-primary"><?php echo number_format($product['base_quantity']); ?></div>
+                                            <small class="text-muted">Base Qty</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <div class="border rounded p-2">
+                                            <div class="fw-bold text-info"><?php echo number_format($product['selling_units_count']); ?></div>
+                                            <small class="text-muted">Selling Units</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-4">
+                                        <div class="border rounded p-2">
+                                            <div class="fw-bold text-success"><?php echo number_format($product['base_stock']); ?></div>
+                                            <small class="text-muted">Stock</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Status and Family -->
+                                <div class="d-flex justify-content-between align-items-center mb-3">
+                                    <span class="badge <?php echo $product['auto_bom_active'] ? 'bg-success' : 'bg-secondary'; ?>">
+                                        <?php echo $product['auto_bom_active'] ? 'ACTIVE' : 'INACTIVE'; ?>
+                                    </span>
+                                    <?php if ($product['family_name']): ?>
+                                        <span class="badge bg-info"><?php echo htmlspecialchars($product['family_name']); ?></span>
+                                    <?php else: ?>
+                                        <span class="text-muted">No Family</span>
+                                    <?php endif; ?>
                                 </div>
                             </div>
-
-                            <div class="product-body">
-                                <!-- Base Product Info -->
-                                <div class="base-product-section">
-                                    <div class="base-product-title">Base Product:</div>
-                                    <div class="base-product-name"><?php echo htmlspecialchars($product['base_product_name']); ?></div>
-                                    <div class="base-product-details">
-                                        <div class="base-detail-item">
-                                            <span class="base-detail-label">Stock:</span>
-                                            <span><?php echo number_format($product['base_stock']); ?></span>
-                                        </div>
-                                        <div class="base-detail-item">
-                                            <span class="base-detail-label">Cost:</span>
-                                            <span>KES <?php echo number_format($product['base_cost'], 2); ?></span>
-                                        </div>
-                                        <div class="base-detail-item">
-                                            <span class="base-detail-label">Unit:</span>
-                                            <span><?php echo htmlspecialchars($product['base_unit']); ?> (<?php echo number_format($product['base_quantity']); ?>)</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Metrics (using grid) -->
-                                <div class="product-metrics">
-                                    <!-- Selling Units Column -->
-                                    <div class="metric-box">
-                                        <div class="metric-number"><?php echo number_format($product['selling_units_count']); ?></div>
-                                        <div class="metric-label">Selling Units</div>
-                                    </div>
-                                    
-                                    <!-- Configuration Column -->
-                                    <div class="metric-box">
-                                        <div class="config-label">Configuration</div>
-                                        <div class="config-value"><?php echo htmlspecialchars($product['config_name'] ?? 'Ufuta 20lts'); ?></div>
-                                    </div>
-                                    
-                                    <!-- Family Column -->
-                                    <div class="metric-box">
-                                        <div class="family-label">Family</div>
-                                        <div class="family-value"><?php echo htmlspecialchars($product['family_name'] ?? 'None'); ?></div>
-                                    </div>
-                                </div>
-
-                                <!-- Action Buttons Column -->
-                                <div class="action-buttons">
+                            <div class="card-footer bg-light">
+                                <div class="btn-group w-100" role="group">
                                     <?php if ($can_manage_auto_boms): ?>
-                                        <a href="auto_bom_edit.php?id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-primary btn-small">
-                                            <i class="bi bi-pencil"></i> Edit
-                                        </a>
-                                        <a href="auto_bom_pricing.php?config_id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-secondary btn-small">
-                                            <i class="bi bi-tags"></i> Pricing
-                                        </a>
+                                    <a href="auto_bom_edit.php?id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-primary btn-sm">
+                                        <i class="bi bi-pencil"></i> Edit
+                                    </a>
+                                    <a href="auto_bom_pricing.php?config_id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-secondary btn-sm">
+                                        <i class="bi bi-tags"></i> Pricing
+                                    </a>
                                     <?php endif; ?>
                                     <?php if ($can_view_auto_boms): ?>
-                                        <a href="auto_bom_reports.php?config_id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-info btn-small">
-                                            <i class="bi bi-graph-up"></i> Reports
-                                        </a>
-                                    <?php endif; ?>
-                                </div>
-
-                                <!-- Show Details Column -->
-                                <div class="show-details-column">
-                                    <?php if (!empty($selling_units_data[$product['id']])): ?>
-                                        <a href="#" class="expand-toggle" data-product-id="<?php echo $product['id']; ?>">
-                                            <i class="bi bi-chevron-down"></i> Show Details
-                                        </a>
+                                    <a href="auto_bom_reports.php?config_id=<?php echo $product['auto_bom_config_id']; ?>" class="btn btn-outline-info btn-sm">
+                                        <i class="bi bi-graph-up"></i> Reports
+                                    </a>
                                     <?php endif; ?>
                                 </div>
                             </div>
-
-                            <!-- Selling Units Section (spans full width) -->
-                            <?php if (!empty($selling_units_data[$product['id']])): ?>
-                                <div class="selling-units-section">
-                                    <div class="selling-units-container" id="units-<?php echo $product['id']; ?>">
-                                        <?php foreach ($selling_units_data[$product['id']] as $unit): ?>
-                                            <div class="selling-unit-item">
-                                                <div class="selling-unit-info">
-                                                    <div class="selling-unit-name"><?php echo htmlspecialchars($unit['unit_name']); ?></div>
-                                                    <div class="selling-unit-details">
-                                                        <?php echo $unit['unit_quantity']; ?> <?php echo htmlspecialchars($unit['unit_name']); ?> = 1 <?php echo htmlspecialchars($product['base_unit']); ?> |
-                                                        SKU: <?php echo htmlspecialchars($unit['unit_sku'] ?? 'N/A'); ?> |
-                                                        Strategy: <?php echo ucfirst(str_replace('_', ' ', $unit['pricing_strategy'])); ?>
-                                                    </div>
-                                                </div>
-                                                <div class="selling-unit-price">
-                                                    <?php
-                                                    if ($unit['pricing_strategy'] === 'fixed' && $unit['fixed_price']) {
-                                                        echo $settings['currency_symbol'] . ' ' . number_format($unit['fixed_price'], 2);
-                                                    } elseif ($unit['pricing_strategy'] === 'market_based' && $unit['market_price']) {
-                                                        echo $settings['currency_symbol'] . ' ' . number_format($unit['market_price'], 2);
-                                                    } else {
-                                                        echo 'Auto-calculated';
-                                                    }
-                                                    ?>
-                                                </div>
-                                            </div>
-                                        <?php endforeach; ?>
-                                    </div>
-                                </div>
-                            <?php endif; ?>
                         </div>
+                    </div>
                     <?php endforeach; ?>
-                    </div>
-                    </div>
-                <?php endif; ?>
+                </div>
+            <?php endif; ?>
             </div>
 
             <!-- Pagination -->
@@ -868,7 +666,7 @@ foreach ($auto_bom_products as $product) {
                     <ul class="pagination justify-content-center">
                         <?php if ($page > 1): ?>
                             <li class="page-item">
-                                <a class="page-link" href="?page=<?php echo $page - 1; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo urlencode($category_filter); ?>&family=<?php echo urlencode($family_filter); ?>&status=<?php echo urlencode($status_filter); ?>">
+                                <a class="page-link" href="?page=<?php echo $page - 1; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo urlencode($category_filter); ?>&family=<?php echo urlencode($family_filter); ?>&status=<?php echo urlencode($status_filter); ?>&per_page=<?php echo $per_page; ?>">
                                     <i class="bi bi-chevron-left"></i>
                                 </a>
                             </li>
@@ -876,7 +674,7 @@ foreach ($auto_bom_products as $product) {
 
                         <?php for ($i = max(1, $page - 2); $i <= min($total_pages, $page + 2); $i++): ?>
                             <li class="page-item <?php echo $i === $page ? 'active' : ''; ?>">
-                                <a class="page-link" href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo urlencode($category_filter); ?>&family=<?php echo urlencode($family_filter); ?>&status=<?php echo urlencode($status_filter); ?>">
+                                <a class="page-link" href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo urlencode($category_filter); ?>&family=<?php echo urlencode($family_filter); ?>&status=<?php echo urlencode($status_filter); ?>&per_page=<?php echo $per_page; ?>">
                                     <?php echo $i; ?>
                                 </a>
                             </li>
@@ -884,7 +682,7 @@ foreach ($auto_bom_products as $product) {
 
                         <?php if ($page < $total_pages): ?>
                             <li class="page-item">
-                                <a class="page-link" href="?page=<?php echo $page + 1; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo urlencode($category_filter); ?>&family=<?php echo urlencode($family_filter); ?>&status=<?php echo urlencode($status_filter); ?>">
+                                <a class="page-link" href="?page=<?php echo $page + 1; ?>&search=<?php echo urlencode($search); ?>&category=<?php echo urlencode($category_filter); ?>&family=<?php echo urlencode($family_filter); ?>&status=<?php echo urlencode($status_filter); ?>&per_page=<?php echo $per_page; ?>">
                                     <i class="bi bi-chevron-right"></i>
                                 </a>
                             </li>
@@ -899,26 +697,48 @@ foreach ($auto_bom_products as $product) {
     <script src="../assets/js/dashboard.js"></script>
 
     <script>
-        // Expand/collapse selling units
         document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('.expand-toggle').forEach(toggle => {
-                toggle.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    const productId = this.dataset.productId;
-                    const container = document.getElementById('units-' + productId);
-                    const icon = this.querySelector('i');
+            // Display mode switching
+            const tableViewBtn = document.getElementById('table-view-btn');
+            const gridViewBtn = document.getElementById('grid-view-btn');
+            const tableView = document.getElementById('table-view');
+            const gridView = document.getElementById('grid-view');
+            const perPageSelect = document.getElementById('per-page-select');
 
-                    if (container.classList.contains('expanded')) {
-                        container.classList.remove('expanded');
-                        icon.className = 'bi bi-chevron-down';
-                        this.innerHTML = '<i class="bi bi-chevron-down"></i> Show Details';
-                    } else {
-                        container.classList.add('expanded');
-                        icon.className = 'bi bi-chevron-up';
-                        this.innerHTML = '<i class="bi bi-chevron-up"></i> Hide Details';
-                    }
-                });
+            // Table view button
+            tableViewBtn.addEventListener('click', function() {
+                // Update button states
+                tableViewBtn.classList.remove('btn-outline-secondary');
+                tableViewBtn.classList.add('btn-outline-primary', 'active');
+                gridViewBtn.classList.remove('btn-outline-primary', 'active');
+                gridViewBtn.classList.add('btn-outline-secondary');
+
+                // Show/hide views
+                tableView.style.display = 'block';
+                gridView.style.display = 'none';
             });
+
+            // Grid view button
+            gridViewBtn.addEventListener('click', function() {
+                // Update button states
+                gridViewBtn.classList.remove('btn-outline-secondary');
+                gridViewBtn.classList.add('btn-outline-primary', 'active');
+                tableViewBtn.classList.remove('btn-outline-primary', 'active');
+                tableViewBtn.classList.add('btn-outline-secondary');
+
+                // Show/hide views
+                gridView.style.display = 'block';
+                tableView.style.display = 'none';
+            });
+
+            // Per page selection
+            perPageSelect.addEventListener('change', function() {
+                const currentUrl = new URL(window.location);
+                currentUrl.searchParams.set('per_page', this.value);
+                currentUrl.searchParams.set('page', '1'); // Reset to first page
+                window.location.href = currentUrl.toString();
+            });
+
         });
     </script>
 </body>

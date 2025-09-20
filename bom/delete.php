@@ -89,7 +89,6 @@ try {
 
 } catch (Exception $e) {
     $conn->rollBack();
-    error_log("BOM deletion failed: " . $e->getMessage());
     header("Location: index.php?error=" . urlencode($e->getMessage()));
     exit();
 }

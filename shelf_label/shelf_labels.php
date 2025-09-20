@@ -201,7 +201,7 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
         .product-card {
             background: white;
             border-radius: 12px;
-            padding: 1rem;
+            padding: 1.25rem;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
             border: 1px solid #e2e8f0;
             transition: all 0.3s ease;
@@ -217,25 +217,18 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
             background: #f8fafc;
         }
 
-        .product-image {
-            width: 100%;
-            height: 120px;
-            object-fit: cover;
-            border-radius: 8px;
-            margin-bottom: 0.75rem;
-        }
 
         .product-info h5 {
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.5rem;
             color: #1e293b;
-            font-size: 1.1rem;
+            font-size: 1.2rem;
             font-weight: 700;
         }
 
         .product-meta {
             color: #1e293b;
-            font-size: 0.85rem;
-            margin-bottom: 0.75rem;
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
             font-weight: 600;
         }
 
@@ -300,18 +293,24 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
             box-shadow: 0 0 0 0.2rem rgba(99, 102, 241, 0.25);
         }
 
+        .quantity-input-container .form-control.is-invalid {
+            border-color: #dc3545;
+            box-shadow: 0 0 0 0.2rem rgba(220, 53, 69, 0.25);
+        }
+
         .barcode-preview {
-            margin-top: 0.5rem;
-            padding: 0.25rem;
+            margin-top: 0.75rem;
+            padding: 0.5rem;
             background: rgba(99, 102, 241, 0.05);
-            border-radius: 4px;
+            border-radius: 6px;
             text-align: center;
         }
 
         .mini-barcode {
             max-width: 100%;
-            height: 15px;
-            margin-top: 0.25rem;
+            height: 30px;
+            width: 160px;
+            margin-top: 0.5rem;
         }
 
         .price-container {
@@ -356,10 +355,6 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
                 align-items: flex-start;
             }
 
-            .product-image {
-                height: 100px;
-                margin-bottom: 0.5rem;
-            }
 
             .product-card {
                 padding: 0.75rem;
@@ -376,10 +371,6 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
                 padding: 0.75rem;
             }
 
-            .product-image {
-                height: 90px;
-                margin-bottom: 0.5rem;
-            }
 
             .quantity-input-container {
                 margin-top: 0.25rem;
@@ -414,7 +405,7 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
             <div class="header-content">
                 <div class="header-title">
                     <h1>Shelf Labels</h1>
-                    <p class="header-subtitle">Generate and manage product shelf labels</p>
+                    <p class="header-subtitle">Create and print product shelf labels for any product</p>
                 </div>
                 <div class="header-actions">
                     <div class="user-info">
@@ -467,10 +458,15 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
                     </div>
                     <div class="col-md-2">
                         <label class="form-label">&nbsp;</label>
-                        <div class="d-grid">
+                        <div class="d-grid gap-2">
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-search"></i> Filter
                             </button>
+                            <?php if ($search || $category_filter || $brand_filter): ?>
+                            <a href="shelf_labels.php" class="btn btn-outline-secondary btn-sm">
+                                <i class="bi bi-x-circle"></i> Clear
+                            </a>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </form>
@@ -478,7 +474,7 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
 
             <!-- Bulk Operations -->
             <div class="bulk-actions">
-                <form method="POST" id="bulkForm">
+                <form method="POST" id="bulkForm" onsubmit="return validateForm()">
                     <div class="select-all-container">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" id="selectAll">
@@ -505,6 +501,11 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
                                     <i class="bi bi-info-circle me-1"></i>
                                     <span id="labelInfo">Select products to see label count</span>
                                 </small>
+                                <br>
+                                <small class="text-info">
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    Select multiple products and specify how many labels to print for each
+                                </small>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -528,9 +529,16 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
             </div>
 
             <!-- Products Grid -->
-                            <div class="product-grid">
+            <?php if (!empty($products)): ?>
+            <div class="alert alert-info mb-3">
+                <i class="bi bi-info-circle me-2"></i>
+                <strong>Search Results:</strong> Found <?php echo count($products); ?> product(s). 
+                Select multiple products and specify quantities for each to print shelf labels.
+            </div>
+            <?php endif; ?>
+            <div class="product-grid">
                     <?php foreach ($products as $product): ?>
-                    <div class="product-card" data-product-id="<?php echo $product['id']; ?>" data-quantity="<?php echo (int)($product['quantity'] ?? 0); ?>" data-product-sku="<?php echo htmlspecialchars($product['sku'] ?? ''); ?>" data-product-barcode="<?php echo htmlspecialchars($product['barcode'] ?? ''); ?>">
+                    <div class="product-card" data-product-id="<?php echo $product['id']; ?>" data-product-sku="<?php echo htmlspecialchars($product['sku'] ?? ''); ?>" data-product-barcode="<?php echo htmlspecialchars($product['barcode'] ?? ''); ?>">
                         <div class="form-check">
                             <input class="form-check-input product-checkbox" type="checkbox"
                                    name="selected_products[]" value="<?php echo $product['id']; ?>"
@@ -542,18 +550,9 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
                             <label class="form-label small">Labels to Print:</label>
                             <input type="number" class="form-control form-control-sm quantity-input"
                                    name="label_quantities[<?php echo $product['id']; ?>]"
-                                   value="1" min="1" max="999"
+                                   placeholder="Enter quantity" min="1" max="999"
                                    form="bulkForm">
                         </div>
-                    
-                    <?php if (isset($product['image']) && !empty($product['image'])): ?>
-                    <img src="../storage/products/<?php echo htmlspecialchars($product['image']); ?>"
-                         alt="<?php echo htmlspecialchars($product['name']); ?>" class="product-image">
-                    <?php else: ?>
-                    <div class="product-image bg-light d-flex align-items-center justify-content-center">
-                        <i class="bi bi-image text-muted" style="font-size: 3rem;"></i>
-                    </div>
-                    <?php endif; ?>
 
                     <div class="product-info">
                         <h5><strong><?php echo htmlspecialchars($product['name']); ?></strong></h5>
@@ -563,7 +562,7 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
                             <?php if (!empty($product['sku'])): ?>
                             <div class="barcode-preview">
                                 <small><strong>Barcode:</strong></small><br>
-                                <img src="https://barcode.tec-it.com/barcode.ashx?data=<?php echo urlencode($product['sku']); ?>&code=Code128&dpi=96&dataseparator=" alt="Barcode Preview" class="mini-barcode">
+                                <img src="https://barcode.tec-it.com/barcode.ashx?data=<?php echo urlencode($product['sku']); ?>&code=Code128&dpi=150&dataseparator=" alt="Barcode Preview" class="mini-barcode">
                             </div>
                             <?php endif; ?>
                         </div>
@@ -660,24 +659,40 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
             const selectedCheckboxes = document.querySelectorAll('.product-checkbox:checked');
             const selectedCount = selectedCheckboxes.length;
             let totalLabels = 0;
+            let hasEmptyQuantities = false;
 
             selectedCheckboxes.forEach(checkbox => {
                 const productCard = checkbox.closest('.product-card');
                 const quantityInput = productCard.querySelector('.quantity-input');
-                const customQuantity = parseInt(quantityInput.value) || 1;
-                totalLabels += Math.max(1, customQuantity);
+                const customQuantity = parseInt(quantityInput.value);
+                
+                if (isNaN(customQuantity) || customQuantity < 1) {
+                    hasEmptyQuantities = true;
+                    totalLabels += 1; // Default to 1 for display purposes
+                } else {
+                    totalLabels += customQuantity;
+                }
             });
 
             document.getElementById('selectionCount').textContent = `${selectedCount} products selected`;
-            document.getElementById('labelInfo').textContent = selectedCount > 0
-                ? `Selected: ${selectedCount} products → ${totalLabels} labels total`
-                : 'Select products to see label count';
+            
+            if (hasEmptyQuantities) {
+                document.getElementById('labelInfo').textContent = selectedCount > 0
+                    ? `Selected: ${selectedCount} products → Please enter quantities for all selected products`
+                    : 'Select products to see label count';
+            } else {
+                document.getElementById('labelInfo').textContent = selectedCount > 0
+                    ? `Selected: ${selectedCount} products → ${totalLabels} labels total`
+                    : 'Select products to see label count';
+            }
         }
 
         function updateBulkButtons() {
             const selectedCount = document.querySelectorAll('.product-checkbox:checked').length;
             const buttons = ['generateBtn', 'printBtn', 'exportBtn'];
             
+            // Enable buttons if products are selected
+            // Quantity validation will be handled by validateForm() on submit
             buttons.forEach(btnId => {
                 const btn = document.getElementById(btnId);
                 btn.disabled = selectedCount === 0;
@@ -702,6 +717,35 @@ $brands = $conn->query("SELECT id, name FROM brands ORDER BY name")->fetchAll(PD
             document.getElementById('selectAllVisible').checked = false;
             updateSelectionCount();
             updateBulkButtons();
+        }
+
+        // Form validation
+        function validateForm() {
+            const selectedCheckboxes = document.querySelectorAll('.product-checkbox:checked');
+            let hasEmptyQuantities = false;
+            let emptyProducts = [];
+
+            selectedCheckboxes.forEach(checkbox => {
+                const productCard = checkbox.closest('.product-card');
+                const quantityInput = productCard.querySelector('.quantity-input');
+                const productName = productCard.querySelector('h5').textContent.trim();
+                const customQuantity = parseInt(quantityInput.value);
+                
+                if (isNaN(customQuantity) || customQuantity < 1) {
+                    hasEmptyQuantities = true;
+                    emptyProducts.push(productName);
+                    quantityInput.classList.add('is-invalid');
+                } else {
+                    quantityInput.classList.remove('is-invalid');
+                }
+            });
+
+            if (hasEmptyQuantities) {
+                alert(`Please enter valid quantities for the following products:\n\n${emptyProducts.join('\n')}\n\nEach product must have at least 1 label to print.`);
+                return false;
+            }
+
+            return true;
         }
 
         // Initialize

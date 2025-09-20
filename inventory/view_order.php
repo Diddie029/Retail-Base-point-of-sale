@@ -147,6 +147,18 @@ function getOrderData($conn, $order_id) {
         $stmt->execute();
         $order['items'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+        // Get invoice attachments
+        $stmt = $conn->prepare("
+            SELECT iia.*, u.username as uploaded_by_name
+            FROM inventory_invoice_attachments iia
+            LEFT JOIN users u ON iia.uploaded_by = u.id
+            WHERE iia.order_id = :order_id
+            ORDER BY iia.created_at DESC
+        ");
+        $stmt->bindParam(':order_id', $order['id']);
+        $stmt->execute();
+        $order['attachments'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
         // Calculate received totals
         $order['total_received_items'] = 0;
         $order['total_received_amount'] = 0;
@@ -657,6 +669,44 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
                         </div>
                     </div>
 
+                    <!-- Invoice Attachments -->
+                    <?php if (!empty($order['attachments'])): ?>
+                    <div class="card mt-4">
+                        <div class="card-header">
+                            <h5 class="mb-0"><i class="bi bi-paperclip me-2"></i>Attached Invoice Documents</h5>
+                        </div>
+                        <div class="card-body">
+                            <?php foreach ($order['attachments'] as $attachment): ?>
+                            <div class="d-flex align-items-center justify-content-between border-bottom py-2">
+                                <div class="d-flex align-items-center">
+                                    <i class="bi bi-file-earmark me-2 text-primary"></i>
+                                    <div>
+                                        <div class="fw-semibold"><?php echo htmlspecialchars($attachment['original_name']); ?></div>
+                                        <small class="text-muted">
+                                            Uploaded by <?php echo htmlspecialchars($attachment['uploaded_by_name']); ?> on 
+                                            <?php echo date('M d, Y H:i', strtotime($attachment['created_at'])); ?>
+                                            (<?php echo formatFileSize($attachment['file_size']); ?>)
+                                        </small>
+                                    </div>
+                                </div>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="download_attachment.php?id=<?php echo $attachment['id']; ?>" 
+                                       class="btn btn-outline-primary btn-sm">
+                                        <i class="bi bi-download me-1"></i>Download
+                                    </a>
+                                    <?php if (strpos($attachment['file_type'], 'image/') === 0 || strpos($attachment['file_type'], 'application/pdf') === 0): ?>
+                                    <a href="view_attachment.php?id=<?php echo $attachment['id']; ?>" 
+                                       class="btn btn-outline-info btn-sm" target="_blank">
+                                        <i class="bi bi-eye me-1"></i>View
+                                    </a>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                    <?php endif; ?>
+
                     <!-- Order Items -->
                     <div class="card mt-4">
                         <div class="card-header d-flex justify-content-between align-items-center">
@@ -780,9 +830,6 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
                                     <button type="button" class="btn btn-success btn-sm" onclick="markAllItemsReceived()">
                                         <i class="bi bi-check-all me-1"></i>Mark All Received
                                     </button>
-                                    <button type="button" class="btn btn-warning btn-sm" onclick="showDiscrepancyModal()">
-                                        <i class="bi bi-exclamation-triangle me-1"></i>Receive with Discrepancies
-                                    </button>
                                     <a href="receive_order.php?id=<?php echo urlencode($order_id); ?>" class="btn btn-info btn-sm">
                                         <i class="bi bi-boxes me-1"></i>Partial Reception
                                     </a>
@@ -838,8 +885,18 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
                                 <?php endif; ?>
 
                                 <a href="generate_pdf.php?id=<?php echo urlencode($order_id); ?>&download=1" class="btn btn-success">
-                                    <i class="bi bi-file-earmark-pdf me-2"></i><?php echo $order['status'] === 'received' ? 'Download Invoice' : 'Download PDF'; ?>
+                                    <i class="bi bi-file-earmark-pdf me-2"></i><?php echo $order['status'] === 'received' ? 'Download Order PDF' : 'Download PDF'; ?>
                                 </a>
+                                <?php if ($order['status'] === 'received'): ?>
+                                <a href="generate_order_invoice.php?order_id=<?php echo urlencode($order_id); ?>&download=1"
+                                   class="btn btn-success ms-2">
+                                    <i class="bi bi-receipt me-2"></i>Download Invoice PDF
+                                </a>
+                                <a href="generate_order_invoice.php?order_id=<?php echo urlencode($order_id); ?>"
+                                   class="btn btn-outline-info ms-2" target="_blank">
+                                    <i class="bi bi-eye me-2"></i>Preview Invoice
+                                </a>
+                                <?php endif; ?>
                                 <a href="view_order.php?id=<?php echo urlencode($order_id); ?>" class="btn btn-outline-secondary" target="_blank">
                                     <i class="bi bi-printer me-2"></i>Print Preview
                                 </a>
@@ -921,99 +978,6 @@ if ($order['status'] !== 'pending' && $order['updated_at'] !== $order['created_a
             }
         }
         
-        function showDiscrepancyModal() {
-            // Create a simple modal for bulk discrepancy handling
-            const modalHtml = `
-                <div class="modal fade" id="discrepancyModal" tabindex="-1">
-                    <div class="modal-dialog modal-lg">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Receive with Discrepancies</h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                            </div>
-                            <div class="modal-body">
-                                <form id="discrepancyForm">
-                                    <input type="hidden" name="action" value="bulk_receive_discrepancies">
-                                    <div class="table-responsive">
-                                        <table class="table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Product</th>
-                                                    <th>Ordered</th>
-                                                    <th>Received</th>
-                                                    <th>New Quantity</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <?php foreach ($order['items'] as $item): ?>
-                                                <tr>
-                                                    <td><?php echo htmlspecialchars($item['product_name']); ?></td>
-                                                    <td><?php echo $item['quantity']; ?></td>
-                                                    <td><?php echo $item['received_quantity']; ?></td>
-                                                    <td>
-                                                        <input type="number" class="form-control" 
-                                                               name="item_<?php echo $item['id']; ?>" 
-                                                               value="<?php echo $item['received_quantity']; ?>"
-                                                               min="0" max="<?php echo $item['quantity']; ?>">
-                                                    </td>
-                                                </tr>
-                                                <?php endforeach; ?>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </form>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                                <button type="button" class="btn btn-warning" onclick="submitDiscrepancies()">Update Quantities</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            
-            // Remove existing modal if any
-            const existingModal = document.getElementById('discrepancyModal');
-            if (existingModal) {
-                existingModal.remove();
-            }
-            
-            // Add modal to DOM
-            document.body.insertAdjacentHTML('beforeend', modalHtml);
-            
-            // Show modal
-            const modal = new bootstrap.Modal(document.getElementById('discrepancyModal'));
-            modal.show();
-        }
-        
-        function submitDiscrepancies() {
-            const form = document.getElementById('discrepancyForm');
-            const formData = new FormData(form);
-            
-            // Process each item
-            let hasUpdates = false;
-            <?php foreach ($order['items'] as $item): ?>
-            const qty<?php echo $item['id']; ?> = parseInt(formData.get('item_<?php echo $item['id']; ?>')) || 0;
-            if (qty<?php echo $item['id']; ?> !== <?php echo $item['received_quantity']; ?>) {
-                hasUpdates = true;
-                // Submit individual update
-                const itemForm = document.createElement('form');
-                itemForm.method = 'POST';
-                itemForm.innerHTML = `
-                    <input type="hidden" name="action" value="update_received_quantity">
-                    <input type="hidden" name="item_id" value="<?php echo $item['id']; ?>">
-                    <input type="hidden" name="received_quantity" value="${qty<?php echo $item['id']; ?>}">
-                `;
-                document.body.appendChild(itemForm);
-                itemForm.submit();
-                return; // Submit first change and reload
-            }
-            <?php endforeach; ?>
-            
-            if (!hasUpdates) {
-                alert('No changes detected.');
-            }
-        }
 
         // Auto-hide alerts after 5 seconds
         setTimeout(function() {

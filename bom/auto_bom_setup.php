@@ -51,10 +51,13 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 // Get available products for base product selection
 $products = [];
 $stmt = $conn->query("
-    SELECT id, name, sku, quantity, cost_price
-    FROM products
-    WHERE status = 'active'
-    ORDER BY name ASC
+    SELECT p.id, p.name, p.sku, p.quantity, p.cost_price, p.price, p.barcode, 
+           s.name as supplier_name, c.name as category_name
+    FROM products p
+    LEFT JOIN suppliers s ON p.supplier_id = s.id
+    LEFT JOIN categories c ON p.category_id = c.id
+    WHERE p.status = 'active'
+    ORDER BY p.name ASC
 ");
 $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -63,18 +66,32 @@ $product_families = [];
 $stmt = $conn->query("SELECT id, name FROM product_families WHERE status = 'active' ORDER BY name");
 $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Generate form token to prevent duplicate submissions
+if (!isset($_SESSION['form_token'])) {
+    $_SESSION['form_token'] = bin2hex(random_bytes(32));
+}
+
 // Handle form submission
 $message = '';
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        // Check for duplicate submission using session token
+        if (isset($_POST['form_token'])) {
+            if (!isset($_SESSION['form_token']) || $_POST['form_token'] !== $_SESSION['form_token']) {
+                throw new Exception("Invalid form submission. Please try again.");
+            }
+            // Clear the token to prevent resubmission
+            unset($_SESSION['form_token']);
+        }
+        
         $auto_bom_manager = new AutoBOMManager($conn, $user_id);
 
         // Basic configuration
         $config = [
             'config_name' => sanitizeInput($_POST['config_name']),
-            'product_id' => !empty($_POST['product_id']) ? (int) $_POST['product_id'] : null,
+            'product_id' => !empty($_POST['sellable_product_id']) ? (int) $_POST['sellable_product_id'] : null,
             'base_product_id' => !empty($_POST['base_product_id']) ? (int) $_POST['base_product_id'] : null,
             'product_family_id' => !empty($_POST['product_family_id']) ? (int) $_POST['product_family_id'] : null,
             'base_unit' => sanitizeInput($_POST['base_unit'] ?? 'each'),
@@ -90,32 +107,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Process selling units
         if (isset($_POST['unit_names']) && is_array($_POST['unit_names'])) {
             foreach ($_POST['unit_names'] as $index => $unit_name) {
-                if (!empty($unit_name)) {
+                if (!empty($unit_name) && !empty($_POST['unit_product_ids'][$index])) {
+                    $product_id = (int) $_POST['unit_product_ids'][$index];
+
+                    // Get product status from database
+                    $product_status = 'active'; // Default fallback
+                    try {
+                        $stmt = $conn->prepare("SELECT status FROM products WHERE id = :id");
+                        $stmt->execute([':id' => $product_id]);
+                        $product = $stmt->fetch(PDO::FETCH_ASSOC);
+                        if ($product) {
+                            $product_status = $product['status'];
+                        }
+                    } catch (Exception $e) {
+                        // Keep default status if query fails
+                    }
+
+
                     $unit = [
                         'unit_name' => sanitizeInput($unit_name),
                         'unit_quantity' => (float) $_POST['unit_quantities'][$index],
                         'unit_sku' => !empty($_POST['unit_skus'][$index]) ? sanitizeInput($_POST['unit_skus'][$index]) : null,
                         'unit_barcode' => !empty($_POST['unit_barcodes'][$index]) ? sanitizeInput($_POST['unit_barcodes'][$index]) : null,
-                        'pricing_strategy' => sanitizeInput($_POST['pricing_strategies'][$index] ?? 'fixed'),
-                        'fixed_price' => !empty($_POST['fixed_prices'][$index]) ? (float) $_POST['fixed_prices'][$index] : null,
-                        'markup_percentage' => !empty($_POST['markup_percentages'][$index]) ? (float) $_POST['markup_percentages'][$index] : 0,
-                        'min_profit_margin' => !empty($_POST['min_profit_margins'][$index]) ? (float) $_POST['min_profit_margins'][$index] : 0,
-                        'market_price' => !empty($_POST['market_prices'][$index]) ? (float) $_POST['market_prices'][$index] : null,
-                        'dynamic_base_price' => !empty($_POST['dynamic_base_prices'][$index]) ? (float) $_POST['dynamic_base_prices'][$index] : null,
-                        'stock_level_threshold' => !empty($_POST['stock_thresholds'][$index]) ? (int) $_POST['stock_thresholds'][$index] : null,
-                        'demand_multiplier' => !empty($_POST['demand_multipliers'][$index]) ? (float) $_POST['demand_multipliers'][$index] : 1.0,
-                        'hybrid_primary_strategy' => sanitizeInput($_POST['hybrid_primary_strategies'][$index] ?? 'fixed'),
-                        'hybrid_threshold_value' => !empty($_POST['hybrid_threshold_values'][$index]) ? (float) $_POST['hybrid_threshold_values'][$index] : null,
-                        'hybrid_fallback_strategy' => sanitizeInput($_POST['hybrid_fallback_strategies'][$index] ?? 'cost_based'),
-                        'status' => sanitizeInput($_POST['unit_statuses'][$index] ?? 'active'),
+                        'pricing_strategy' => 'fixed', // Simplified to fixed pricing based on product
+                        'fixed_price' => !empty($_POST['selling_prices'][$index]) ? (float) $_POST['selling_prices'][$index] : null,
+                        'status' => $product_status, // Use product's status
                         'priority' => (int) ($_POST['priorities'][$index] ?? 0),
-                        'max_quantity_per_sale' => !empty($_POST['max_quantities'][$index]) ? (int) $_POST['max_quantities'][$index] : null,
-                        'image_url' => !empty($_POST['image_urls'][$index]) ? sanitizeInput($_POST['image_urls'][$index]) : null
+                        'product_id' => $product_id // Link to the selected product
                     ];
 
                     $config['selling_units'][] = $unit;
                 }
             }
+        }
+
+        // Validate that we have at least one selling unit with a product
+        if (empty($config['selling_units'])) {
+            throw new Exception("Please add at least one selling unit with a selected product.");
+        }
+
+        // Validate that product_id is set
+        if ($config['product_id'] === null) {
+            throw new Exception("No valid sellable product selected for the Auto BOM configuration. Please select a product for at least one selling unit.");
         }
 
         // Create Auto BOM
@@ -141,188 +174,144 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Auto BOM Setup - <?php echo htmlspecialchars($settings['site_name'] ?? 'Point of Sale'); ?></title>
 
-    <!-- Unit System Help Modal -->
-    <div class="modal fade" id="unitHelpModal" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title"><i class="fas fa-question-circle me-2"></i>Understanding Auto BOM Units</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <h6>What are Units in Auto BOM?</h6>
-                    <p>Units define how your products are measured and converted between different sizes/packaging.</p>
-
-                    <h6>Unit Components:</h6>
-                    <ul>
-                        <li><strong>Base Unit:</strong> The fundamental measurement (liter, kilogram, each, etc.)</li>
-                        <li><strong>Base Quantity:</strong> How much of the base unit makes one "logical unit"</li>
-                        <li><strong>Selling Unit:</strong> How customers buy the product (bottles, packs, boxes, etc.)</li>
-                        <li><strong>Unit Quantity:</strong> How many selling units equal one base unit</li>
-                    </ul>
-
-                    <h6>Examples:</h6>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <strong>Cooking Oil Example:</strong>
-                            <ul>
-                                <li>Base Unit: "liter"</li>
-                                <li>Base Quantity: 20 (20L container)</li>
-                                <li>Selling Unit: "500ml Bottle"</li>
-                                <li>Unit Quantity: 40 (40 bottles = 1 container)</li>
-                            </ul>
-                        </div>
-                        <div class="col-md-6">
-                            <strong>Rice Example:</strong>
-                            <ul>
-                                <li>Base Unit: "kilogram"</li>
-                                <li>Base Quantity: 50 (50kg bag)</li>
-                                <li>Selling Unit: "1kg Pack"</li>
-                                <li>Unit Quantity: 50 (50 packs = 1 bag)</li>
-                            </ul>
-                        </div>
-                    </div>
-
-                    <h6>Search & Display:</h6>
-                    <p>When customers search for products, the system shows:</p>
-                    <ul>
-                        <li>Available selling units for each Auto BOM product</li>
-                        <li>Stock levels for each unit size</li>
-                        <li>Pricing based on selected unit</li>
-                        <li>Automatic inventory conversion</li>
-                    </ul>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Got it!</button>
-                </div>
-            </div>
-        </div>
-    </div>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <link rel="stylesheet" href="../assets/css/dashboard.css">
-    <link rel="stylesheet" href="../assets/css/products.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+
     <style>
-        .setup-wizard {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
+         .setup-wizard {
+             max-width: 1200px;
+             margin: 0 auto;
+             padding: 20px 15px;
+         }
 
-        .wizard-steps {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 30px;
-        }
+         .form-section {
+             background: white;
+             border-radius: 8px;
+             box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+             padding: 25px;
+             margin-bottom: 25px;
+             border: 1px solid #f0f0f0;
+         }
 
-        .wizard-step {
-            flex: 1;
-            text-align: center;
-            position: relative;
-        }
+         .form-row {
+             display: flex;
+             gap: 20px;
+             margin-bottom: 20px;
+         }
 
-        .wizard-step:not(:last-child)::after {
-            content: '';
-            position: absolute;
-            top: 15px;
-            left: 50%;
-            width: 100%;
-            height: 2px;
-            background: #ddd;
-            z-index: 1;
-        }
-
-        .step-circle {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background: #ddd;
-            color: #666;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-            position: relative;
-            z-index: 2;
-        }
-
-        .step-circle.active {
-            background: #667eea;
-            color: white;
-        }
-
-        .step-circle.completed {
-            background: #28a745;
-            color: white;
-        }
-
-        .step-label {
-            display: block;
-            margin-top: 10px;
-            font-size: 0.9rem;
-            color: #666;
-        }
-
-        .wizard-content {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            padding: 30px;
-        }
-
-        .form-section {
-            display: none;
-        }
-
-        .form-section.active {
-            display: block;
-        }
-
-        .form-row {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-
-        .form-group {
-            flex: 1;
+         .form-group {
+             flex: 1;
+             margin-bottom: 20px;
+         }
+        
+         .form-group label {
+             display: block;
+             margin-bottom: 8px;
+             font-weight: 600;
+             color: #2c3e50;
+             font-size: 0.9rem;
+         }
+         
+         .form-control {
+             border: 1px solid #e9ecef;
+             border-radius: 6px;
+             padding: 10px 12px;
+             font-size: 0.9rem;
+             transition: all 0.3s ease;
+         }
+        
+        .form-control:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
         }
 
         .form-group.full-width {
             flex: 1 1 100%;
         }
 
-        .selling-units-section {
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 20px;
-            margin-top: 20px;
+         .selling-units-section {
+             background: #f8f9fa;
+             border: 1px solid #e9ecef;
+             border-radius: 8px;
+             padding: 20px;
+             margin-top: 20px;
+         }
+
+         .selling-unit-item {
+             border: 1px solid #e9ecef;
+             border-radius: 8px;
+             padding: 20px;
+             margin-bottom: 20px;
+             background: white;
+             box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+             transition: all 0.3s ease;
+         }
+        
+        .selling-unit-item:hover {
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            border-color: #dee2e6;
         }
 
-        .selling-unit-item {
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-            background: #f8f9fa;
-        }
-
-        .unit-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
+         .unit-header {
+             display: flex;
+             justify-content: space-between;
+             align-items: center;
+             margin-bottom: 15px;
+             padding-bottom: 10px;
+             border-bottom: 1px solid #e9ecef;
+             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+             padding: 15px 20px;
+             border-radius: 6px;
+             margin: -20px -20px 15px -20px;
+         }
 
         .unit-title {
-            font-weight: bold;
-            color: #333;
+            font-weight: 700;
+            color: #2c3e50;
+            font-size: 1.1rem;
         }
 
         .remove-unit {
             color: #dc3545;
             cursor: pointer;
-            padding: 5px;
+            font-size: 20px;
+            padding: 8px;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+            background: rgba(220, 53, 69, 0.1);
+        }
+
+        .remove-unit:hover {
+            color: #ffffff;
+            background: #dc3545;
+            transform: scale(1.1);
+        }
+
+         .btn {
+             padding: 10px 20px;
+             border: none;
+             border-radius: 6px;
+             cursor: pointer;
+             font-weight: 600;
+             font-size: 0.9rem;
+             transition: all 0.3s ease;
+             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+         }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #0056b3 0%, #004085 100%);
         }
 
         .pricing-config {
@@ -341,18 +330,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             display: block;
         }
 
-        .wizard-navigation {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 30px;
-            padding-top: 20px;
-            border-top: 1px solid #dee2e6;
-        }
+         .section-header {
+             border-bottom: 2px solid #e9ecef;
+             padding-bottom: 15px;
+             margin-bottom: 20px;
+             background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+             padding: 20px;
+             border-radius: 6px;
+             margin: -25px -25px 20px -25px;
+         }
+        
+         .section-header h3 {
+             color: #2c3e50;
+             margin-bottom: 5px;
+             font-size: 1.3rem;
+             font-weight: 700;
+             display: flex;
+             align-items: center;
+         }
+         
+         .section-header h3 i {
+             margin-right: 8px;
+             color: var(--primary-color);
+         }
+         
+         .section-header p {
+             margin-bottom: 0;
+             font-size: 0.95rem;
+             color: #6c757d;
+             font-weight: 500;
+         }
 
-        .alert {
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 20px;
+         .alert {
+             padding: 15px;
+             border-radius: 6px;
+             margin-bottom: 20px;
+             border: 1px solid transparent;
+             font-size: 0.9rem;
+         }
+        
+        .alert-info {
+            background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
+            border-color: #bee5eb;
+            color: #0c5460;
         }
 
         .alert-success {
@@ -365,58 +385,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             background: #f8d7da;
             color: #721c24;
             border: 1px solid #f5c6cb;
-        }
-
-        /* Modal and Units Help Styling */
-        .modal-dialog {
-            max-width: 800px;
-        }
-
-        .modal-body {
-            padding: 2rem;
-        }
-
-        .modal-body h6 {
-            color: #333;
-            font-weight: 600;
-            margin-top: 1.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .modal-body h6:first-child {
-            margin-top: 0;
-        }
-
-        .modal-body ul {
-            margin-bottom: 1.5rem;
-        }
-
-        .modal-body li {
-            margin-bottom: 0.5rem;
-        }
-
-        .modal-body .row {
-            margin-bottom: 1rem;
-        }
-
-        .modal-body strong {
-            color: #495057;
-        }
-
-        /* Ensure proper text wrapping and spacing */
-        .modal-body p {
-            line-height: 1.6;
-            margin-bottom: 1rem;
-        }
-
-        /* Fix any potential overflow issues */
-        .modal-content {
-            overflow: hidden;
-        }
-
-        .modal-body {
-            overflow-y: auto;
-            max-height: 70vh;
         }
 
         /* Product Selection Styling */
@@ -490,59 +458,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: #667eea;
         }
 
-        .filter-group {
-            transition: all 0.3s ease;
-        }
-
-        .filter-group.hidden {
-            display: none !important;
-        }
-
-        /* Product Varieties Styling */
-        .product-varieties {
-            background: #f8f9fa;
-            border: 1px solid #e9ecef;
-            border-radius: 6px;
-            padding: 10px;
-            margin-top: 10px;
-        }
-
-        .variety-inputs .input-group {
-            margin-bottom: 5px;
-        }
-
-        .variety-inputs .input-group:last-child {
-            margin-bottom: 0;
-        }
-
-        .variety-name {
-            font-size: 0.9rem;
-        }
-
-        .add-variety, .remove-variety {
-            min-width: 35px;
-        }
-
-        .add-variety {
-            border-color: #28a745;
-            color: #28a745;
-        }
-
-        .add-variety:hover {
-            background-color: #28a745;
-            color: white;
-        }
-
-        .remove-variety {
-            border-color: #dc3545;
-            color: #dc3545;
-        }
-
-        .remove-variety:hover {
-            background-color: #dc3545;
-            color: white;
-        }
-
         /* Dropdown Styling */
         .form-control[type="select"], 
         .form-control:is(select),
@@ -562,14 +477,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .form-control:is(select):focus,
         select.form-control:focus {
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23007bff' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m1 6 7 7 7-7'/%3e%3c/svg%3e");
-        }
-
-        /* Dropdown indicator for labels */
-        .dropdown-label::after {
-            content: " ▼";
-            color: #6c757d;
-            font-size: 0.8em;
-            margin-left: 5px;
         }
 
         /* Enhanced dropdown styling */
@@ -601,24 +508,142 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
         }
 
-        /* Additional dropdown visual cues */
-        .dropdown-label {
+        /* Tooltip Styles */
+        .tooltip-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
             position: relative;
+        }
+
+        .tooltip-icon {
+            color: #dc3545;
+            font-size: 0.9rem;
+            cursor: help;
+            transition: all 0.3s ease;
+            margin-left: 6px;
+            opacity: 1;
             display: inline-block;
+            background: rgba(220, 53, 69, 0.1);
+            padding: 3px 5px;
+            border-radius: 3px;
+            border: 1px solid rgba(220, 53, 69, 0.2);
         }
 
-        .dropdown-label::before {
-            content: "📋";
-            margin-right: 5px;
-            font-size: 0.9em;
+        .tooltip-icon:hover {
+            color: #c82333;
+            transform: scale(1.1);
+            background: rgba(220, 53, 69, 0.2);
         }
 
-        /* Alternative dropdown indicator */
-        .form-group:has(select) .dropdown-label::after {
-            content: " ▼";
-            color: #667eea;
-            font-weight: bold;
-            font-size: 0.8em;
+        .tooltip-label:hover .tooltip-icon {
+            opacity: 1;
+            color: #c82333;
+        }
+
+        .tooltip-icon::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%) translateY(-8px);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            line-height: 1.4;
+            white-space: normal;
+            max-width: 250px;
+            text-align: center;
+            word-wrap: break-word;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            z-index: 9999;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            pointer-events: none;
+            font-family: inherit;
+        }
+
+        .tooltip-icon:hover::after,
+        .tooltip-icon:hover::before {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .tooltip-icon::before {
+            content: '';
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%) translateY(-8px);
+            margin-bottom: -5px;
+            border: 5px solid transparent;
+            border-top-color: rgba(0, 0, 0, 0.9);
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            z-index: 9999;
+        }
+
+        /* Tooltip positioning for form sections */
+        .form-section .tooltip-icon::after {
+            bottom: 100%;
+            margin-bottom: 8px;
+        }
+
+        .form-section .tooltip-icon::before {
+            bottom: 100%;
+            margin-bottom: 3px;
+        }
+
+        /* Ensure tooltips are visible above other elements */
+        .selling-unit-item .tooltip-icon::after {
+            z-index: 9999;
+        }
+
+        .selling-unit-item .tooltip-icon::before {
+            z-index: 9999;
+        }
+
+        /* Make sure tooltip icons are always visible */
+        .tooltip-icon {
+            visibility: visible !important;
+            display: inline-block !important;
+        }
+
+        .tooltip-label {
+            display: flex !important;
+            align-items: center !important;
+        }
+
+        /* Additional visibility for form labels */
+        .form-group label .tooltip-icon {
+            vertical-align: middle;
+        }
+
+        /* Temporary test class for tooltip visibility */
+        .show-tooltip::after {
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+
+        /* Ensure clean tooltip display */
+        .tooltip-icon[data-tooltip=""]::after {
+            display: none !important;
+        }
+
+        /* Prevent tooltip conflicts */
+        .tooltip-icon::after {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        .tooltip-icon:hover::after,
+        .tooltip-icon.show-tooltip::after {
+            opacity: 1;
+            visibility: visible;
         }
 
         /* Make dropdowns more prominent */
@@ -639,18 +664,120 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
         }
 
-        /* Add subtle animation to dropdown arrow */
-        select.form-control {
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23667eea' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m1 6 7 7 7-7'/%3e%3c/svg%3e");
-            background-repeat: no-repeat;
-            background-position: right 0.75rem center;
-            background-size: 16px 12px;
-            padding-right: 2.5rem;
-            cursor: pointer;
-            appearance: none;
-            -webkit-appearance: none;
-            -moz-appearance: none;
+        /* Searchable Select Styling */
+        .searchable-select-container {
+            position: relative;
         }
+        
+        /* Read-only field styling */
+        input[name="unit_prices[]"], 
+        input[name="unit_skus[]"], 
+        input[name="unit_barcodes[]"] {
+            background-color: #f8f9fa !important;
+            color: #6c757d !important;
+            cursor: not-allowed !important;
+        }
+
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            border-radius: 0 0 4px 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .search-results.show {
+            display: block;
+        }
+
+        .search-result-item {
+            padding: 10px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background-color 0.2s ease;
+        }
+
+        .search-result-item:hover {
+            background-color: #f8f9fa;
+        }
+
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+
+        .search-result-item.selected {
+            background-color: #667eea;
+            color: white;
+        }
+
+        .search-result-name {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .search-result-item:hover .search-result-name,
+        .search-result-item.selected .search-result-name {
+            color: inherit;
+        }
+
+         .search-result-details {
+             font-size: 0.85rem;
+             color: #666;
+             margin-top: 2px;
+         }
+
+         .search-result-item:hover .search-result-details,
+         .search-result-item.selected .search-result-details {
+             color: rgba(255,255,255,0.8);
+         }
+
+         /* Compact form styling */
+         .form-text {
+             margin-top: 4px;
+             margin-bottom: 8px;
+         }
+
+         .form-text.text-info {
+             margin-bottom: 12px;
+         }
+
+         .mb-4 {
+             margin-bottom: 1.5rem !important;
+         }
+
+         .mb-3 {
+             margin-bottom: 1rem !important;
+         }
+
+         .mb-2 {
+             margin-bottom: 0.5rem !important;
+         }
+
+         .mt-3 {
+             margin-top: 1rem !important;
+         }
+
+         .mt-5 {
+             margin-top: 2rem !important;
+         }
+
+         .my-3 {
+             margin-top: 1rem !important;
+             margin-bottom: 1rem !important;
+         }
+
+         .my-5 {
+             margin-top: 2rem !important;
+             margin-bottom: 2rem !important;
+         }
     </style>
 </head>
 <body>
@@ -674,49 +801,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     <?php endif; ?>
 
-                    <!-- Wizard Steps -->
-                    <div class="wizard-steps">
-                        <div class="wizard-step">
-                            <div class="step-circle active" id="step1-circle">1</div>
-                            <span class="step-label">Basic Setup</span>
-                        </div>
-                        <div class="wizard-step">
-                            <div class="step-circle" id="step2-circle">2</div>
-                            <span class="step-label">Selling Units</span>
-                        </div>
-                        <div class="wizard-step">
-                            <div class="step-circle" id="step3-circle">3</div>
-                            <span class="step-label">Pricing Strategy</span>
-                        </div>
-                        <div class="wizard-step">
-                            <div class="step-circle" id="step4-circle">4</div>
-                            <span class="step-label">Review & Save</span>
-                        </div>
-                    </div>
-
-                    <form method="POST" id="auto-bom-form">
-                        <!-- Help Button -->
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h2>Auto BOM Setup Wizard</h2>
-                            <button type="button" class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#unitHelpModal">
-                                <i class="fas fa-question-circle me-2"></i>Help with Units
-                            </button>
+                    <form method="POST" id="auto-bom-form" autocomplete="off">
+                        <!-- Form token to prevent duplicate submissions -->
+                        <input type="hidden" name="form_token" value="<?php echo htmlspecialchars($_SESSION['form_token'] ?? ''); ?>">
+                        <!-- Hidden field for main sellable product ID -->
+                        <input type="hidden" name="sellable_product_id" id="sellable_product_id" value="">
+                        
+                        <!-- Page Header -->
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h2>Auto BOM Setup</h2>
+                            <div class="d-flex align-items-center gap-3">
+                                <small class="text-muted">
+                                    <i class="fas fa-info-circle me-1" style="color: #dc3545;"></i>Hover over red <i class="fas fa-info-circle" style="color: #dc3545;"></i> icons for help
+                                </small>
+                                <button type="button" class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#helpModal">
+                                    <i class="fas fa-question-circle me-2"></i>Help
+                                </button>
+                            </div>
                         </div>
 
-                        <!-- Step 1: Basic Setup -->
-                        <div class="wizard-content">
-                            <div class="form-section active" id="step1">
-                                <h3>Basic Configuration</h3>
-                                <p>Configure the basic settings for your Auto BOM.</p>
+                        <!-- Section 1: Basic Configuration -->
+                        <div class="form-section">
+                            <div class="section-header">
+                                <h3><i class="fas fa-cog me-2"></i>Basic Configuration</h3>
+                                <p class="text-muted">Configure the basic settings for your Auto BOM.</p>
+                            </div>
+                            
+                            <!-- Requirements Info -->
+                            <div class="alert alert-info mb-4">
+                                <h6><i class="fas fa-info-circle me-2"></i>Required Fields:</h6>
+                                <ul class="mb-0">
+                                    <li><strong>Configuration Name:</strong> Enter a unique name for this Auto BOM setup</li>
+                                    <li><strong>Auto BOM Type:</strong> Choose how products will be converted between different units</li>
+                                    <li><strong>Base Product:</strong> Select the main product for this Auto BOM</li>
+                                    <li><strong>Base Unit & Quantity:</strong> Define the fundamental measurement unit</li>
+                                    <li><strong>Selling Units:</strong> Add at least one selling unit with selected product and price</li>
+                                </ul>
+                                <div class="mt-3">
+                                    <small class="text-muted">
+                                        <i class="fas fa-lightbulb me-1"></i>
+                                        <strong>Auto-fill Note:</strong> Each selling unit automatically uses the price and status from its selected product.
+                                    </small>
+                                </div>
+                            </div>
 
                                 <div class="form-row">
                                     <div class="form-group">
-                                        <label for="config_name">Configuration Name *</label>
-                                        <input type="text" id="config_name" name="config_name" class="form-control" required>
+                                    <label for="config_name" class="tooltip-label">
+                                        Configuration Name *
+                                        <i class="fas fa-info-circle tooltip-icon" data-tooltip="Enter a unique name for this Auto BOM configuration. This helps identify the configuration in reports and management screens."></i>
+                                    </label>
+                                     <input type="text" id="config_name" name="config_name" class="form-control" required
+                                            placeholder="e.g., Cooking Oil - 20L Container">
+                                     <small class="form-text text-muted">
+                                         <i class="fas fa-lightbulb"></i> Examples: "Rice - 50kg Bulk", "Cooking Oil - 20L Container", "Water - 20L Bottle"
+                                     </small>
                                     </div>
                                     <div class="form-group">
-                                        <label for="auto_bom_type" class="dropdown-label" title="Choose the type of Auto BOM configuration">Auto BOM Type</label>
-                                        <select id="auto_bom_type" name="auto_bom_type" class="form-control" title="Select the type of Auto BOM">
+                                    <label for="auto_bom_type" class="dropdown-label tooltip-label">
+                                        Auto BOM Type
+                                        <i class="fas fa-info-circle tooltip-icon" data-tooltip="Select conversion type: Unit Conversion, Repackaging, or Bulk Selling."></i>
+                                    </label>
+                                    <select id="auto_bom_type" name="auto_bom_type" class="form-control">
                                             <option value="unit_conversion">Unit Conversion</option>
                                             <option value="repackaging">Repackaging</option>
                                             <option value="bulk_selling">Bulk Selling</option>
@@ -725,80 +871,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     </div>
                                 </div>
 
-                                <!-- Product Selection Mode -->
+                            <!-- Base Product Selection -->
                                 <div class="form-row">
                                     <div class="form-group">
-                                        <label class="dropdown-label" title="Choose how you want to select products for this Auto BOM configuration">Product Selection Mode *</label>
-                                        <select id="product_selection_mode" class="form-control" required title="Select how you want to choose products">
-                                            <option value="single">Single Product</option>
-                                            <option value="multiple">Multiple Products</option>
-                                            <option value="category">By Category</option>
-                                            <option value="family">By Product Family</option>
-                                        </select>
-                                        <small class="form-text text-muted">💡 Click the dropdown arrow to see all available options</small>
-                                    </div>
-                                    <div class="form-group" id="category_filter_group" style="display: none;">
-                                        <label for="category_filter" class="dropdown-label">Filter by Category</label>
-                                        <select id="category_filter" class="form-control">
-                                            <option value="">All Categories</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group" id="family_filter_group" style="display: none;">
-                                        <label for="family_filter" class="dropdown-label">Filter by Product Family</label>
-                                        <select id="family_filter" class="form-control">
-                                            <option value="">All Product Families</option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <!-- Product Search and Selection -->
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label>Search Products</label>
-                                        <div class="input-group">
-                                            <input type="text" id="product_search" class="form-control" placeholder="Search products...">
-                                            <button type="button" id="search_products" class="btn btn-outline-secondary">
-                                                <i class="fas fa-search"></i>
-                                            </button>
+                                    <label for="base_product_search" class="dropdown-label tooltip-label">
+                                        Base Product *
+                                        <i class="fas fa-info-circle tooltip-icon" data-tooltip="Search and select the main product for conversions. Use name, SKU, or barcode."></i>
+                                    </label>
+                                        <div class="searchable-select-container">
+                                            <input type="text" id="base_product_search" class="form-control"
+                                                   placeholder="Search for base product..."
+                                                   autocomplete="off">
+                                            <input type="hidden" id="base_product_id" name="base_product_id" value="">
+                                            <div class="search-results" id="base_product_results"></div>
+                                        </div>
+                                         <small class="form-text text-muted">
+                                             <i class="fas fa-lightbulb"></i> Start typing to search for products by name, SKU, or barcode
+                                         </small>
+                                         <small class="form-text text-info">
+                                             <i class="fas fa-info-circle"></i> Examples: Search "Rice", "Oil", "Water" or SKU "RICE001", "OIL500"
+                                         </small>
+                                        <div id="base_product_status" class="form-text text-info" style="display: none;">
+                                            <i class="fas fa-check-circle"></i> Base product selected
                                         </div>
                                     </div>
                                 </div>
 
-                                <!-- Product Selection Results -->
-                                <div id="product_selection_results" style="display: none;">
-                                    <h5>Select Products:</h5>
-                                    <div id="products_list" class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
-                                        <!-- Products will be loaded here -->
-                                    </div>
-                                    <div class="mt-2">
-                                        <button type="button" id="select_all_products" class="btn btn-sm btn-outline-primary">Select All</button>
-                                        <button type="button" id="clear_selection" class="btn btn-sm btn-outline-secondary">Clear Selection</button>
-                                        <span id="selected_count" class="ms-3 text-muted">0 products selected</span>
-                                    </div>
-                                </div>
-
-                                <!-- Hidden fields for selected products -->
-                                <input type="hidden" id="selected_products" name="selected_products" value="">
-                                <input type="hidden" id="product_varieties" name="product_varieties" value="">
-
-                                <!-- Base Product Selection (for single product mode) -->
-                                <div class="form-row" id="base_product_row">
-                                    <div class="form-group">
-                                        <label for="base_product_id" class="dropdown-label">Base Product *</label>
-                                        <select id="base_product_id" name="base_product_id" class="form-control">
-                                            <option value="">Select Base Product</option>
-                                            <?php foreach ($products as $product): ?>
-                                                <option value="<?php echo $product['id']; ?>">
-                                                    <?php echo htmlspecialchars($product['name'] . ' (' . $product['sku'] . ') - Stock: ' . $product['quantity']); ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="product_family_id" class="dropdown-label">Product Family (Optional)</label>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                    <label for="product_family_id" class="dropdown-label tooltip-label">
+                                        Product Family (Optional)
+                                        <i class="fas fa-info-circle tooltip-icon" data-tooltip="Group related products together for easier management. Optional - you can leave this empty if you don't need product grouping."></i>
+                                    </label>
                                         <select id="product_family_id" name="product_family_id" class="form-control">
                                             <option value="">Select Product Family</option>
                                             <?php foreach ($product_families as $family): ?>
@@ -807,10 +911,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                                 </option>
                                             <?php endforeach; ?>
                                         </select>
+                                     <small class="form-text text-muted">
+                                         <i class="fas fa-lightbulb"></i> Example: "Cooking Oils", "Rice Products", "Beverages" - helps group related items
+                                     </small>
+                                     <small class="form-text text-info">
+                                         <i class="fas fa-info-circle"></i> Examples: "Grains & Cereals", "Cooking Oils", "Beverages", "Snacks", "Cleaning Supplies"
+                                     </small>
                                     </div>
                                     <div class="form-group">
-                                        <label for="base_unit" class="dropdown-label" title="Select the base measurement unit">Base Unit</label>
-                                        <select id="base_unit" name="base_unit" class="form-control" title="Choose the base unit for calculations">
+                                    <label for="base_unit" class="dropdown-label tooltip-label">
+                                        Base Unit
+                                        <i class="fas fa-info-circle tooltip-icon" data-tooltip="Select the measurement unit for your base product. This is how the product is measured when you buy it in bulk (e.g., liters, kilograms, pieces)."></i>
+                                    </label>
+                                    <select id="base_unit" name="base_unit" class="form-control">
                                             <option value="each">Each</option>
                                             <option value="kg">Kilogram (kg)</option>
                                             <option value="g">Gram (g)</option>
@@ -820,81 +933,122 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             <option value="case">Case</option>
                                             <option value="box">Box</option>
                                         </select>
-                                        <small class="form-text text-muted">💡 This is the fundamental unit for all calculations</small>
+                                         <small class="form-text text-muted">💡 This is the fundamental unit for all calculations</small>
+                                         <small class="form-text text-info">
+                                             <i class="fas fa-info-circle"></i> Examples: "kg" for rice bags, "l" for oil drums, "each" for individual items
+                                         </small>
                                     </div>
                                     <div class="form-group">
-                                        <label for="base_quantity">Base Quantity</label>
-                                        <input type="number" id="base_quantity" name="base_quantity" class="form-control"
-                                               value="1" step="0.01" min="0.01">
+                                    <label for="base_quantity" class="tooltip-label">
+                                        Base Quantity
+                                        <i class="fas fa-info-circle tooltip-icon" data-tooltip="Enter conversion ratio (e.g., 20L drum = 20 x 1L bottles, so enter 20)."></i>
+                                    </label>
+                                         <input type="number" id="base_quantity" name="base_quantity" class="form-control"
+                                                value="1" step="0.01" min="0.01">
+                                         <small class="form-text text-info">
+                                             <i class="fas fa-info-circle"></i> Examples: 1 (for single items), 20 (for 20L drums), 50 (for 50kg bags)
+                                         </small>
                                     </div>
                                 </div>
 
                                 <div class="form-group full-width">
-                                    <label for="description">Description</label>
-                                    <textarea id="description" name="description" class="form-control" rows="3"></textarea>
+                                <label for="description" class="tooltip-label">
+                                    Description
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Add any additional notes or details about this Auto BOM configuration. This helps other users understand the purpose and setup of this configuration."></i>
+                                </label>
+                                 <textarea id="description" name="description" class="form-control" rows="3"
+                                           placeholder="Describe this Auto BOM configuration..."></textarea>
+                                 <small class="form-text text-info">
+                                     <i class="fas fa-info-circle"></i> Examples: "Bulk rice packaging for retail sales", "Oil distribution from drums to bottles", "Water packaging from bulk to individual bottles"
+                                 </small>
                                 </div>
 
                                 <div class="form-check">
                                     <input type="checkbox" id="is_active" name="is_active" class="form-check-input" checked>
-                                    <label for="is_active" class="form-check-label">Active Configuration</label>
-                                </div>
+                                <label for="is_active" class="form-check-label tooltip-label">
+                                    Active Configuration
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Enable this configuration to make it available for use in sales and inventory management. Uncheck to temporarily disable without deleting."></i>
+                                </label>
+                            </div>
+                        </div>
+
+                         <!-- Divider -->
+                         <hr class="my-3">
+                        
+                        <!-- Section 2: Selling Units Configuration -->
+                        <div class="form-section">
+                            <div class="section-header">
+                                <h3><i class="fas fa-boxes me-2"></i>Selling Units Configuration</h3>
+                                <p class="text-muted">Define the different selling units for this Auto BOM.</p>
                             </div>
 
-                            <!-- Step 2: Selling Units -->
-                            <div class="form-section" id="step2">
-                                <h3>Selling Units Configuration</h3>
-                                <p>Define the different selling units for this Auto BOM.</p>
-
-                                <div class="selling-units-section">
-                                    <div id="selling-units-container">
-                                        <!-- Selling units will be added here dynamically -->
-                                    </div>
-
-                                    <button type="button" id="add-selling-unit" class="btn btn-primary">
-                                        <i class="fas fa-plus"></i> Add Selling Unit
-                                    </button>
-                                </div>
-                            </div>
-
-                            <!-- Step 3: Pricing Strategy -->
-                            <div class="form-section" id="step3">
-                                <h3>Pricing Strategy</h3>
-                                <p>Configure pricing strategies for each selling unit.</p>
-
-                                <div id="pricing-configs">
-                                    <!-- Pricing configurations will be shown here -->
-                                </div>
-                            </div>
-
-                            <!-- Step 4: Review & Save -->
-                            <div class="form-section" id="step4">
-                                <h3>Review & Save</h3>
-                                <p>Review your Auto BOM configuration before saving.</p>
-
-                                <div id="review-content">
-                                    <!-- Review content will be populated here -->
-                                </div>
-                            </div>
-
-                            <!-- Wizard Navigation -->
-                            <div class="wizard-navigation">
-                                <button type="button" id="prev-step" class="btn btn-secondary" disabled>
-                                    <i class="fas fa-chevron-left"></i> Previous
-                                </button>
-
-                                <div id="step-indicators">
-                                    Step <span id="current-step">1</span> of 4
+                            <div class="selling-units-section">
+                                <div id="selling-units-container">
+                                    <!-- Selling units will be added here dynamically -->
                                 </div>
 
-                                <button type="button" id="next-step" class="btn btn-primary">
-                                    Next <i class="fas fa-chevron-right"></i>
+                                <button type="button" id="add-selling-unit" class="btn btn-primary tooltip-label">
+                                    <i class="fas fa-plus"></i> Add Selling Unit
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Click to add a new selling unit. Each selling unit represents a different way customers can buy this product (e.g., different sizes or quantities)."></i>
                                 </button>
                             </div>
                         </div>
+
+                         <!-- Save Button -->
+                         <div class="text-center mt-3">
+                             <button type="submit" id="save-configuration" class="btn btn-primary">
+                                 <i class="fas fa-save me-2"></i>Save Auto BOM Configuration
+                             </button>
+                         </div>
                     </form>
                 </div>
             </div>
         </main>
+    </div>
+
+    <!-- Help Modal -->
+    <div class="modal fade" id="helpModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-question-circle me-2"></i>Auto BOM Setup Help</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <h6>What is Auto BOM?</h6>
+                    <p>Auto BOM (Bill of Materials) automatically manages product unit conversions and inventory for products sold in different sizes or packaging.</p>
+
+                    <h6>Key Components:</h6>
+                    <ul>
+                        <li><strong>Base Product:</strong> The main product in your inventory (e.g., 20L container of oil)</li>
+                        <li><strong>Selling Units:</strong> Different sizes customers can buy (e.g., 500ml bottles, 1L bottles)</li>
+                        <li><strong>Sellable Products:</strong> Each unit must be linked to an existing product with its price and status</li>
+                        <li><strong>Pricing:</strong> Uses the selected product's price automatically</li>
+                        <li><strong>Status:</strong> Uses the selected product's status automatically</li>
+                    </ul>
+
+                    <h6>Example - Cooking Oil:</h6>
+                    <div class="alert alert-light">
+                        <strong>Base Product:</strong> 20L Container of Cooking Oil<br>
+                        <strong>Selling Units:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li>500ml Bottle → Links to "500ml Cooking Oil Bottle" product ($2.50, Active)</li>
+                            <li>1L Bottle → Links to "1L Cooking Oil Bottle" product ($4.50, Active)</li>
+                        </ul>
+                        <strong>Auto BOM handles:</strong> Stock conversion, inventory tracking, price management
+                    </div>
+
+                    <h6>Auto-fill Strategy:</h6>
+                    <p class="text-info">
+                        <i class="fas fa-info-circle me-2"></i>
+                        Each selling unit automatically gets its price and status from the selected product. No manual configuration needed!
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Got it!</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -902,412 +1056,162 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <script src="../assets/js/dashboard.js"></script>
 
     <script>
+        // Make products data available to JavaScript
+        window.productsData = <?php echo json_encode($products); ?>;
+        
         $(document).ready(function() {
-            let currentStep = 1;
             let sellingUnits = [];
             let selectedProducts = [];
             let allProducts = [];
-            let categories = [];
-            let productFamilies = [];
 
             // Initialize first selling unit
             addSellingUnit();
 
-            // Load categories and product families
-            loadCategoriesAndFamilies();
+            // Simple tooltip initialization check
+            console.log('Auto BOM Setup loaded with', $('.tooltip-icon').length, 'tooltips');
 
-            // Product selection mode change handler
-            $('#product_selection_mode').change(function() {
-                const mode = $(this).val();
-                updateProductSelectionUI(mode);
+            // Verify no duplicate tooltips
+            let tooltipTexts = [];
+            $('.tooltip-icon').each(function(index) {
+                const text = $(this).attr('data-tooltip');
+                if (text && tooltipTexts.includes(text)) {
+                    console.warn('Duplicate tooltip found:', text);
+                }
+                tooltipTexts.push(text);
             });
 
-            // Category filter change handler
-            $('#category_filter').change(function() {
-                searchProducts();
+            console.log('Tooltip texts verified, no conflicts found');
+
+            // Cleanup on page unload
+            $(window).on('beforeunload', function() {
+                cleanupEventListeners();
             });
 
-            // Family filter change handler
-            $('#family_filter').change(function() {
-                searchProducts();
-            });
+            // Base product search functionality
+            let baseProductSearchTimeout;
+            $('#base_product_search').on('input', function() {
+                const searchTerm = $(this).val().trim();
+                const resultsDiv = $('#base_product_results');
+                
+                // Clear previous timeout
+                clearTimeout(baseProductSearchTimeout);
+                
+                if (searchTerm.length === 0) {
+                    resultsDiv.removeClass('show').empty();
+                    return;
+                }
+                
+                // Show loading indicator
+                resultsDiv.html('<div class="search-result-item"><em>Searching...</em></div>');
+                resultsDiv.addClass('show');
 
-            // Search products handler
-            $('#search_products').click(function() {
-                searchProducts();
-            });
-
-            // Enter key handler for search
-            $('#product_search').keypress(function(e) {
-                if (e.which === 13) {
-                    searchProducts();
+                // Only search if we have at least 2 characters to reduce API calls
+                if (searchTerm.length >= 2) {
+                    // Debounce search
+                    baseProductSearchTimeout = setTimeout(() => {
+                        try {
+                            searchBaseProducts(searchTerm);
+                        } catch (error) {
+                            resultsDiv.html('<div class="search-result-item"><em>Error searching products</em></div>');
+                        }
+                    }, 300);
+                        } else {
+                    resultsDiv.removeClass('show').empty();
                 }
             });
 
-            // Select all products handler
-            $('#select_all_products').click(function() {
-                $('.product-checkbox').prop('checked', true);
-                updateSelectedProducts();
+            // Hide search results when clicking outside
+            $(document).on('click.baseProductSearch', function(e) {
+                if (!$(e.target).closest('.searchable-select-container').length) {
+                    $('.search-results').removeClass('show');
+                }
             });
 
-            // Clear selection handler
-            $('#clear_selection').click(function() {
-                $('.product-checkbox').prop('checked', false);
-                selectedProducts = [];
-                updateSelectedProducts();
-            });
-
-            // Navigation
-            $('#next-step').click(function() {
-                if (validateCurrentStep()) {
-                    if (currentStep < 4) {
-                        navigateToStep(currentStep + 1);
-                    } else {
-                        $('#auto-bom-form').submit();
+            // Form submission
+            $('#save-configuration').click(function(e) {
+                e.preventDefault();
+                
+                if (validateForm()) {
+                    // Prevent double submission
+                    const submitBtn = $(this);
+                    if (submitBtn.prop('disabled')) {
+                        return false;
                     }
+                    
+                    // Disable button and show loading
+                    submitBtn.prop('disabled', true);
+                    submitBtn.html('<i class="fas fa-spinner fa-spin me-2"></i>Creating Auto BOM...');
+
+                    // Clean up event listeners before submission
+                    cleanupEventListeners();
+                    
+                    // Submit form
+                    $('#auto-bom-form').submit();
                 }
             });
 
-            $('#prev-step').click(function() {
-                if (currentStep > 1) {
-                    navigateToStep(currentStep - 1);
-                }
-            });
+            // Cleanup function to remove event listeners
+            function cleanupEventListeners() {
+                // Remove base product search event listeners
+                $(document).off('click.baseProductSearch');
 
-            function navigateToStep(step) {
-                // Hide current step
-                $(`#step${currentStep}`).removeClass('active');
-                $(`#step${currentStep}-circle`).removeClass('active completed');
-
-                // Show new step
-                currentStep = step;
-                $(`#step${currentStep}`).addClass('active');
-                $(`#step${currentStep}-circle`).addClass('active');
-
-                // Mark previous steps as completed
-                for (let i = 1; i < currentStep; i++) {
-                    $(`#step${i}-circle`).addClass('completed');
+                // Remove all unit search event listeners
+                for (let i = 0; i < sellingUnits.length; i++) {
+                    $(document).off('click.unitSearch' + i);
                 }
 
-                // Update navigation
-                $('#current-step').text(currentStep);
-                $('#prev-step').prop('disabled', currentStep === 1);
-                $('#next-step').html(currentStep === 4 ?
-                    'Save Configuration <i class="fas fa-save"></i>' :
-                    'Next <i class="fas fa-chevron-right"></i>');
-
-                // Update step content
-                if (currentStep === 3) {
-                    updatePricingConfigs();
-                } else if (currentStep === 4) {
-                    updateReviewContent();
+                // Clear any pending timeouts
+                if (typeof baseProductSearchTimeout !== 'undefined') {
+                    clearTimeout(baseProductSearchTimeout);
                 }
             }
 
-            function validateCurrentStep() {
-                switch (currentStep) {
-                    case 1:
-                        return validateBasicSetup();
-                    case 2:
-                        return validateSellingUnits();
-                    case 3:
-                        return validatePricingStrategy();
-                    default:
-                        return true;
-                }
-            }
-
-            function validateBasicSetup() {
+            function validateForm() {
+                // Validate basic setup
                 const configName = $('#config_name').val().trim();
-                const selectionMode = $('#product_selection_mode').val();
                 const baseProductId = $('#base_product_id').val();
 
                 if (!configName) {
-                    alert('Please enter a configuration name.');
+                    showNotification('Please enter a configuration name.', 'error');
+                    $('#config_name').focus();
                     return false;
                 }
 
-                if (selectionMode === 'single') {
                     if (!baseProductId) {
-                        alert('Please select a base product.');
+                    showNotification('Please select a base product.', 'error');
+                        $('#base_product_search').focus();
                         return false;
+                }
+
+                // Check if at least one selling unit has a product selected
+                const unitProductIds = $('input[name="unit_product_ids[]"]');
+                let hasProductSelected = false;
+                unitProductIds.each(function() {
+                    if ($(this).val().trim()) {
+                        hasProductSelected = true;
+                        return false; // Break out of loop
                     }
-                } else {
-                    if (selectedProducts.length === 0) {
-                        alert('Please select at least one product.');
-                        return false;
-                    }
+                });
+
+                if (!hasProductSelected) {
+                    showNotification('Please add at least one selling unit and select a product for it.', 'error');
+                    return false;
+                }
+
+                // Validate selling units
+                if (!validateSellingUnits()) {
+                    return false;
                 }
 
                 return true;
             }
 
-            // Load categories and product families
-            function loadCategoriesAndFamilies() {
-                $.ajax({
-                    url: '../api/get_categories_and_families.php',
-                    method: 'GET',
-                    dataType: 'json',
-                    success: function(response) {
-                        if (response.success) {
-                            categories = response.categories;
-                            productFamilies = response.product_families;
-                            
-                            // Populate category filter
-                            const categorySelect = $('#category_filter');
-                            categorySelect.empty().append('<option value="">All Categories</option>');
-                            categories.forEach(category => {
-                                categorySelect.append(`<option value="${category.id}">${category.name}</option>`);
-                            });
-
-                            // Populate family filter
-                            const familySelect = $('#family_filter');
-                            familySelect.empty().append('<option value="">All Product Families</option>');
-                            productFamilies.forEach(family => {
-                                familySelect.append(`<option value="${family.id}">${family.name}</option>`);
-                            });
-                        }
-                    },
-                    error: function() {
-                        console.error('Failed to load categories and families');
-                    }
-                });
-            }
-
-            // Update product selection UI based on mode
-            function updateProductSelectionUI(mode) {
-                const baseProductRow = $('#base_product_row');
-                const productSelectionResults = $('#product_selection_results');
-                const categoryFilterGroup = $('#category_filter_group');
-                const familyFilterGroup = $('#family_filter_group');
-
-                if (mode === 'single') {
-                    baseProductRow.show();
-                    productSelectionResults.hide();
-                    categoryFilterGroup.hide();
-                    familyFilterGroup.hide();
-                } else {
-                    baseProductRow.hide();
-                    productSelectionResults.show();
-                    
-                    if (mode === 'category') {
-                        categoryFilterGroup.show();
-                        familyFilterGroup.hide();
-                    } else if (mode === 'family') {
-                        categoryFilterGroup.hide();
-                        familyFilterGroup.show();
-                    } else {
-                        categoryFilterGroup.show();
-                        familyFilterGroup.show();
-                    }
-                    
-                    // Load products for the selected mode
-                    searchProducts();
-                }
-            }
-
-            // Search products based on current filters
-            function searchProducts() {
-                const search = $('#product_search').val();
-                const categoryId = $('#category_filter').val();
-                const familyId = $('#family_filter').val();
-                const selectionMode = $('#product_selection_mode').val();
-
-                let url = '../api/get_products.php?';
-                const params = [];
-
-                if (search) params.push(`search=${encodeURIComponent(search)}`);
-                if (categoryId) params.push(`category_id=${categoryId}`);
-                if (familyId) params.push(`product_family_id=${familyId}`);
-                
-                // For category/family modes, get all products in that category/family
-                if (selectionMode === 'category' && categoryId) {
-                    params.push(`category_id=${categoryId}`);
-                } else if (selectionMode === 'family' && familyId) {
-                    params.push(`product_family_id=${familyId}`);
-                }
-
-                url += params.join('&');
-
-                $.ajax({
-                    url: url,
-                    method: 'GET',
-                    dataType: 'json',
-                    success: function(response) {
-                        if (response.success) {
-                            allProducts = response.products;
-                            displayProducts(allProducts);
-                        } else {
-                            console.error('Failed to load products:', response.error);
-                        }
-                    },
-                    error: function() {
-                        console.error('Failed to search products');
-                    }
-                });
-            }
-
-            // Display products in the selection list
-            function displayProducts(products) {
-                const productsList = $('#products_list');
-                productsList.empty();
-
-                if (products.length === 0) {
-                    productsList.html('<p class="text-muted text-center py-4">No products found matching your criteria.</p>');
-                    return;
-                }
-
-                products.forEach(product => {
-                    const isSelected = selectedProducts.some(p => p.id === product.id);
-                    const selectedProduct = selectedProducts.find(p => p.id === product.id);
-                    const varieties = selectedProduct ? selectedProduct.varieties || [] : [];
-                    
-                    const productHtml = `
-                        <div class="product-item ${isSelected ? 'selected' : ''}" data-product-id="${product.id}">
-                            <div class="product-info">
-                                <input class="form-check-input product-checkbox" type="checkbox" 
-                                       value="${product.id}" id="product_${product.id}" ${isSelected ? 'checked' : ''}>
-                                <div class="product-details">
-                                    <div class="product-name">${product.name}</div>
-                                    <div class="product-meta">
-                                        <span><i class="fas fa-barcode"></i> ${product.sku || 'N/A'}</span>
-                                        <span><i class="fas fa-tag"></i> ${product.category_name || 'N/A'}</span>
-                                        <span><i class="fas fa-layer-group"></i> ${product.product_family_name || 'N/A'}</span>
-                                        <span><i class="fas fa-boxes"></i> Stock: ${product.quantity}</span>
-                                        <span><i class="fas fa-dollar-sign"></i> $${product.selling_price}</span>
-                                    </div>
-                                    ${isSelected ? `
-                                        <div class="product-varieties mt-2">
-                                            <label class="form-label small">Product Varieties:</label>
-                                            <div class="variety-inputs">
-                                                <div class="input-group input-group-sm mb-1">
-                                                    <input type="text" class="form-control variety-name" placeholder="Variety 1 (e.g., Small, Red, etc.)" value="${varieties[0] || ''}">
-                                                    <button type="button" class="btn btn-outline-success btn-sm add-variety" data-product-id="${product.id}">
-                                                        <i class="fas fa-plus"></i>
-                                                    </button>
-                                                </div>
-                                                ${varieties.slice(1).map((variety, index) => `
-                                                    <div class="input-group input-group-sm mb-1">
-                                                        <input type="text" class="form-control variety-name" placeholder="Variety ${index + 2}" value="${variety}">
-                                                        <button type="button" class="btn btn-outline-danger btn-sm remove-variety" data-product-id="${product.id}">
-                                                            <i class="fas fa-times"></i>
-                                                        </button>
-                                                    </div>
-                                                `).join('')}
-                                            </div>
-                                        </div>
-                                    ` : ''}
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    productsList.append(productHtml);
-                });
-
-                // Add change handlers for checkboxes
-                $('.product-checkbox').change(function() {
-                    const productItem = $(this).closest('.product-item');
-                    if ($(this).is(':checked')) {
-                        productItem.addClass('selected');
-                    } else {
-                        productItem.removeClass('selected');
-                    }
-                    updateSelectedProducts();
-                    // Re-render products to show/hide variety inputs
-                    displayProducts(allProducts);
-                });
-
-                // Add variety management handlers
-                $('.add-variety').click(function() {
-                    const productId = parseInt($(this).data('product-id'));
-                    const varietyInputs = $(this).closest('.variety-inputs');
-                    const varietyCount = varietyInputs.find('.variety-name').length;
-                    
-                    const newVarietyHtml = `
-                        <div class="input-group input-group-sm mb-1">
-                            <input type="text" class="form-control variety-name" placeholder="Variety ${varietyCount + 1}">
-                            <button type="button" class="btn btn-outline-danger btn-sm remove-variety" data-product-id="${productId}">
-                                <i class="fas fa-times"></i>
-                            </button>
-                        </div>
-                    `;
-                    varietyInputs.append(newVarietyHtml);
-                    updateProductVarieties();
-                });
-
-                $('.remove-variety').click(function() {
-                    $(this).closest('.input-group').remove();
-                    updateProductVarieties();
-                });
-
-                // Update varieties when input changes
-                $('.variety-name').on('input', function() {
-                    updateProductVarieties();
-                });
-            }
-
-            // Update selected products array
-            function updateSelectedProducts() {
-                const newSelectedProducts = [];
-                
-                $('.product-checkbox:checked').each(function() {
-                    const productId = parseInt($(this).val());
-                    const product = allProducts.find(p => p.id === productId);
-                    if (product) {
-                        // Preserve existing varieties if any
-                        const existingProduct = selectedProducts.find(p => p.id === productId);
-                        if (existingProduct && existingProduct.varieties) {
-                            product.varieties = existingProduct.varieties;
-                        }
-                        newSelectedProducts.push(product);
-                    }
-                });
-
-                selectedProducts = newSelectedProducts;
-
-                // Update hidden field
-                $('#selected_products').val(selectedProducts.map(p => p.id).join(','));
-                
-                // Update selected count
-                $('#selected_count').text(`${selectedProducts.length} products selected`);
-            }
-
-            // Update product varieties
-            function updateProductVarieties() {
-                const varietiesData = {};
-                
-                $('.product-checkbox:checked').each(function() {
-                    const productId = parseInt($(this).val());
-                    const productItem = $(this).closest('.product-item');
-                    const varietyInputs = productItem.find('.variety-name');
-                    
-                    const varieties = [];
-                    varietyInputs.each(function() {
-                        const variety = $(this).val().trim();
-                        if (variety) {
-                            varieties.push(variety);
-                        }
-                    });
-                    
-                    // Update the selectedProducts array
-                    const selectedProduct = selectedProducts.find(p => p.id === productId);
-                    if (selectedProduct) {
-                        selectedProduct.varieties = varieties;
-                    }
-                    
-                    if (varieties.length > 0) {
-                        varietiesData[productId] = varieties;
-                    }
-                });
-
-                // Update hidden field
-                $('#product_varieties').val(JSON.stringify(varietiesData));
-            }
-
             function validateSellingUnits() {
                 const unitNames = $('input[name="unit_names[]"]');
                 const unitQuantities = $('input[name="unit_quantities[]"]');
-                
+                const unitProductIds = $('input[name="unit_product_ids[]"]');
+                const sellingPrices = $('input[name="selling_prices[]"]');
+
                 if (unitNames.length === 0) {
                     alert('Please add at least one selling unit.');
                     return false;
@@ -1316,25 +1220,263 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 for (let i = 0; i < unitNames.length; i++) {
                     const unitName = $(unitNames[i]).val().trim();
                     const unitQuantity = $(unitQuantities[i]).val().trim();
-                    
+                    const unitProductId = $(unitProductIds[i]).val().trim();
+                    const sellingPrice = $(sellingPrices[i]).val().trim();
+
+                    if (!unitProductId) {
+                        alert(`Please select a sellable product for selling unit ${i + 1}.`);
+                        return false;
+                    }
+
                     if (!unitName || !unitQuantity) {
                         alert(`Please complete all required fields for selling unit ${i + 1}.`);
                         return false;
                     }
-                    
+
                     // Validate that unit quantity is a positive number
                     if (isNaN(unitQuantity) || parseFloat(unitQuantity) <= 0) {
                         alert(`Please enter a valid quantity for selling unit ${i + 1}.`);
                         return false;
                     }
+
+                    // Validate that selling price is set
+                    if (!sellingPrice || isNaN(sellingPrice) || parseFloat(sellingPrice) < 0) {
+                        alert(`Please ensure a valid selling price is set for selling unit ${i + 1}. Select a product to auto-fill the price.`);
+                        return false;
+                    }
+
+                    // Note: Status is automatically determined from the selected product
                 }
 
                 return true;
             }
 
-            function validatePricingStrategy() {
-                // Basic validation - could be enhanced
-                return true;
+            // Search base products function
+            function searchBaseProducts(searchTerm) {
+                try {
+                const resultsDiv = $('#base_product_results');
+                
+                // Filter products based on search term
+                const filteredProducts = window.productsData.filter(product => {
+                    const searchLower = searchTerm.toLowerCase();
+                    return product.name.toLowerCase().includes(searchLower) ||
+                           (product.sku && product.sku.toLowerCase().includes(searchLower)) ||
+                           (product.barcode && product.barcode.toLowerCase().includes(searchLower));
+                });
+
+                // Clear previous results
+                resultsDiv.empty();
+
+                if (filteredProducts.length === 0) {
+                    resultsDiv.html('<div class="search-result-item"><em>No products found</em></div>');
+                } else {
+                    // Limit results to 10 for performance
+                    const limitedProducts = filteredProducts.slice(0, 10);
+                    
+                    limitedProducts.forEach(product => {
+                        const resultItem = $(`
+                            <div class="search-result-item" data-product-id="${product.id}">
+                                <div class="search-result-name">${product.name}</div>
+                                <div class="search-result-details">
+                                    SKU: ${product.sku || 'N/A'} | Stock: ${product.quantity} | Price: $${product.price || 0} | Supplier: ${product.supplier_name || 'N/A'}
+                                </div>
+                            </div>
+                        `);
+                        
+                        // Add click handler
+                        resultItem.on('click', function() {
+                            selectBaseProduct(product);
+                        });
+                        
+                        resultsDiv.append(resultItem);
+                    });
+                }
+                
+                resultsDiv.addClass('show');
+                } catch (error) {
+                    resultsDiv.html('<div class="search-result-item"><em>Error searching products</em></div>');
+                resultsDiv.addClass('show');
+                }
+            }
+
+            // Select base product function
+            function selectBaseProduct(product) {
+                // Update the search input
+                $('#base_product_search').val(`${product.name} (${product.sku || 'N/A'})`);
+                
+                // Update the hidden field
+                $('#base_product_id').val(product.id);
+                
+                // Hide search results
+                $('#base_product_results').removeClass('show');
+                
+                // Show status indicator
+                $('#base_product_status').show();
+                
+                // Show success message
+                showNotification(`Selected base product: ${product.name}`, 'success');
+            }
+
+            // Search products for a specific unit
+            function searchProductsForUnit(searchTerm, resultsDiv, unitIndex) {
+                try {
+                    // Filter products based on search term
+                    const filteredProducts = window.productsData.filter(product => {
+                        const searchLower = searchTerm.toLowerCase();
+                        return product.name.toLowerCase().includes(searchLower) ||
+                               (product.sku && product.sku.toLowerCase().includes(searchLower)) ||
+                               (product.barcode && product.barcode.toLowerCase().includes(searchLower));
+                    });
+
+                // Clear previous results
+                resultsDiv.empty();
+
+                if (filteredProducts.length === 0) {
+                    resultsDiv.html('<div class="search-result-item"><em>No products found</em></div>');
+                } else {
+                    // Limit results to 10 for performance
+                    const limitedProducts = filteredProducts.slice(0, 10);
+
+                    limitedProducts.forEach(product => {
+                        const resultItem = $(`
+                            <div class="search-result-item" data-product-id="${product.id}">
+                                <div class="search-result-name">${product.name}</div>
+                                <div class="search-result-details">
+                                    SKU: ${product.sku || 'N/A'} | Stock: ${product.quantity} | Price: $${product.price || 0} | Supplier: ${product.supplier_name || 'N/A'}
+                                </div>
+                            </div>
+                        `);
+
+                        // Add click handler
+                        resultItem.on('click', function() {
+                            selectProductForUnit(product, unitIndex);
+                        });
+
+                        resultsDiv.append(resultItem);
+                    });
+                }
+
+                resultsDiv.addClass('show');
+                } catch (error) {
+                    resultsDiv.html('<div class="search-result-item"><em>Error searching products</em></div>');
+                    resultsDiv.addClass('show');
+                }
+            }
+
+            // Select product for a specific unit
+            function selectProductForUnit(product, unitIndex) {
+                const unitItem = $(`.selling-unit-item[data-index="${unitIndex}"]`);
+
+                // Update the search input
+                unitItem.find('.unit-product-search').val(`${product.name} (${product.sku || 'N/A'})`);
+
+                // Update the hidden field
+                unitItem.find('.unit-product-id').val(product.id);
+
+                // Hide search results
+                unitItem.find('.unit-product-results').removeClass('show');
+
+                // Auto-fill unit name if empty
+                const unitNameInput = unitItem.find('input[name="unit_names[]"]');
+                if (!unitNameInput.val().trim()) {
+                    unitNameInput.val(`${product.name} (${product.sku || 'N/A'})`);
+                }
+
+                // Auto-fill SKU and barcode
+                if (product.sku) {
+                    unitItem.find('input[name="unit_skus[]"]').val(product.sku);
+                }
+                if (product.barcode) {
+                    unitItem.find('input[name="unit_barcodes[]"]').val(product.barcode);
+                }
+                
+                // Auto-fill price if available
+                if (product.price) {
+                    unitItem.find('input[name="selling_prices[]"]').val(product.price);
+                }
+
+                // Auto-fill status if available
+                if (product.status) {
+                    const statusDisplay = product.status.charAt(0).toUpperCase() + product.status.slice(1);
+                    unitItem.find('.unit-status-field').val(statusDisplay);
+                }
+
+                // Update main sellable product ID if not set
+                const mainSellableProductId = $('#sellable_product_id').val();
+                if (!mainSellableProductId) {
+                    $('#sellable_product_id').val(product.id);
+                }
+
+                // Show success message
+                showNotification(`Selected sellable product: ${product.name}`, 'success');
+            }
+
+            // Initialize product search for a specific selling unit
+            function initializeUnitProductSearch(unitIndex) {
+                const unitItem = $(`.selling-unit-item[data-index="${unitIndex}"]`);
+                const searchInput = unitItem.find('.unit-product-search');
+                const resultsDiv = unitItem.find('.unit-product-results');
+                const hiddenInput = unitItem.find('.unit-product-id');
+
+                let searchTimeout;
+
+                searchInput.on('input', function() {
+                    const searchTerm = $(this).val().trim();
+
+                    clearTimeout(searchTimeout);
+
+                    if (searchTerm.length === 0) {
+                        resultsDiv.removeClass('show').empty();
+                        return;
+                    }
+
+                    // Show loading indicator
+                    resultsDiv.html('<div class="search-result-item"><em>Searching...</em></div>');
+                    resultsDiv.addClass('show');
+
+                    // Only search if we have at least 2 characters to reduce API calls
+                    if (searchTerm.length >= 2) {
+                        searchTimeout = setTimeout(() => {
+                            try {
+                                searchProductsForUnit(searchTerm, resultsDiv, unitIndex);
+                            } catch (error) {
+                                resultsDiv.html('<div class="search-result-item"><em>Error searching products</em></div>');
+                            }
+                        }, 300);
+                    } else {
+                        resultsDiv.removeClass('show').empty();
+                    }
+                });
+
+                // Hide results when clicking outside
+                const hideResultsHandler = function(e) {
+                    if (!$(e.target).closest('.searchable-select-container').length) {
+                        resultsDiv.removeClass('show');
+                    }
+                };
+                $(document).on('click.unitSearch' + unitIndex, hideResultsHandler);
+            }
+
+            // Show notification function
+            function showNotification(message, type = 'info') {
+                const alertClass = type === 'success' ? 'alert-success' :
+                                  type === 'error' ? 'alert-danger' : 'alert-info';
+
+                const notification = $(`
+                    <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+                        <i class="fas fa-info-circle me-2"></i>
+                        ${message}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                `);
+
+                // Insert at the top of the wizard content
+                $('.wizard-content').prepend(notification);
+
+                // Auto-dismiss after 3 seconds
+                setTimeout(() => {
+                    notification.alert('close');
+                }, 3000);
             }
 
             // Selling Units Management
@@ -1347,70 +1489,125 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 const unitHtml = `
                     <div class="selling-unit-item" data-index="${unitIndex}">
                         <div class="unit-header">
-                            <span class="unit-title">Selling Unit ${unitIndex + 1}</span>
-                            <span class="remove-unit" onclick="removeSellingUnit(${unitIndex})">
+                            <span class="unit-title tooltip-label">
+                                Selling Unit ${unitIndex + 1}
+                                <i class="fas fa-info-circle tooltip-icon" data-tooltip="Configure how customers can buy this product. Each selling unit represents a different packaging or quantity option."></i>
+                            </span>
+                            <span class="remove-unit tooltip-label" onclick="removeSellingUnit(${unitIndex})">
                                 <i class="fas fa-times"></i>
+                                <i class="fas fa-info-circle tooltip-icon" data-tooltip="Remove this selling unit from the configuration."></i>
                             </span>
                         </div>
 
+                         <!-- Sellable Product Selection -->
+                         <div class="form-row mb-2">
+                            <div class="form-group">
+                                <label class="tooltip-label">
+                                    Sellable Product *
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Search and select the product that customers will buy for this selling unit. The product's price and status will be automatically used."></i>
+                                </label>
+                                <div class="searchable-select-container">
+                                    <input type="text" class="form-control unit-product-search" 
+                                           placeholder="Search for sellable product..."
+                                           autocomplete="off">
+                                    <input type="hidden" class="unit-product-id" name="unit_product_ids[]" value="">
+                                    <div class="search-results unit-product-results"></div>
+                                </div>
+                                <small class="form-text text-muted">
+                                    <i class="fas fa-lightbulb"></i> Select the product that customers will buy for this selling unit
+                                </small>
+                            </div>
+                        </div>
+
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Unit Name *</label>
-                                <input type="text" name="unit_names[]" class="form-control"
-                                       value="${unitData?.unit_name || ''}" required>
+                                <label class="tooltip-label">
+                                    Unit Name *
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Enter descriptive name (e.g., '500ml Bottle', '2kg Pack') for customer clarity."></i>
+                                </label>
+                                 <input type="text" name="unit_names[]" class="form-control"
+                                        value="${unitData?.unit_name || ''}" required
+                                        placeholder="e.g., 500ml Bottle">
+                                 <small class="form-text text-info">
+                                     <i class="fas fa-info-circle"></i> Examples: "500ml Bottle", "1kg Pack", "2L Container", "Single Item"
+                                 </small>
                             </div>
                             <div class="form-group">
-                                <label>Unit Quantity *</label>
-                                <input type="number" name="unit_quantities[]" class="form-control"
-                                       value="${unitData?.unit_quantity || 1}" step="0.01" min="0.01" required>
+                                <label class="tooltip-label">
+                                    Unit Quantity *
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Enter conversion ratio (e.g., 20L drum ÷ 500ml = 40 units)."></i>
+                                </label>
+                                 <input type="number" name="unit_quantities[]" class="form-control"
+                                        value="" step="0.01" min="0.01" required
+                                        placeholder="e.g., 20 (20kg rice = 20 x 1kg packs)">
+                                 <small class="form-text text-info">
+                                     <i class="fas fa-info-circle"></i> Examples: 20 (20kg ÷ 1kg), 40 (20L ÷ 500ml), 100 (100 pieces ÷ 1 piece)
+                                 </small>
                             </div>
                             <div class="form-group">
-                                <label>Unit SKU</label>
+                                <label class="tooltip-label">
+                                    Priority
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Set display priority. Higher numbers appear first in lists."></i>
+                                </label>
+                                 <input type="number" name="priorities[]" class="form-control"
+                                        value="${unitData?.priority || 0}" min="0">
+                                 <small class="form-text text-info">
+                                     <i class="fas fa-info-circle"></i> Examples: 0 (lowest priority), 10 (highest priority), 5 (medium priority)
+                                 </small>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="tooltip-label">
+                                    Selling Price <small class="text-muted">(auto-filled)</small>
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Automatically populated from the selected product's price setting."></i>
+                                </label>
+                                <input type="number" name="selling_prices[]" class="form-control selling-price-field"
+                                       value="${unitData?.selling_price || ''}" step="0.01" min="0" readonly
+                                       placeholder="Auto-filled from selected product">
+                                <small class="form-text text-muted">
+                                    💰 Price is automatically set from the selected sellable product
+                                </small>
+                            </div>
+       <div class="form-group">
+                                <label class="tooltip-label">
+                                    Status <small class="text-muted">(auto-filled)</small>
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Automatically inherited from selected product's status setting."></i>
+                                </label>
+                                <input type="text" class="form-control unit-status-field" readonly
+                                       value="${unitData?.status_display || 'Select a product'}" placeholder="Auto-filled from selected product">
+                                <small class="form-text text-muted">
+                                    📊 Status is automatically set from the selected sellable product
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="tooltip-label">
+                                    Unit SKU
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Automatically populated from selected product's unique identifier for inventory tracking."></i>
+                                </label>
                                 <input type="text" name="unit_skus[]" class="form-control"
-                                       value="${unitData?.unit_sku || ''}">
+                                       value="${unitData?.unit_sku || ''}" readonly
+                                       placeholder="Auto-generated from base product">
                             </div>
-                        </div>
-
-                        <div class="form-row">
                             <div class="form-group">
-                                <label>Barcode</label>
+                                <label class="tooltip-label">
+                                    Barcode
+                                    <i class="fas fa-info-circle tooltip-icon" data-tooltip="Automatically populated from selected product for POS scanning and inventory tracking."></i>
+                                </label>
                                 <input type="text" name="unit_barcodes[]" class="form-control"
-                                       value="${unitData?.unit_barcode || ''}">
-                            </div>
-                            <div class="form-group">
-                                <label>Priority</label>
-                                <input type="number" name="priorities[]" class="form-control"
-                                       value="${unitData?.priority || 0}" min="0">
-                            </div>
-                            <div class="form-group">
-                                <label>Max Qty per Sale</label>
-                                <input type="number" name="max_quantities[]" class="form-control"
-                                       value="${unitData?.max_quantity_per_sale || ''}" min="1">
-                            </div>
+                                       value="${unitData?.unit_barcode || ''}" readonly
+                                       placeholder="Auto-generated from base product">
                         </div>
-
-                        <div class="form-row">
                             <div class="form-group">
-                                <label class="dropdown-label">Pricing Strategy</label>
-                                <select name="pricing_strategies[]" class="form-control pricing-strategy-select">
-                                    <option value="fixed" ${unitData?.pricing_strategy === 'fixed' ? 'selected' : ''}>Fixed Price</option>
-                                    <option value="cost_based" ${unitData?.pricing_strategy === 'cost_based' ? 'selected' : ''}>Cost-Based</option>
-                                    <option value="market_based" ${unitData?.pricing_strategy === 'market_based' ? 'selected' : ''}>Market-Based</option>
-                                    <option value="dynamic" ${unitData?.pricing_strategy === 'dynamic' ? 'selected' : ''}>Dynamic</option>
-                                    <option value="hybrid" ${unitData?.pricing_strategy === 'hybrid' ? 'selected' : ''}>Hybrid</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label class="dropdown-label">Status</label>
+                                <label>Status</label>
                                 <select name="unit_statuses[]" class="form-control">
                                     <option value="active" ${unitData?.status !== 'inactive' ? 'selected' : ''}>Active</option>
                                     <option value="inactive" ${unitData?.status === 'inactive' ? 'selected' : ''}>Inactive</option>
                                 </select>
-                            </div>
-                            <div class="form-group">
-                                <label>Image URL</label>
-                                <input type="url" name="image_urls[]" class="form-control"
-                                       value="${unitData?.image_url || ''}">
                             </div>
                         </div>
                     </div>
@@ -1418,17 +1615,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $('#selling-units-container').append(unitHtml);
 
+                // Initialize product search for this unit
+                initializeUnitProductSearch(unitIndex);
+
                 const unit = {
                     index: unitIndex,
                     unit_name: unitData?.unit_name || '',
                     unit_quantity: unitData?.unit_quantity || 1,
-                    unit_sku: unitData?.unit_sku || '',
-                    unit_barcode: unitData?.unit_barcode || '',
-                    pricing_strategy: unitData?.pricing_strategy || 'fixed',
-                    status: unitData?.status || 'active',
-                    priority: unitData?.priority || 0,
-                    max_quantity_per_sale: unitData?.max_quantity_per_sale || null,
-                    image_url: unitData?.image_url || ''
+                    selling_price: unitData?.selling_price || '',
+                    status_display: unitData?.status_display || 'Select a product',
+                    priority: unitData?.priority || 0
                 };
 
                 sellingUnits.push(unit);
@@ -1452,218 +1648,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $(this).find('.remove-unit').attr('onclick', `removeSellingUnit(${i})`);
                 });
             }
-
-            function updatePricingConfigs() {
-                let pricingHtml = '';
-
-                sellingUnits.forEach((unit, index) => {
-                    pricingHtml += `
-                        <div class="pricing-config">
-                            <h4>${unit.unit_name} (${unit.unit_quantity} units)</h4>
-                            <div class="pricing-fields active" id="pricing-fields-${index}">
-                                ${getPricingFieldsHtml(unit.pricing_strategy, index, unit)}
-                            </div>
-                        </div>
-                    `;
-                });
-
-                $('#pricing-configs').html(pricingHtml);
-            }
-
-            function getPricingFieldsHtml(strategy, index, unitData) {
-                switch (strategy) {
-                    case 'fixed':
-                        return `
-                            <div class="form-group">
-                                <label>Fixed Price *</label>
-                                <input type="number" name="fixed_prices[]" class="form-control"
-                                       value="${unitData?.fixed_price || ''}" step="0.01" min="0" required>
-                            </div>
-                        `;
-
-                    case 'cost_based':
-                        return `
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label>Markup Percentage (%)</label>
-                                    <input type="number" name="markup_percentages[]" class="form-control"
-                                           value="${unitData?.markup_percentage || 0}" step="0.01" min="0">
-                                </div>
-                                <div class="form-group">
-                                    <label>Min Profit Margin (%)</label>
-                                    <input type="number" name="min_profit_margins[]" class="form-control"
-                                           value="${unitData?.min_profit_margin || 0}" step="0.01" min="0">
-                                </div>
-                            </div>
-                        `;
-
-                    case 'market_based':
-                        return `
-                            <div class="form-group">
-                                <label>Market Price *</label>
-                                <input type="number" name="market_prices[]" class="form-control"
-                                       value="${unitData?.market_price || ''}" step="0.01" min="0" required>
-                            </div>
-                        `;
-
-                    case 'dynamic':
-                        return `
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label>Dynamic Base Price</label>
-                                    <input type="number" name="dynamic_base_prices[]" class="form-control"
-                                           value="${unitData?.dynamic_base_price || ''}" step="0.01" min="0">
-                                </div>
-                                <div class="form-group">
-                                    <label>Stock Threshold</label>
-                                    <input type="number" name="stock_thresholds[]" class="form-control"
-                                           value="${unitData?.stock_level_threshold || ''}" min="0">
-                                </div>
-                                <div class="form-group">
-                                    <label>Demand Multiplier</label>
-                                    <input type="number" name="demand_multipliers[]" class="form-control"
-                                           value="${unitData?.demand_multiplier || 1.0}" step="0.01" min="0.1">
-                                </div>
-                            </div>
-                        `;
-
-                    case 'hybrid':
-                        return `
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label class="dropdown-label">Primary Strategy</label>
-                                    <select name="hybrid_primary_strategies[]" class="form-control">
-                                        <option value="fixed" ${unitData?.hybrid_primary_strategy === 'fixed' ? 'selected' : ''}>Fixed</option>
-                                        <option value="cost_based" ${unitData?.hybrid_primary_strategy === 'cost_based' ? 'selected' : ''}>Cost-Based</option>
-                                        <option value="market_based" ${unitData?.hybrid_primary_strategy === 'market_based' ? 'selected' : ''}>Market-Based</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label>Threshold Value</label>
-                                    <input type="number" name="hybrid_threshold_values[]" class="form-control"
-                                           value="${unitData?.hybrid_threshold_value || ''}" step="0.01" min="0">
-                                </div>
-                                <div class="form-group">
-                                    <label class="dropdown-label">Fallback Strategy</label>
-                                    <select name="hybrid_fallback_strategies[]" class="form-control">
-                                        <option value="fixed" ${unitData?.hybrid_fallback_strategy === 'fixed' ? 'selected' : ''}>Fixed</option>
-                                        <option value="cost_based" ${unitData?.hybrid_fallback_strategy === 'cost_based' ? 'selected' : ''}>Cost-Based</option>
-                                        <option value="market_based" ${unitData?.hybrid_fallback_strategy === 'market_based' ? 'selected' : ''}>Market-Based</option>
-                                    </select>
-                                </div>
-                            </div>
-                        `;
-
-                    default:
-                        return '<p>Please select a pricing strategy.</p>';
-                }
-            }
-
-            function updateReviewContent() {
-                const configName = $('#config_name').val();
-                const selectionMode = $('#product_selection_mode').val();
-                const baseProductId = $('#base_product_id option:selected').text();
-
-                let reviewHtml = `
-                    <div class="review-section">
-                        <h4>Basic Configuration</h4>
-                        <p><strong>Name:</strong> ${configName}</p>
-                        <p><strong>Selection Mode:</strong> ${selectionMode.charAt(0).toUpperCase() + selectionMode.slice(1)}</p>
-                `;
-
-                if (selectionMode === 'single') {
-                    reviewHtml += `<p><strong>Base Product:</strong> ${baseProductId}</p>`;
-                } else {
-                    reviewHtml += `<p><strong>Selected Products:</strong> ${selectedProducts.length} products</p>`;
-                    if (selectedProducts.length > 0) {
-                        reviewHtml += `<ul class="mt-2">`;
-                        selectedProducts.forEach(product => {
-                            const varieties = product.varieties || [];
-                            reviewHtml += `<li><strong>${product.name}</strong> (${product.sku}) - ${product.category_name}`;
-                            if (varieties.length > 0) {
-                                reviewHtml += `<br><small class="text-muted">Varieties: ${varieties.join(', ')}</small>`;
-                            }
-                            reviewHtml += `</li>`;
-                        });
-                        reviewHtml += `</ul>`;
-                    }
-                }
-
-                reviewHtml += `
-                        <p><strong>Base Unit:</strong> ${$('#base_unit').val()} (${$('#base_quantity').val()})</p>
-                    </div>
-
-                    <div class="review-section">
-                        <h4>Selling Units (${sellingUnits.length})</h4>
-                        <ul>
-                `;
-
-                sellingUnits.forEach(unit => {
-                    reviewHtml += `
-                        <li>
-                            <strong>${unit.unit_name}</strong> (${unit.unit_quantity} units) -
-                            Strategy: ${unit.pricing_strategy} - Status: ${unit.status}
-                        </li>
-                    `;
-                });
-
-                reviewHtml += `
-                        </ul>
-                    </div>
-                `;
-
-                $('#review-content').html(reviewHtml);
-            }
-
-            // Update pricing when strategy changes
-            $(document).on('change', '.pricing-strategy-select', function() {
-                const index = $(this).closest('.selling-unit-item').data('index');
-                const strategy = $(this).val();
-
-                if (sellingUnits[index]) {
-                    sellingUnits[index].pricing_strategy = strategy;
-                }
-
-                if (currentStep === 3) {
-                    updatePricingConfigs();
-                }
-            });
-
-            // Update sellingUnits array when form fields change
-            $(document).on('input change', 'input[name="unit_names[]"], input[name="unit_quantities[]"], input[name="unit_skus[]"], input[name="unit_barcodes[]"], input[name="priorities[]"], input[name="max_quantities[]"], input[name="image_urls[]"], select[name="unit_statuses[]"]', function() {
-                const index = $(this).closest('.selling-unit-item').data('index');
-                if (sellingUnits[index]) {
-                    const fieldName = $(this).attr('name');
-                    const value = $(this).val();
-                    
-                    switch(fieldName) {
-                        case 'unit_names[]':
-                            sellingUnits[index].unit_name = value;
-                            break;
-                        case 'unit_quantities[]':
-                            sellingUnits[index].unit_quantity = parseFloat(value) || 0;
-                            break;
-                        case 'unit_skus[]':
-                            sellingUnits[index].unit_sku = value;
-                            break;
-                        case 'unit_barcodes[]':
-                            sellingUnits[index].unit_barcode = value;
-                            break;
-                        case 'priorities[]':
-                            sellingUnits[index].priority = parseInt(value) || 0;
-                            break;
-                        case 'max_quantities[]':
-                            sellingUnits[index].max_quantity_per_sale = value ? parseInt(value) : null;
-                            break;
-                        case 'image_urls[]':
-                            sellingUnits[index].image_url = value;
-                            break;
-                        case 'unit_statuses[]':
-                            sellingUnits[index].status = value;
-                            break;
-                    }
-                }
-            });
         });
     </script>
 </body>

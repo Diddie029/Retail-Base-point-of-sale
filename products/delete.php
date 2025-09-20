@@ -231,7 +231,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <strong>Product ID:</strong> #<?php echo $product['id']; ?><br>
-                                    <strong>Barcode:</strong> <code><?php echo htmlspecialchars($product['barcode']); ?></code><br>
+                                    <strong>Barcode:</strong> <code><?php echo htmlspecialchars($product['barcode'] ?? 'Not set'); ?></code><br>
                                     <strong>Current Price:</strong> <?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?>
                                 </div>
                                 <div class="col-md-6">
@@ -309,7 +309,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                             <div class="row mb-3">
                                 <div class="col-md-6">
                                     <strong>Product ID:</strong> #<?php echo $product['id']; ?><br>
-                                    <strong>Barcode:</strong> <code><?php echo htmlspecialchars($product['barcode']); ?></code><br>
+                                    <strong>Barcode:</strong> <code><?php echo htmlspecialchars($product['barcode'] ?? 'Not set'); ?></code><br>
                                     <strong>Current Price:</strong> <?php echo $settings['currency_symbol']; ?> <?php echo number_format($product['price'], 2); ?>
                                 </div>
                                 <div class="col-md-6">

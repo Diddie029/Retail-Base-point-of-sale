@@ -261,6 +261,102 @@ function getSortIcon($column, $current_sort, $current_order) {
                 </div>
             </div>
 
+            <!-- Product Family Documentation -->
+            <div class="documentation-section">
+                <div class="documentation-card">
+                    <div class="documentation-header">
+                        <h3 class="documentation-title">
+                            <i class="bi bi-info-circle me-2"></i>
+                            What are Product Families?
+                        </h3>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="collapse" data-bs-target="#familyDocs" aria-expanded="false">
+                            <i class="bi bi-chevron-down"></i>
+                            Show Details
+                        </button>
+                    </div>
+                    <div class="collapse" id="familyDocs">
+                        <div class="documentation-content">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h5><i class="bi bi-lightbulb text-warning me-2"></i>Purpose</h5>
+                                    <p>Product families group related products that share common characteristics, pricing strategies, and business rules. They help organize your inventory and streamline management processes.</p>
+                                    
+                                    <h5><i class="bi bi-gear text-primary me-2"></i>Key Features</h5>
+                                    <ul class="list-unstyled">
+                                        <li><i class="bi bi-check-circle text-success me-2"></i> <strong>Unified Pricing:</strong> Set default pricing strategies for all products in a family</li>
+                                        <li><i class="bi bi-check-circle text-success me-2"></i> <strong>Base Unit Management:</strong> Define common measurement units (kg, liters, pieces)</li>
+                                        <li><i class="bi bi-check-circle text-success me-2"></i> <strong>Auto BOM Integration:</strong> Enable automatic Bill of Materials for complex products</li>
+                                        <li><i class="bi bi-check-circle text-success me-2"></i> <strong>Bulk Operations:</strong> Apply changes to multiple products at once</li>
+                                    </ul>
+                                </div>
+                                <div class="col-md-6">
+                                    <h5><i class="bi bi-example text-info me-2"></i>Examples</h5>
+                                    <div class="example-cards">
+                                        <div class="example-card">
+                                            <strong>Cooking Oils Family</strong>
+                                            <small class="d-block text-muted">Base Unit: Liter | Strategy: Cost-Based</small>
+                                            <ul class="small mt-2 mb-0">
+                                                <li>Sunflower Oil 1L</li>
+                                                <li>Olive Oil 500ml</li>
+                                                <li>Vegetable Oil 2L</li>
+                                            </ul>
+                                        </div>
+                                        <div class="example-card">
+                                            <strong>Rice Products Family</strong>
+                                            <small class="d-block text-muted">Base Unit: Kilogram | Strategy: Market-Based</small>
+                                            <ul class="small mt-2 mb-0">
+                                                <li>Basmati Rice 1kg</li>
+                                                <li>Jasmine Rice 5kg</li>
+                                                <li>Brown Rice 2kg</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row mt-4">
+                                <div class="col-12">
+                                    <h5><i class="bi bi-question-circle text-secondary me-2"></i>When to Use Product Families</h5>
+                                    <div class="row">
+                                        <div class="col-md-4">
+                                            <div class="use-case-card">
+                                                <i class="bi bi-graph-up text-primary mb-2"></i>
+                                                <h6>Pricing Consistency</h6>
+                                                <p class="small">When you want similar products to follow the same pricing rules and strategies.</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="use-case-card">
+                                                <i class="bi bi-boxes text-success mb-2"></i>
+                                                <h6>Inventory Management</h6>
+                                                <p class="small">For products that share common characteristics like base units or measurement systems.</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <div class="use-case-card">
+                                                <i class="bi bi-diagram-3 text-info mb-2"></i>
+                                                <h6>Auto BOM Products</h6>
+                                                <p class="small">When you need to create complex products with multiple selling units from a single base product.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row mt-4">
+                                <div class="col-12">
+                                    <div class="alert alert-info">
+                                        <i class="bi bi-lightbulb me-2"></i>
+                                        <strong>Pro Tip:</strong> Product families are optional but highly recommended for better organization. 
+                                        You can always assign products to families later, or create families as you add new products.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Family Header -->
             <div class="family-header">
                 <h2 class="family-title">Family Management</h2>
@@ -471,5 +567,156 @@ function getSortIcon($column, $current_sort, $current_order) {
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="../assets/js/families.js"></script>
+    
+    <style>
+    /* Product Family Documentation Styles */
+    .documentation-section {
+        margin-bottom: 2rem;
+    }
+    
+    .documentation-card {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border: 1px solid #dee2e6;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        overflow: hidden;
+    }
+    
+    .documentation-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .documentation-title {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+    }
+    
+    .documentation-content {
+        padding: 2rem;
+        background: white;
+    }
+    
+    .documentation-content h5 {
+        color: #495057;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        border-bottom: 2px solid #e9ecef;
+        padding-bottom: 0.5rem;
+    }
+    
+    .documentation-content h6 {
+        color: #6c757d;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+    
+    .example-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    .example-card {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 1rem;
+        border-left: 4px solid #007bff;
+    }
+    
+    .example-card strong {
+        color: #495057;
+        display: block;
+        margin-bottom: 0.5rem;
+    }
+    
+    .use-case-card {
+        text-align: center;
+        padding: 1.5rem 1rem;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        height: 100%;
+        transition: all 0.3s ease;
+    }
+    
+    .use-case-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-color: #007bff;
+    }
+    
+    .use-case-card i {
+        font-size: 2rem;
+        display: block;
+        margin-bottom: 1rem;
+    }
+    
+    .use-case-card h6 {
+        color: #495057;
+        font-weight: 600;
+        margin-bottom: 0.75rem;
+    }
+    
+    .use-case-card p {
+        color: #6c757d;
+        line-height: 1.4;
+    }
+    
+    .documentation-content ul {
+        padding-left: 1.5rem;
+    }
+    
+    .documentation-content li {
+        margin-bottom: 0.5rem;
+        line-height: 1.5;
+    }
+    
+    .documentation-content .alert {
+        border: none;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    
+    /* Collapse animation */
+    .collapse {
+        transition: all 0.3s ease;
+    }
+    
+    .btn[data-bs-toggle="collapse"] {
+        transition: all 0.3s ease;
+    }
+    
+    .btn[data-bs-toggle="collapse"]:not(.collapsed) .bi-chevron-down {
+        transform: rotate(180deg);
+    }
+    
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .documentation-header {
+            flex-direction: column;
+            gap: 1rem;
+            text-align: center;
+        }
+        
+        .documentation-content {
+            padding: 1.5rem;
+        }
+        
+        .example-cards {
+            margin-top: 1rem;
+        }
+        
+        .use-case-card {
+            margin-bottom: 1rem;
+        }
+    }
+    </style>
 </body>
 </html>

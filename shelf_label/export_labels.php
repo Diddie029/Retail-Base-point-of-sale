@@ -113,17 +113,16 @@ if ($_POST && isset($_POST['export_labels'])) {
         header('Content-Disposition: attachment; filename="' . $filename . '"');
         
         $output = fopen('php://output', 'w');
-        fputcsv($output, ['Product Name', 'SKU', 'Category', 'Original Price', 'Sale Price', 'Current Price', 'Stock Quantity', 'Labels to Print', 'Date']);
+        fputcsv($output, ['Product Name', 'SKU', 'Category', 'Original Price', 'Sale Price', 'Current Price', 'Labels to Print', 'Date']);
 
         foreach ($products as $product) {
             $product_id = $product['id'];
-            $stock_quantity = (int)($product['quantity'] ?? 0);
             $original_price = (float)($product['price'] ?? 0);
             $sale_price = $product['is_on_sale'] && !empty($product['sale_price']) ? (float)$product['sale_price'] : null;
             $current_price = $sale_price ?? $original_price;
             $labels_to_print = isset($custom_quantities[$product_id])
                 ? max(1, (int)$custom_quantities[$product_id])
-                : max(1, $stock_quantity);
+                : 1; // Default to 1 label if no custom quantity specified
 
             fputcsv($output, [
                 $product['name'],
@@ -132,7 +131,6 @@ if ($_POST && isset($_POST['export_labels'])) {
                 formatCurrencyWithSettings($original_price, $settings),
                 $sale_price ? formatCurrencyWithSettings($sale_price, $settings) : '',
                 formatCurrencyWithSettings($current_price, $settings),
-                $stock_quantity,
                 $labels_to_print,
                 date('Y-m-d')
             ]);

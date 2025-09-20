@@ -42,6 +42,51 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
+// Ensure tax_category_id column exists in products table
+try {
+    $stmt = $conn->query("DESCRIBE products");
+    $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+    
+    if (!in_array('tax_category_id', $columns)) {
+        $conn->exec("ALTER TABLE products ADD COLUMN tax_category_id INT DEFAULT NULL AFTER tax_rate");
+        $conn->exec("ALTER TABLE products ADD INDEX idx_tax_category_id (tax_category_id)");
+        error_log("Added tax_category_id column to products table");
+    }
+    
+    // Ensure foreign key constraint exists (only if tax_categories table exists)
+    $stmt = $conn->query("SHOW TABLES LIKE 'tax_categories'");
+    if ($stmt->rowCount() > 0) {
+        try {
+            $conn->exec("ALTER TABLE products ADD CONSTRAINT fk_products_tax_category_id FOREIGN KEY (tax_category_id) REFERENCES tax_categories(id) ON DELETE SET NULL");
+            error_log("Added foreign key constraint for tax_category_id");
+        } catch (PDOException $e) {
+            // Constraint might already exist, ignore error
+            if (strpos($e->getMessage(), 'Duplicate key name') === false) {
+                error_log("Error adding foreign key constraint for tax_category_id: " . $e->getMessage());
+            }
+        }
+    }
+} catch (PDOException $e) {
+    error_log("Error checking/adding tax_category_id column: " . $e->getMessage());
+}
+
+// Fix unique constraint issues for empty values
+try {
+    // Update empty strings to NULL for unique fields to prevent constraint violations
+    $conn->exec("UPDATE products SET sku = NULL WHERE sku = ''");
+    $conn->exec("UPDATE products SET product_number = NULL WHERE product_number = ''");
+    $conn->exec("UPDATE products SET barcode = NULL WHERE barcode = ''");
+    
+    // Modify unique constraints to allow multiple NULL values
+    $conn->exec("ALTER TABLE products MODIFY COLUMN sku VARCHAR(100) NULL");
+    $conn->exec("ALTER TABLE products MODIFY COLUMN product_number VARCHAR(100) NULL");
+    $conn->exec("ALTER TABLE products MODIFY COLUMN barcode VARCHAR(50) NULL");
+    
+    error_log("Fixed unique constraint issues for empty values");
+} catch (PDOException $e) {
+    error_log("Error fixing unique constraints: " . $e->getMessage());
+}
+
 // Get categories
 $categories_stmt = $conn->query("SELECT * FROM categories ORDER BY name");
 $categories = $categories_stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -162,7 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors['category_id'] = 'Please select a category';
     }
 
-    // Validate brand_id and supplier_id if provided
+    // Validate brand_id if provided
     if (!empty($brand_id)) {
         $stmt = $conn->prepare("SELECT COUNT(*) as count FROM brands WHERE id = ?");
         $stmt->execute([$brand_id]);
@@ -171,7 +216,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if (!empty($supplier_id)) {
+    // Validate supplier_id (now required)
+    if (empty($supplier_id)) {
+        $errors['supplier_id'] = 'Please select a supplier';
+    } else {
         $stmt = $conn->prepare("SELECT COUNT(*) as count FROM suppliers WHERE id = ?");
         $stmt->execute([$supplier_id]);
         if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] == 0) {
@@ -243,6 +291,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
             $errors['sku'] = 'This SKU already exists';
         }
+    } else {
+        // If SKU is empty, set it to NULL to avoid unique constraint violation
+        $sku = null;
     }
 
     // Check Product Number uniqueness if provided
@@ -253,6 +304,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
             $errors['product_number'] = 'This Product Number already exists';
         }
+    } else {
+        // If product_number is empty, set it to NULL to avoid unique constraint violation
+        $product_number = null;
     }
 
     // Check barcode uniqueness if provided
@@ -263,6 +317,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0) {
             $errors['barcode'] = 'This barcode already exists';
         }
+    } else {
+        // If barcode is empty, set it to NULL to avoid unique constraint violation
+        $barcode = null;
     }
 
     // Validate dimensions
@@ -282,6 +339,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // If no errors, save the product
     if (empty($errors)) {
         try {
+            // Additional validation before database insert
+            if (empty($name) || empty($category_id) || $price < 0) {
+                throw new Exception("Required fields are missing or invalid");
+            }
+            
+            // Validate that category exists
+            $stmt = $conn->prepare("SELECT COUNT(*) as count FROM categories WHERE id = ?");
+            $stmt->execute([$category_id]);
+            if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] == 0) {
+                throw new Exception("Selected category does not exist");
+            }
+            
+            // Validate supplier exists if provided
+            if (!empty($supplier_id)) {
+                $stmt = $conn->prepare("SELECT COUNT(*) as count FROM suppliers WHERE id = ?");
+                $stmt->execute([$supplier_id]);
+                if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] == 0) {
+                    throw new Exception("Selected supplier does not exist");
+                }
+            }
+            
+            // Validate brand exists if provided
+            if (!empty($brand_id)) {
+                $stmt = $conn->prepare("SELECT COUNT(*) as count FROM brands WHERE id = ?");
+                $stmt->execute([$brand_id]);
+                if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] == 0) {
+                    throw new Exception("Selected brand does not exist");
+                }
+            }
+            
+            // Validate tax category exists if provided
+            if (!empty($tax_category_id)) {
+                $stmt = $conn->prepare("SELECT COUNT(*) as count FROM tax_categories WHERE id = ?");
+                $stmt->execute([$tax_category_id]);
+                if ($stmt->fetch(PDO::FETCH_ASSOC)['count'] == 0) {
+                    throw new Exception("Selected tax category does not exist");
+                }
+            }
             // Auto-generate SKU if not provided
             if (empty($sku)) {
                 // Check if auto-generate SKU is enabled in system settings
@@ -368,10 +463,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'name' => $name,
                 'category_id' => $category_id,
                 'sku' => $sku,
+                'product_number' => $product_number,
                 'brand_id' => $brand_id,
                 'supplier_id' => $supplier_id,
+                'tax_category_id' => $tax_category_id,
                 'publication_status' => $publication_status,
-                'scheduled_date' => $scheduled_date
+                'scheduled_date' => $scheduled_date,
+                'price' => $price,
+                'cost_price' => $cost_price,
+                'quantity' => $quantity
             ], true));
 
             if ($insert_stmt->execute()) {
@@ -396,11 +496,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header("Location: view.php?id=$product_id");
                 exit();
             }
+        } catch (Exception $e) {
+            // Handle validation errors and other general exceptions
+            error_log("Product creation validation error: " . $e->getMessage());
+            $errors['general'] = $e->getMessage();
         } catch (PDOException $e) {
-            $errors['general'] = 'An error occurred while saving the product. Please try again.';
+            // Enhanced error logging and user-friendly error messages
             error_log("Product creation error: " . $e->getMessage());
             error_log("SQL Error Code: " . $e->getCode());
             error_log("SQL Error Info: " . print_r($e->errorInfo, true));
+            
+            // Provide more specific error messages based on error type
+            if ($e->getCode() == 23000) {
+                if (strpos($e->getMessage(), 'sku') !== false) {
+                    $errors['sku'] = 'This SKU already exists. Please choose a different SKU.';
+                } elseif (strpos($e->getMessage(), 'product_number') !== false) {
+                    $errors['product_number'] = 'This Product Number already exists. Please choose a different Product Number.';
+                } elseif (strpos($e->getMessage(), 'barcode') !== false) {
+                    $errors['barcode'] = 'This barcode already exists. Please choose a different barcode.';
+                } else {
+                    $errors['general'] = 'A product with similar details already exists. Please check your input and try again.';
+                }
+            } elseif ($e->getCode() == 1452) {
+                $errors['general'] = 'Invalid reference data. Please check that the selected category, brand, or supplier exists.';
+            } elseif ($e->getCode() == 1054) {
+                $errors['general'] = 'Database structure error. Please contact the administrator.';
+            } else {
+                $errors['general'] = 'An error occurred while saving the product: ' . $e->getMessage();
+            }
         }
     }
 }
@@ -896,8 +1019,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
                             </div>
 
                             <div class="form-group">
-                                <label for="supplier_id" class="form-label">Supplier</label>
-                                <select class="form-control" id="supplier_id" name="supplier_id">
+                                <label for="supplier_id" class="form-label">Supplier <span class="text-danger">*</span></label>
+                                <select class="form-control" id="supplier_id" name="supplier_id" required>
                                     <option value="">Select Supplier</option>
                                     <?php foreach ($suppliers as $supplier_item): ?>
                                     <option value="<?php echo $supplier_item['id']; ?>"
@@ -909,6 +1032,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
                                 <div class="form-text">
                                     <a href="../suppliers/add.php" target="_blank">Add new supplier</a>
                                 </div>
+                                <?php if (isset($errors['supplier_id'])): ?>
+                                    <div class="text-danger mt-1"><?php echo $errors['supplier_id']; ?></div>
+                                <?php endif; ?>
                             </div>
                         </div>
 

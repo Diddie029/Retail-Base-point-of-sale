@@ -145,6 +145,16 @@ if (hasPermission('manage_products', $permissions)) {
 
         <!-- Content -->
         <main class="content">
+            <!-- Error Messages -->
+            <?php if (isset($_SESSION['logout_error'])): ?>
+            <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                <i class="bi bi-exclamation-triangle me-2"></i>
+                <?php echo htmlspecialchars($_SESSION['logout_error']); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+            <?php unset($_SESSION['logout_error']); ?>
+            <?php endif; ?>
+            
             <!-- Statistics Cards -->
             <div class="stats-grid">
                 <div class="stat-card">

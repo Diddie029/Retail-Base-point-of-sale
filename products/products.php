@@ -1039,7 +1039,7 @@ unset($_SESSION['success'], $_SESSION['error']);
                                 <?php endif; ?>
                             </td>
                             <td class="col-barcode">
-                                <code><?php echo htmlspecialchars($product['barcode']); ?></code>
+                                <code><?php echo htmlspecialchars($product['barcode'] ?? 'Not set'); ?></code>
                             </td>
                             <td class="col-auto-bom">
                                 <?php if ($product['is_auto_bom_enabled']): ?>

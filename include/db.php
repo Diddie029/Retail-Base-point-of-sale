@@ -1066,16 +1066,20 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         invoice_number VARCHAR(100) DEFAULT NULL,
         received_date DATE DEFAULT NULL,
         invoice_notes TEXT,
+        supplier_invoice_number VARCHAR(100) DEFAULT NULL,
+        received_by INT DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (received_by) REFERENCES users(id) ON DELETE SET NULL,
         INDEX idx_order_number (order_number),
         INDEX idx_supplier_id (supplier_id),
         INDEX idx_user_id (user_id),
         INDEX idx_status (status),
         INDEX idx_order_date (order_date),
-        INDEX idx_invoice_number (invoice_number)
+        INDEX idx_invoice_number (invoice_number),
+        UNIQUE KEY unique_invoice_number (invoice_number)
     )");
 
     // Update existing inventory_orders table enum if needed
@@ -1131,6 +1135,11 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             error_log("Added supplier_invoice_number column to inventory_orders");
         }
 
+        if (!in_array('received_by', $columns)) {
+            $conn->exec("ALTER TABLE inventory_orders ADD COLUMN received_by INT DEFAULT NULL AFTER supplier_invoice_number");
+            error_log("Added received_by column to inventory_orders");
+        }
+
         // Add index for invoice_number if it doesn't exist
         try {
             $conn->exec("ALTER TABLE inventory_orders ADD INDEX idx_invoice_number (invoice_number)");
@@ -1138,10 +1147,46 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             // Index might already exist, that's okay
         }
 
+        // Add unique constraint for invoice_number if it doesn't exist
+        try {
+            $conn->exec("ALTER TABLE inventory_orders ADD UNIQUE KEY unique_invoice_number (invoice_number)");
+            error_log("Added unique constraint for invoice_number");
+        } catch (PDOException $e) {
+            // Constraint might already exist, that's okay
+            error_log("Invoice number unique constraint might already exist: " . $e->getMessage());
+        }
+
+        // Add foreign key constraint for received_by if it doesn't exist
+        try {
+            $conn->exec("ALTER TABLE inventory_orders ADD CONSTRAINT fk_received_by FOREIGN KEY (received_by) REFERENCES users(id) ON DELETE SET NULL");
+            error_log("Added foreign key constraint for received_by");
+        } catch (PDOException $e) {
+            // Constraint might already exist, that's okay
+            error_log("Received_by foreign key constraint might already exist: " . $e->getMessage());
+        }
+
     } catch (PDOException $e) {
         // Table might not exist yet, that's okay
         error_log("Could not add invoice columns to inventory_orders: " . $e->getMessage());
     }
+
+    // Create inventory_invoice_attachments table for invoice file attachments
+    $conn->exec("CREATE TABLE IF NOT EXISTS inventory_invoice_attachments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        original_name VARCHAR(255) NOT NULL,
+        file_path VARCHAR(500) NOT NULL,
+        file_type VARCHAR(100),
+        file_size INT,
+        uploaded_by INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES inventory_orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_order_id (order_id),
+        INDEX idx_uploaded_by (uploaded_by)
+    )");
+
 
     // Create inventory_order_items table for order line items
     $conn->exec("CREATE TABLE IF NOT EXISTS inventory_order_items (
@@ -1154,12 +1199,22 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         received_quantity INT DEFAULT 0,
         status ENUM('pending', 'received', 'cancelled') DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (order_id) REFERENCES inventory_orders(id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
         INDEX idx_order_id (order_id),
         INDEX idx_product_id (product_id),
         INDEX idx_status (status)
     )");
+
+
+    // Add updated_at column if it doesn't exist
+    try {
+        $conn->exec("ALTER TABLE inventory_order_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Could not add updated_at column: " . $e->getMessage());
+    }
 
     // Create returns table for product returns
     $conn->exec("CREATE TABLE IF NOT EXISTS returns (
@@ -1365,6 +1420,12 @@ $conn = new PDO("mysql:host=$host", $username, $password);
                 alert_sent TINYINT(1) DEFAULT 0,
                 alert_sent_date DATETIME,
                 status ENUM('active', 'expired', 'disposed', 'returned') DEFAULT 'active',
+                expiry_tracking_number VARCHAR(20) UNIQUE COMMENT 'Format: EXPT:000001',
+                approval_status ENUM('draft', 'submitted', 'approved', 'rejected') DEFAULT 'draft',
+                submitted_by INT COMMENT 'User who submitted for approval',
+                approved_by INT COMMENT 'User who approved',
+                submitted_at DATETIME,
+                approved_at DATETIME,
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1373,7 +1434,9 @@ $conn = new PDO("mysql:host=$host", $username, $password);
                 INDEX idx_batch_number (batch_number),
                 INDEX idx_status (status),
                 INDEX idx_alert_sent (alert_sent),
-                INDEX idx_supplier_id (supplier_id)
+                INDEX idx_supplier_id (supplier_id),
+                INDEX idx_expiry_tracking_number (expiry_tracking_number),
+                INDEX idx_approval_status (approval_status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -4366,6 +4429,93 @@ $conn = new PDO("mysql:host=$host", $username, $password);
     } catch (Exception $e) {
         // Log migration errors but don't fail database initialization
         error_log("Database migration warning: " . $e->getMessage());
+    }
+
+    // Migration: Add expiry tracking and approval fields to product_expiry_dates table
+    try {
+        // Check if expiry_tracking_number column exists
+        $stmt = $conn->prepare("SHOW COLUMNS FROM product_expiry_dates LIKE 'expiry_tracking_number'");
+        $stmt->execute();
+        $result = $stmt->fetch();
+
+        if (!$result) {
+            error_log("Adding expiry tracking and approval fields to product_expiry_dates table...");
+            
+            // Add expiry_tracking_number column
+            $conn->exec("ALTER TABLE product_expiry_dates ADD COLUMN expiry_tracking_number VARCHAR(20) UNIQUE COMMENT 'Format: EXPT:000001'");
+            error_log("Added expiry_tracking_number column");
+            
+            // Add approval_status column
+            $conn->exec("ALTER TABLE product_expiry_dates ADD COLUMN approval_status ENUM('draft', 'submitted', 'approved', 'rejected') DEFAULT 'draft'");
+            error_log("Added approval_status column");
+            
+            // Add submitted_by column
+            $conn->exec("ALTER TABLE product_expiry_dates ADD COLUMN submitted_by INT COMMENT 'User who submitted for approval'");
+            error_log("Added submitted_by column");
+            
+            // Add approved_by column
+            $conn->exec("ALTER TABLE product_expiry_dates ADD COLUMN approved_by INT COMMENT 'User who approved'");
+            error_log("Added approved_by column");
+            
+            // Add submitted_at column
+            $conn->exec("ALTER TABLE product_expiry_dates ADD COLUMN submitted_at DATETIME");
+            error_log("Added submitted_at column");
+            
+            // Add approved_at column
+            $conn->exec("ALTER TABLE product_expiry_dates ADD COLUMN approved_at DATETIME");
+            error_log("Added approved_at column");
+            
+            // Add indexes
+            $conn->exec("ALTER TABLE product_expiry_dates ADD INDEX idx_expiry_tracking_number (expiry_tracking_number)");
+            $conn->exec("ALTER TABLE product_expiry_dates ADD INDEX idx_approval_status (approval_status)");
+            error_log("Added indexes for expiry tracking and approval fields");
+            
+            // Generate tracking numbers for existing records
+            $stmt = $conn->query("SELECT id FROM product_expiry_dates WHERE expiry_tracking_number IS NULL ORDER BY id");
+            $existing_records = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            
+            if (!empty($existing_records)) {
+                $update_stmt = $conn->prepare("UPDATE product_expiry_dates SET expiry_tracking_number = ? WHERE id = ?");
+                $counter = 1;
+                
+                foreach ($existing_records as $record_id) {
+                    $tracking_number = 'EXPT:' . str_pad($counter, 6, '0', STR_PAD_LEFT);
+                    $update_stmt->execute([$tracking_number, $record_id]);
+                    $counter++;
+                }
+                
+                error_log("Generated tracking numbers for " . count($existing_records) . " existing records");
+            }
+            
+            error_log("Migration completed: Added expiry tracking and approval fields to product_expiry_dates table");
+        } else {
+            error_log("Expiry tracking fields already exist in product_expiry_dates table");
+        }
+    } catch (PDOException $e) {
+        // Log migration error but don't fail the entire database initialization
+        error_log("Warning: Could not add expiry tracking fields to product_expiry_dates: " . $e->getMessage());
+    }
+
+    // Migration: Add approve_expiry_items permission
+    try {
+        $stmt = $conn->prepare("SELECT id FROM permissions WHERE name = 'approve_expiry_items'");
+        $stmt->execute();
+        $result = $stmt->fetch();
+
+        if (!$result) {
+            error_log("Adding approve_expiry_items permission...");
+            
+            $conn->exec("
+                INSERT INTO permissions (name, description, category) 
+                VALUES ('approve_expiry_items', 'Approve expiry date items for inventory management', 'Inventory')
+            ");
+            
+            error_log("Added approve_expiry_items permission");
+        } else {
+            error_log("approve_expiry_items permission already exists");
+        }
+    } catch (PDOException $e) {
+        error_log("Warning: Could not add approve_expiry_items permission: " . $e->getMessage());
     }
 
 

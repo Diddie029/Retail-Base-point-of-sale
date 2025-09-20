@@ -19,6 +19,80 @@ function hasPermission($permission, $userPermissions) {
 }
 
 /**
+ * Check if user is authenticated for POS access
+ * 
+ * @return bool True if user is POS authenticated, false otherwise
+ */
+function isPOSAuthenticated() {
+    // Check if user is logged in
+    if (!isset($_SESSION['user_id'])) {
+        return false;
+    }
+    
+    // Check if user is authenticated for POS access
+    if (!isset($_SESSION['pos_authenticated']) || $_SESSION['pos_authenticated'] !== true) {
+        return false;
+    }
+    
+    // Check if POS authentication is still valid (8 hours)
+    $pos_auth_time = $_SESSION['pos_auth_time'] ?? 0;
+    $auth_timeout = 8 * 60 * 60; // 8 hours in seconds
+    if (time() - $pos_auth_time > $auth_timeout) {
+        unset($_SESSION['pos_authenticated']);
+        unset($_SESSION['pos_auth_time']);
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+ * Require POS authentication - redirects if not authenticated
+ * 
+ * @param string $redirect_url Optional redirect URL (defaults to authenticate.php)
+ */
+function requirePOSAuthentication($redirect_url = 'authenticate.php') {
+    if (!isPOSAuthenticated()) {
+        if (strpos($redirect_url, 'http') === 0) {
+            // Full URL
+            header("Location: " . $redirect_url);
+        } else {
+            // Relative URL
+            header("Location: " . $redirect_url);
+        }
+        exit();
+    }
+}
+
+/**
+ * Log login attempts for security monitoring
+ * 
+ * @param PDO $conn Database connection
+ * @param string $identifier Username, email, or user ID used for login
+ * @param string $ip_address IP address of the user
+ * @param string $user_agent User agent string
+ * @param string $attempt_type Type of attempt (login, pos_auth, etc.)
+ * @param bool $success Whether the attempt was successful
+ */
+function logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_type, $success) {
+    try {
+        $stmt = $conn->prepare("
+            INSERT INTO login_attempts (identifier, ip_address, user_agent, attempt_type, success)
+            VALUES (:identifier, :ip, :user_agent, :attempt_type, :success)
+        ");
+        $stmt->bindParam(':identifier', $identifier);
+        $stmt->bindParam(':ip', $ip_address);
+        $stmt->bindParam(':user_agent', $user_agent);
+        $stmt->bindParam(':attempt_type', $attempt_type);
+        $stmt->bindParam(':success', $success, PDO::PARAM_BOOL);
+        $stmt->execute();
+    } catch(PDOException $e) {
+        // Log to error log if database logging fails
+        error_log("Failed to log login attempt: " . $e->getMessage());
+    }
+}
+
+/**
  * Get menu section to permissions mapping
  * 
  * @return array Mapping of menu section keys to their related permissions
@@ -1025,7 +1099,7 @@ function sanitizeProductInput($input, $type = 'string') {
 
     switch ($type) {
         case 'text':
-            $input = filter_var($input, FILTER_SANITIZE_STRING, FILTER_FLAG_NO_ENCODE_QUOTES);
+            $input = htmlspecialchars($input, ENT_QUOTES, 'UTF-8');
             break;
         case 'float':
             $input = filter_var($input, FILTER_SANITIZE_NUMBER_FLOAT, FILTER_FLAG_ALLOW_FRACTION);
@@ -1587,6 +1661,85 @@ function calculateCostPerformance($conn, $supplier_id, $start_date = null, $end_
 }
 
 /**
+ * Calculate supplier new products metrics
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @param string $start_date Start date for calculation (Y-m-d)
+ * @param string $end_date End date for calculation (Y-m-d)
+ * @return array New products metrics
+ */
+function calculateNewProductsMetrics($conn, $supplier_id, $start_date = null, $end_date = null) {
+    try {
+        $sql = "
+            SELECT
+                COUNT(*) as total_new_products,
+                COUNT(CASE WHEN p.is_active = 1 THEN 1 END) as active_products,
+                COUNT(CASE WHEN p.is_active = 0 THEN 1 END) as inactive_products,
+                AVG(p.selling_price) as avg_selling_price,
+                AVG(p.cost_price) as avg_cost_price,
+                SUM(p.stock_quantity) as total_stock_quantity,
+                COUNT(DISTINCT p.category_id) as categories_covered
+            FROM products p
+            WHERE p.supplier_id = :supplier_id
+        ";
+
+        $params = [':supplier_id' => $supplier_id];
+
+        if ($start_date) {
+            $sql .= " AND p.created_at >= :start_date";
+            $params[':start_date'] = $start_date . ' 00:00:00';
+        }
+
+        if ($end_date) {
+            $sql .= " AND p.created_at <= :end_date";
+            $params[':end_date'] = $end_date . ' 23:59:59';
+        }
+
+        $stmt = $conn->prepare($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        // Calculate additional metrics
+        $total_new_products = (int)($result['total_new_products'] ?? 0);
+        $active_products = (int)($result['active_products'] ?? 0);
+        $inactive_products = (int)($result['inactive_products'] ?? 0);
+        
+        // Calculate activation rate
+        $activation_rate = $total_new_products > 0 ? round(($active_products / $total_new_products) * 100, 2) : 0;
+        
+        // Calculate average margin
+        $avg_selling_price = (float)($result['avg_selling_price'] ?? 0);
+        $avg_cost_price = (float)($result['avg_cost_price'] ?? 0);
+        $avg_margin = $avg_selling_price > 0 ? round((($avg_selling_price - $avg_cost_price) / $avg_selling_price) * 100, 2) : 0;
+
+        return [
+            'total_new_products' => $total_new_products,
+            'active_products' => $active_products,
+            'inactive_products' => $inactive_products,
+            'activation_rate' => $activation_rate,
+            'avg_selling_price' => round($avg_selling_price, 2),
+            'avg_cost_price' => round($avg_cost_price, 2),
+            'avg_margin' => $avg_margin,
+            'total_stock_quantity' => (int)($result['total_stock_quantity'] ?? 0),
+            'categories_covered' => (int)($result['categories_covered'] ?? 0)
+        ];
+    } catch (PDOException $e) {
+        return [
+            'total_new_products' => 0,
+            'active_products' => 0,
+            'inactive_products' => 0,
+            'activation_rate' => 0,
+            'avg_selling_price' => 0,
+            'avg_cost_price' => 0,
+            'avg_margin' => 0,
+            'total_stock_quantity' => 0,
+            'categories_covered' => 0
+        ];
+    }
+}
+
+/**
  * Get supplier performance summary
  *
  * @param PDO $conn Database connection
@@ -1616,6 +1769,7 @@ function getSupplierPerformance($conn, $supplier_id, $period = '90days') {
     $delivery = calculateDeliveryPerformance($conn, $supplier_id, $start_date, $end_date);
     $quality = calculateQualityMetrics($conn, $supplier_id, $start_date, $end_date);
     $cost = calculateCostPerformance($conn, $supplier_id, $start_date, $end_date);
+    $new_products = calculateNewProductsMetrics($conn, $supplier_id, $start_date, $end_date);
 
     // Calculate overall performance score (weighted average)
     $delivery_weight = 0.4;
@@ -1643,6 +1797,7 @@ function getSupplierPerformance($conn, $supplier_id, $period = '90days') {
         'delivery_performance' => $delivery,
         'quality_metrics' => $quality,
         'cost_performance' => $cost,
+        'new_products_metrics' => $new_products,
         'overall_score' => $overall_score,
         'performance_rating' => getPerformanceRating($overall_score)
     ];
@@ -1661,6 +1816,155 @@ function getPerformanceRating($score) {
     if ($score >= 60) return 'Fair';
     if ($score >= 50) return 'Poor';
     return 'Critical';
+}
+
+/**
+ * Get recent orders for a supplier
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @param int $limit Number of orders to retrieve
+ * @return array Recent orders data
+ */
+function getSupplierRecentOrders($conn, $supplier_id, $limit = 10) {
+    try {
+        $sql = "
+            SELECT io.*, COUNT(ioi.id) as item_count,
+                   CASE
+                       WHEN io.received_date IS NULL THEN 'pending'
+                       WHEN io.received_date <= io.expected_date THEN 'on_time'
+                       ELSE 'late'
+                   END as delivery_status
+            FROM inventory_orders io
+            LEFT JOIN inventory_order_items ioi ON io.id = ioi.order_id
+            WHERE io.supplier_id = :supplier_id
+            GROUP BY io.id
+            ORDER BY io.created_at DESC
+            LIMIT :limit
+        ";
+        
+        $stmt = $conn->prepare($sql);
+        $stmt->bindValue(':supplier_id', $supplier_id, PDO::PARAM_INT);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        return [];
+    }
+}
+
+/**
+ * Get recent returns for a supplier with pagination
+ *
+ * @param PDO $conn Database connection
+ * @param int $supplier_id Supplier ID
+ * @param array $filters Filter options (search, severity, status, date_from, date_to)
+ * @param int $page Page number for pagination
+ * @param int $per_page Items per page
+ * @return array Returns data with pagination info
+ */
+function getSupplierReturns($conn, $supplier_id, $filters = [], $page = 1, $per_page = 10) {
+    try {
+        // Build WHERE conditions
+        $where_conditions = ["r.supplier_id = :supplier_id"];
+        $params = [':supplier_id' => $supplier_id];
+        
+        if (!empty($filters['search'])) {
+            $where_conditions[] = "(r.return_reason LIKE :search OR r.return_number LIKE :search)";
+            $params[':search'] = "%{$filters['search']}%";
+        }
+        
+        if (!empty($filters['severity'])) {
+            $where_conditions[] = "CASE 
+                WHEN r.total_amount > 1000 THEN 'critical'
+                WHEN r.total_amount > 500 THEN 'high'
+                WHEN r.total_amount > 100 THEN 'medium'
+                ELSE 'low'
+            END = :severity";
+            $params[':severity'] = $filters['severity'];
+        }
+        
+        if (isset($filters['status']) && $filters['status'] !== '') {
+            $where_conditions[] = "r.status = :status";
+            $params[':status'] = $filters['status'] === 'resolved' ? 'completed' : 'pending';
+        }
+        
+        if (!empty($filters['date_from'])) {
+            $where_conditions[] = "r.created_at >= :date_from";
+            $params[':date_from'] = $filters['date_from'] . ' 00:00:00';
+        }
+        
+        if (!empty($filters['date_to'])) {
+            $where_conditions[] = "r.created_at <= :date_to";
+            $params[':date_to'] = $filters['date_to'] . ' 23:59:59';
+        }
+        
+        $where_clause = implode(' AND ', $where_conditions);
+        
+        // Get total count
+        $count_sql = "SELECT COUNT(*) as total FROM returns r WHERE $where_clause";
+        $count_stmt = $conn->prepare($count_sql);
+        foreach ($params as $key => $value) {
+            $count_stmt->bindValue($key, $value);
+        }
+        $count_stmt->execute();
+        $total_returns = $count_stmt->fetch(PDO::FETCH_ASSOC)['total'];
+        $total_pages = ceil($total_returns / $per_page);
+        
+        // Get returns data
+        $offset = ($page - 1) * $per_page;
+        $sql = "
+            SELECT 
+                r.id,
+                r.return_number,
+                r.created_at as reported_date,
+                r.return_reason as description,
+                r.status,
+                r.total_amount,
+                CASE 
+                    WHEN r.status = 'completed' THEN 'resolved'
+                    ELSE 'open'
+                END as resolved,
+                CASE 
+                    WHEN r.total_amount > 1000 THEN 'critical'
+                    WHEN r.total_amount > 500 THEN 'high'
+                    WHEN r.total_amount > 100 THEN 'medium'
+                    ELSE 'low'
+                END as severity,
+                'return' as issue_type
+            FROM returns r
+            WHERE $where_clause
+            ORDER BY r.created_at DESC
+            LIMIT :limit OFFSET :offset
+        ";
+        
+        $stmt = $conn->prepare($sql);
+        foreach ($params as $key => $value) {
+            $stmt->bindValue($key, $value);
+        }
+        $stmt->bindValue(':limit', $per_page, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+        
+        $returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        return [
+            'data' => $returns,
+            'total' => $total_returns,
+            'total_pages' => $total_pages,
+            'current_page' => $page,
+            'per_page' => $per_page
+        ];
+    } catch (PDOException $e) {
+        return [
+            'data' => [],
+            'total' => 0,
+            'total_pages' => 0,
+            'current_page' => 1,
+            'per_page' => $per_page
+        ];
+    }
 }
 
 /**
@@ -3284,6 +3588,44 @@ function generateBarcodeReceiptNumber($sale_id, $date = null) {
 }
 
 /**
+ * Generate unique expiry tracking number
+ * 
+ * @param PDO $conn Database connection
+ * @return string Generated tracking number (e.g., EXPT:000001)
+ */
+function generateExpiryTrackingNumber($conn) {
+    try {
+        // Get the highest existing tracking number
+        $stmt = $conn->prepare("
+            SELECT expiry_tracking_number 
+            FROM product_expiry_dates 
+            WHERE expiry_tracking_number IS NOT NULL 
+            AND expiry_tracking_number LIKE 'EXPT:%'
+            ORDER BY expiry_tracking_number DESC 
+            LIMIT 1
+        ");
+        $stmt->execute();
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($result && $result['expiry_tracking_number']) {
+            // Extract the number part and increment
+            $last_number = intval(substr($result['expiry_tracking_number'], 5));
+            $new_number = $last_number + 1;
+        } else {
+            // First tracking number
+            $new_number = 1;
+        }
+        
+        // Format with leading zeros (6 digits)
+        return 'EXPT:' . str_pad($new_number, 6, '0', STR_PAD_LEFT);
+        
+    } catch (PDOException $e) {
+        // Fallback: use timestamp-based number
+        return 'EXPT:' . str_pad(time() % 1000000, 6, '0', STR_PAD_LEFT);
+    }
+}
+
+/**
  * Map sales payment method to payment type name
  *
  * @param string $paymentMethod The payment method from sales table
@@ -3955,6 +4297,24 @@ function hasAdminAccess($role_name = null, $userPermissions = []) {
     }
     
     return false;
+}
+
+/**
+ * Format file size in human readable format
+ * 
+ * @param int $bytes File size in bytes
+ * @return string Formatted file size
+ */
+function formatFileSize($bytes) {
+    if ($bytes >= 1073741824) {
+        return number_format($bytes / 1073741824, 2) . ' GB';
+    } elseif ($bytes >= 1048576) {
+        return number_format($bytes / 1048576, 2) . ' MB';
+    } elseif ($bytes >= 1024) {
+        return number_format($bytes / 1024, 2) . ' KB';
+    } else {
+        return $bytes . ' bytes';
+    }
 }
 
 ?>

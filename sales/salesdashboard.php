@@ -75,49 +75,7 @@ $stmt = $conn->prepare("
 $stmt->execute([$today]);
 $today_stats = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Get register tills
-$stmt = $conn->query("
-    SELECT * FROM register_tills 
-    WHERE is_active = 1 
-    ORDER BY till_name
-");
-$register_tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Check if user has selected a till for this session
-$selected_till = null;
-if (isset($_SESSION['selected_till_id'])) {
-    $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
-    $stmt->execute([$_SESSION['selected_till_id']]);
-    $selected_till = $stmt->fetch(PDO::FETCH_ASSOC);
-}
-
-// Handle till selection
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'select_till') {
-    $till_id = $_POST['till_id'] ?? null;
-    if ($till_id) {
-        $stmt = $conn->prepare("SELECT * FROM register_tills WHERE id = ? AND is_active = 1");
-        $stmt->execute([$till_id]);
-        $till = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if ($till) {
-            $_SESSION['selected_till_id'] = $till_id;
-            $_SESSION['selected_till_name'] = $till['till_name'];
-            $_SESSION['selected_till_code'] = $till['till_code'];
-            $selected_till = $till;
-        }
-    }
-}
-
-// Get recent cash drops
-$stmt = $conn->query("
-    SELECT cd.*, rt.till_name, u.username as dropped_by
-    FROM cash_drops cd
-    LEFT JOIN register_tills rt ON cd.till_id = rt.id
-    LEFT JOIN users u ON cd.user_id = u.id
-    ORDER BY cd.drop_date DESC
-    LIMIT 10
-");
-$recent_cash_drops = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get payment methods
 $stmt = $conn->query("
@@ -129,28 +87,6 @@ $payment_methods = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get POS Management statistics
 try {
-    // Till statistics
-    $stmt = $conn->query("
-        SELECT 
-            COUNT(*) as total_tills,
-            COUNT(CASE WHEN is_active = 1 THEN 1 END) as active_tills,
-            SUM(current_balance) as total_cash_in_tills
-        FROM register_tills
-    ");
-    $till_stats = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    // Cash drop statistics (today)
-    $stmt = $conn->prepare("
-        SELECT 
-            COUNT(*) as total_drops_today,
-            SUM(drop_amount) as total_dropped_today,
-            COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_drops
-        FROM cash_drops 
-        WHERE DATE(drop_date) = ?
-    ");
-    $stmt->execute([$today]);
-    $cash_drop_stats = $stmt->fetch(PDO::FETCH_ASSOC);
-    
     // Payment method statistics
     $stmt = $conn->query("
         SELECT 
@@ -161,8 +97,6 @@ try {
     $payment_stats = $stmt->fetch(PDO::FETCH_ASSOC);
     
 } catch (PDOException $e) {
-    $till_stats = ['total_tills' => 0, 'active_tills' => 0, 'total_cash_in_tills' => 0];
-    $cash_drop_stats = ['total_drops_today' => 0, 'total_dropped_today' => 0, 'pending_drops' => 0];
     $payment_stats = ['total_payment_types' => 0, 'active_payment_types' => 0];
 }
 
@@ -256,22 +190,6 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
             margin-bottom: 0.5rem;
             border-radius: 0 5px 5px 0;
         }
-        .till-card {
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            padding: 1rem;
-            margin-bottom: 1rem;
-            background: #f8f9fa;
-        }
-        .till-status {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 0.5rem;
-        }
-        .till-active { background-color: #28a745; }
-        .till-inactive { background-color: #dc3545; }
     </style>
 </head>
 <body>
@@ -343,42 +261,7 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             <!-- POS Management Statistics -->
             <div class="row mb-4">
-                <div class="col-md-3">
-                    <div class="stats-card" style="background: linear-gradient(135deg, #17a2b8 0%, #20c997 100%);">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <h6 class="mb-1">Total Tills</h6>
-                                <h3 class="mb-0"><?php echo $till_stats['total_tills'] ?? 0; ?></h3>
-                                <small class="text-white-50"><?php echo $till_stats['active_tills'] ?? 0; ?> Active</small>
-                            </div>
-                            <i class="bi bi-cash-register fs-1 opacity-75"></i>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="stats-card" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <h6 class="mb-1">Cash in Tills</h6>
-                                <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($till_stats['total_cash_in_tills'] ?? 0, 2); ?></h3>
-                            </div>
-                            <i class="bi bi-cash-coin fs-1 opacity-75"></i>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="stats-card" style="background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <h6 class="mb-1">Cash Drops Today</h6>
-                                <h3 class="mb-0"><?php echo $cash_drop_stats['total_drops_today'] ?? 0; ?></h3>
-                                <small class="text-white-50"><?php echo $cash_drop_stats['pending_drops'] ?? 0; ?> Pending</small>
-                            </div>
-                            <i class="bi bi-cash-stack fs-1 opacity-75"></i>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3">
+                <div class="col-md-6">
                     <div class="stats-card" style="background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%);">
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
@@ -387,6 +270,18 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <small class="text-white-50"><?php echo $payment_stats['total_payment_types'] ?? 0; ?> Total</small>
                             </div>
                             <i class="bi bi-credit-card fs-1 opacity-75"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="stats-card" style="background: linear-gradient(135deg, #17a2b8 0%, #20c997 100%);">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h6 class="mb-1">Payment Methods</h6>
+                                <h3 class="mb-0"><?php echo count($payment_methods); ?></h3>
+                                <small class="text-white-50">Methods Configured</small>
+                            </div>
+                            <i class="bi bi-credit-card-2-front fs-1 opacity-75"></i>
                         </div>
                     </div>
                 </div>
@@ -401,38 +296,6 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </div>
                         <div class="card-body">
                             <div class="row">
-                                <!-- Register Tills -->
-                                <div class="col-md-6">
-                                    <div class="feature-card" onclick="window.location.href='tills.php'">
-                                        <div class="d-flex align-items-center">
-                                            <div class="feature-icon" style="background: linear-gradient(135deg, #007bff 0%, #0056b3 100%); color: white;">
-                                                <i class="bi bi-cash-register"></i>
-                                            </div>
-                                            <div class="ms-3">
-                                                <h6 class="mb-1">Register Tills</h6>
-                                                <p class="text-muted mb-0">Manage cash registers and till assignments</p>
-                                                <small class="text-primary"><?php echo count($register_tills); ?> active tills</small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Cash Drop -->
-                                <div class="col-md-6">
-                                    <div class="feature-card" onclick="window.location.href='cash-drop.php'">
-                                        <div class="d-flex align-items-center">
-                                            <div class="feature-icon" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white;">
-                                                <i class="bi bi-cash-coin"></i>
-                                            </div>
-                                            <div class="ms-3">
-                                                <h6 class="mb-1">Cash Drop</h6>
-                                                <p class="text-muted mb-0">Record cash drops and till management</p>
-                                                <small class="text-success"><?php echo count($recent_cash_drops); ?> recent drops</small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
                                 <!-- Payment Methods -->
                                 <div class="col-md-6">
                                     <div class="feature-card" onclick="window.location.href='payment-methods.php'">
@@ -541,7 +404,7 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <div class="text-end">
                                         <span class="badge bg-danger"><?php echo $alert['quantity']; ?> left</span>
                                         <br>
-                                        <small class="text-muted">Reorder: <?php echo $alert['reorder_level']; ?></small>
+                                        <small class="text-muted">Reorder: <?php echo $alert['reorder_point']; ?></small>
                                     </div>
                                 </div>
                             </div>
@@ -631,144 +494,13 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
         </div>
     </div>
 
-    <!-- Till Selection Modal -->
-    <div class="modal fade" id="tillSelectionModal" tabindex="-1" aria-labelledby="tillSelectionModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="tillSelectionModalLabel">
-                        <i class="bi bi-cash-register"></i> Select Till
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <form method="POST" action="">
-                    <input type="hidden" name="action" value="select_till">
-                    <div class="modal-body">
-                        <div class="alert alert-info">
-                            <i class="bi bi-info-circle"></i>
-                            Please select a till to continue with sales operations. You can change this selection at any time.
-                        </div>
-                        
-                        <div class="row">
-                            <?php foreach ($register_tills as $till): ?>
-                            <div class="col-md-6 mb-3">
-                                <div class="card h-100 till-card" onclick="selectTill(<?php echo $till['id']; ?>)">
-                                    <div class="card-body text-center">
-                                        <div class="till-icon mb-3">
-                                            <i class="bi bi-cash-register" style="font-size: 2rem; color: #667eea;"></i>
-                                        </div>
-                                        <h5 class="card-title"><?php echo htmlspecialchars($till['till_name']); ?></h5>
-                                        <p class="card-text">
-                                            <strong>Code:</strong> <?php echo htmlspecialchars($till['till_code']); ?><br>
-                                            <strong>Location:</strong> <?php echo htmlspecialchars($till['location'] ?? 'N/A'); ?><br>
-                                            <strong>Current Balance:</strong> 
-                                            <span class="text-success fw-bold">
-                                                <?php echo formatCurrency($till['current_balance'], $settings); ?>
-                                            </span>
-                                        </p>
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="radio" name="till_id" value="<?php echo $till['id']; ?>" id="till_<?php echo $till['id']; ?>">
-                                            <label class="form-check-label" for="till_<?php echo $till['id']; ?>">
-                                                Select This Till
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <?php endforeach; ?>
-                        </div>
-                        
-                        <?php if (empty($register_tills)): ?>
-                        <div class="text-center py-4">
-                            <i class="bi bi-exclamation-triangle text-warning" style="font-size: 3rem;"></i>
-                            <h5 class="mt-3">No Active Tills Available</h5>
-                            <p class="text-muted">Please contact your administrator to set up active tills.</p>
-                        </div>
-                        <?php endif; ?>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary" id="confirmTillSelection" disabled>
-                            <i class="bi bi-check-circle"></i> Confirm Selection
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Show till selection modal
-        function showTillSelection() {
-            const modal = new bootstrap.Modal(document.getElementById('tillSelectionModal'));
-            modal.show();
-        }
-        
-        // Select till when card is clicked
-        function selectTill(tillId) {
-            // Uncheck all radio buttons
-            document.querySelectorAll('input[name="till_id"]').forEach(radio => {
-                radio.checked = false;
-            });
-            
-            // Check the selected till
-            document.getElementById('till_' + tillId).checked = true;
-            
-            // Enable confirm button
-            document.getElementById('confirmTillSelection').disabled = false;
-            
-            // Add visual feedback
-            document.querySelectorAll('.till-card').forEach(card => {
-                card.classList.remove('border-primary', 'bg-light');
-            });
-            event.currentTarget.classList.add('border-primary', 'bg-light');
-        }
-        
-        // Enable confirm button when radio is selected
-        document.querySelectorAll('input[name="till_id"]').forEach(radio => {
-            radio.addEventListener('change', function() {
-                document.getElementById('confirmTillSelection').disabled = !this.checked;
-            });
-        });
-        
-        // Show modal on page load if no till is selected
-        <?php if (!$selected_till && !empty($register_tills)): ?>
-        document.addEventListener('DOMContentLoaded', function() {
-            showTillSelection();
-        });
-        <?php endif; ?>
+        // Page-specific JavaScript can be added here
     </script>
     
     <style>
-        .till-card {
-            cursor: pointer;
-            transition: all 0.3s ease;
-            border: 2px solid transparent;
-        }
-        
-        .till-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-            border-color: #667eea;
-        }
-        
-        .till-card.border-primary {
-            border-color: #667eea !important;
-            background-color: #f8f9ff !important;
-        }
-        
-        .till-icon {
-            width: 60px;
-            height: 60px;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 50%;
-            color: white;
-        }
         /* Extra space at page bottom to prevent content/footer overlap */
         .page-bottom-space {
             height: 80px;

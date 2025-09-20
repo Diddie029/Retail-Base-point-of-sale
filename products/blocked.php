@@ -534,7 +534,7 @@ unset($_SESSION['success'], $_SESSION['error']);
                                     <?php echo number_format($product['quantity']); ?>
                                 </td>
                                 <td>
-                                    <code><?php echo htmlspecialchars($product['barcode']); ?></code>
+                                    <code><?php echo htmlspecialchars($product['barcode'] ?? 'Not set'); ?></code>
                                 </td>
                                 <td>
                                     <code><?php echo htmlspecialchars($product['sku'] ?? '-'); ?></code>

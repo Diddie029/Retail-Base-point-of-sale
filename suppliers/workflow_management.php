@@ -285,7 +285,7 @@ $pending_actions_query = "
 $pending_actions = $conn->query($pending_actions_query)->fetchAll(PDO::FETCH_ASSOC);
 
 // Get users for assignment
-$users_query = "SELECT id, username FROM users WHERE is_active = 1 ORDER BY username";
+$users_query = "SELECT id, username FROM users ORDER BY username";
 $users = $conn->query($users_query)->fetchAll(PDO::FETCH_ASSOC);
 
 // Handle success/error messages

@@ -891,7 +891,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_bom_number') {
                         }
                     })
                     .catch(error => {
-                        console.error('Error generating BOM number:', error);
                         if (bomNumberField) {
                             bomNumberField.placeholder = 'Error generating BOM number';
                         }

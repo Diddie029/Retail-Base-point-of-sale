@@ -187,7 +187,6 @@ if ($action === 'create') {
 
     } catch (Exception $e) {
         $conn->rollBack();
-        error_log("BOM creation failed: " . $e->getMessage());
         header("Location: add.php?error=" . urlencode($e->getMessage()));
         exit();
     }
@@ -320,7 +319,6 @@ if ($action === 'create') {
 
     } catch (Exception $e) {
         $conn->rollBack();
-        error_log("BOM update failed: " . $e->getMessage());
         header("Location: edit.php?id=" . ($_POST['bom_id'] ?? 0) . "&error=" . urlencode($e->getMessage()));
         exit();
     }

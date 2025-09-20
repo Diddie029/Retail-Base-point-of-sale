@@ -577,6 +577,7 @@ $page_title = "Expiry Tracker";
                         <thead>
                             <tr>
                                 <th>Product</th>
+                                <th>Tracking #</th>
                                 <th>Batch Number</th>
                                 <th>Expiry Date</th>
                                 <th>Days Left</th>
@@ -590,7 +591,7 @@ $page_title = "Expiry Tracker";
                         <tbody>
                             <?php if (empty($expiry_data)): ?>
                                 <tr>
-                                    <td colspan="9" class="text-center py-5 text-muted">
+                                    <td colspan="10" class="text-center py-5 text-muted">
                                         <i class="bi bi-inbox display-4 d-block mb-3"></i>
                                         No expiry data found matching the current filters.
                                     </td>
@@ -616,6 +617,11 @@ $page_title = "Expiry Tracker";
                                                     <div class="product-sku"><?php echo htmlspecialchars($item['sku']); ?></div>
                                                 </div>
                                             </div>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-primary text-white">
+                                                <?php echo htmlspecialchars($item['expiry_tracking_number'] ?: 'N/A'); ?>
+                                            </span>
                                         </td>
                                         <td>
                                             <span class="badge bg-light text-dark">
@@ -694,7 +700,7 @@ $page_title = "Expiry Tracker";
                                                         <i class="bi bi-tools"></i>
                                                     </a>
                                                 <?php endif; ?>
-                                                <?php if (hasPermission('manage_expiry_tracker', $permissions)): ?>
+                                                <?php if (hasPermission('manage_expiry_tracker', $permissions) && $item['status'] === 'active'): ?>
                                                     <a href="edit_expiry_date.php?id=<?php echo $item['id']; ?>" 
                                                        class="btn btn-outline-secondary btn-sm" title="Edit">
                                                         <i class="bi bi-pencil"></i>

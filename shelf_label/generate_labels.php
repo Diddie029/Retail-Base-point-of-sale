@@ -422,23 +422,23 @@ if ($_POST && isset($_POST['generate_labels'])) {
                         <div class="size-options">
                             <div class="size-option" data-size="small">
                                 <h6>Small</h6>
-                                <small>2" x 1"</small>
+                                <small>1.2" x 0.6"</small>
                                 <div class="mt-2">
-                                    <input type="radio" name="label_size" value="small" id="size_small" class="form-check-input">
+                                    <input type="radio" name="label_size" value="small" id="size_small" class="form-check-input" checked>
                                     <label for="size_small" class="form-check-label">Select</label>
                                 </div>
                             </div>
                             <div class="size-option" data-size="standard">
                                 <h6>Standard</h6>
-                                <small>3" x 2"</small>
+                                <small>1.5" x 0.8"</small>
                                 <div class="mt-2">
-                                    <input type="radio" name="label_size" value="standard" id="size_standard" class="form-check-input" checked>
+                                    <input type="radio" name="label_size" value="standard" id="size_standard" class="form-check-input">
                                     <label for="size_standard" class="form-check-label">Select</label>
                                 </div>
                             </div>
                             <div class="size-option" data-size="large">
                                 <h6>Large</h6>
-                                <small>4" x 3"</small>
+                                <small>2" x 1"</small>
                                 <div class="mt-2">
                                     <input type="radio" name="label_size" value="large" id="size_large" class="form-check-input">
                                     <label for="size_large" class="form-check-label">Select</label>
@@ -491,13 +491,13 @@ if ($_POST && isset($_POST['generate_labels'])) {
                 $product_id = $product['id'];
                 $quantity = isset($custom_quantities[$product_id])
                     ? max(1, (int)$custom_quantities[$product_id])
-                    : max(1, (int)($product['quantity'] ?? 0));
+                    : 1; // Default to 1 label if no custom quantity specified
                 $total_preview_labels += $quantity;
             }
             ?>
             <div class="label-preview">
                 <h5><i class="bi bi-eye me-2"></i>Label Preview (<?php echo $total_preview_labels; ?> total labels)</h5>
-                <p class="text-muted">Preview of how your labels will look with the selected settings. Each product will generate multiple labels based on its quantity.</p>
+                <p class="text-muted">Preview of how your labels will look with the selected settings. Each product will generate multiple labels based on the number of labels you specified to print.</p>
                 
                 <div class="preview-grid">
                     <?php foreach (array_slice($products, 0, 4) as $product): ?>

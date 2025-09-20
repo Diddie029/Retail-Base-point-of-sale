@@ -36,6 +36,11 @@ class AutoBOMManager {
             // Validate configuration
             $this->validateAutoBOMConfig($config);
 
+            // Create sellable product if product_id is not provided
+            if (empty($config['product_id'])) {
+                $config['product_id'] = $this->createSellableProduct($config);
+            }
+
             // Insert Auto BOM configuration
             $stmt = $this->conn->prepare("
                 INSERT INTO auto_bom_configs (
@@ -77,6 +82,66 @@ class AutoBOMManager {
         } catch (Exception $e) {
             $this->conn->rollBack();
             throw new Exception("Failed to create Auto BOM: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Update an existing Auto BOM configuration
+     */
+    public function updateAutoBOM($auto_bom_id, $config) {
+        try {
+            $this->conn->beginTransaction();
+
+            // Validate configuration
+            $this->validateAutoBOMConfig($config);
+
+            // Update Auto BOM configuration
+            $stmt = $this->conn->prepare("
+                UPDATE auto_bom_configs 
+                SET config_name = :config_name,
+                    product_id = :product_id,
+                    product_family_id = :product_family_id,
+                    base_product_id = :base_product_id,
+                    base_unit = :base_unit,
+                    base_quantity = :base_quantity,
+                    description = :description,
+                    is_active = :is_active,
+                    updated_at = NOW()
+                WHERE id = :id
+            ");
+
+            $stmt->execute([
+                ':id' => $auto_bom_id,
+                ':config_name' => $config['config_name'],
+                ':product_id' => $config['product_id'],
+                ':product_family_id' => $config['product_family_id'] ?? null,
+                ':base_product_id' => $config['base_product_id'],
+                ':base_unit' => $config['base_unit'] ?? 'each',
+                ':base_quantity' => $config['base_quantity'] ?? 1,
+                ':description' => $config['description'] ?? '',
+                ':is_active' => $config['is_active'] ?? 1
+            ]);
+
+            // Delete existing selling units
+            $stmt = $this->conn->prepare("DELETE FROM auto_bom_selling_units WHERE auto_bom_config_id = :config_id");
+            $stmt->execute([':config_id' => $auto_bom_id]);
+
+            // Create new selling units if provided
+            if (isset($config['selling_units']) && is_array($config['selling_units'])) {
+                foreach ($config['selling_units'] as $unit) {
+                    $this->createSellingUnit($auto_bom_id, $unit);
+                }
+            }
+
+            // Update product Auto BOM status
+            $this->updateProductAutoBOMStatus($config['product_id'], true, $config['auto_bom_type'] ?? 'unit_conversion');
+
+            $this->conn->commit();
+            return true;
+
+        } catch (Exception $e) {
+            $this->conn->rollBack();
+            throw new Exception("Failed to update Auto BOM: " . $e->getMessage());
         }
     }
 
@@ -598,6 +663,95 @@ class AutoBOMManager {
         if (!isset($config['unit_quantity']) || !is_numeric($config['unit_quantity']) || $config['unit_quantity'] <= 0) {
             throw new Exception("Valid unit quantity is required");
         }
+    }
+
+    /**
+     * Create a sellable product for Auto BOM configuration
+     */
+    private function createSellableProduct($config) {
+        try {
+            // Get base product information
+            $stmt = $this->conn->prepare("
+                SELECT name, sku, cost_price, category_id, brand_id, tax_category_id
+                FROM products 
+                WHERE id = :base_product_id
+            ");
+            $stmt->execute([':base_product_id' => $config['base_product_id']]);
+            $base_product = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$base_product) {
+                throw new Exception("Base product not found");
+            }
+
+            // Generate product name and SKU
+            $product_name = $config['config_name'] . ' (Auto BOM)';
+            $product_sku = $this->generateAutoBOMSKU($base_product['sku']);
+
+            // Calculate base cost price from base product
+            $base_cost_price = $base_product['cost_price'] * ($config['base_quantity'] ?? 1);
+
+            // Insert the sellable product
+            $stmt = $this->conn->prepare("
+                INSERT INTO products (
+                    name, sku, description, cost_price, selling_price, 
+                    category_id, brand_id, tax_category_id, quantity, 
+                    min_quantity, max_quantity, status, auto_bom_type,
+                    created_by, created_at
+                ) VALUES (
+                    :name, :sku, :description, :cost_price, :selling_price,
+                    :category_id, :brand_id, :tax_category_id, :quantity,
+                    :min_quantity, :max_quantity, :status, :auto_bom_type,
+                    :created_by, NOW()
+                )
+            ");
+
+            $stmt->execute([
+                ':name' => $product_name,
+                ':sku' => $product_sku,
+                ':description' => $config['description'] ?? 'Auto BOM generated product',
+                ':cost_price' => $base_cost_price,
+                ':selling_price' => $base_cost_price * 1.5, // Default 50% markup
+                ':category_id' => $base_product['category_id'],
+                ':brand_id' => $base_product['brand_id'],
+                ':tax_category_id' => $base_product['tax_category_id'],
+                ':quantity' => 0, // Will be managed by Auto BOM
+                ':min_quantity' => 0,
+                ':max_quantity' => 999999,
+                ':status' => 'active',
+                ':auto_bom_type' => $config['auto_bom_type'] ?? 'unit_conversion',
+                ':created_by' => $this->user_id
+            ]);
+
+            return $this->conn->lastInsertId();
+
+        } catch (Exception $e) {
+            throw new Exception("Failed to create sellable product: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Generate unique SKU for Auto BOM product
+     */
+    private function generateAutoBOMSKU($base_sku) {
+        $prefix = 'AB-';
+        $counter = 1;
+        
+        do {
+            $sku = $prefix . $base_sku . '-' . str_pad($counter, 3, '0', STR_PAD_LEFT);
+            
+            $stmt = $this->conn->prepare("SELECT COUNT(*) as count FROM products WHERE sku = :sku");
+            $stmt->execute([':sku' => $sku]);
+            $exists = $stmt->fetch(PDO::FETCH_ASSOC)['count'] > 0;
+            
+            $counter++;
+        } while ($exists && $counter < 1000);
+
+        if ($counter >= 1000) {
+            // Fallback to timestamp-based SKU
+            $sku = $prefix . $base_sku . '-' . time();
+        }
+
+        return $sku;
     }
 }
 ?>

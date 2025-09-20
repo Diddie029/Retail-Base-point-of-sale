@@ -291,11 +291,57 @@ if ($totalVisibleSections == 0 && (
             </a>
         </div>
 
-        <!-- Logout - Always visible -->
+        <!-- Logout - Disabled if POS is active -->
         <div class="nav-item mt-auto">
-            <a href="/auth/logout.php" class="nav-link text-danger">
+            <?php
+            // Check if user is POS authenticated or has an active till
+            $pos_authenticated = isset($_SESSION['pos_authenticated']) && $_SESSION['pos_authenticated'] === true;
+            $selected_till_id = $_SESSION['selected_till_id'] ?? null;
+            $till_closed = false;
+            $has_active_till = false;
+            
+            // Check if till is closed
+            if ($selected_till_id && isset($conn)) {
+                try {
+                    $stmt = $conn->prepare("SELECT is_closed FROM register_tills WHERE id = ?");
+                    $stmt->execute([$selected_till_id]);
+                    $till = $stmt->fetch(PDO::FETCH_ASSOC);
+                    $till_closed = $till ? $till['is_closed'] == 1 : false;
+                    $has_active_till = true; // User has a till assigned
+                } catch (PDOException $e) {
+                    error_log("Error checking till status: " . $e->getMessage());
+                }
+            }
+            
+            // Logout is disabled if:
+            // 1. User is POS authenticated, OR
+            // 2. User has a till assigned but it's not closed
+            $logout_disabled = $pos_authenticated || ($has_active_till && !$till_closed);
+            $logout_class = $logout_disabled ? 'nav-link text-muted disabled' : 'nav-link text-danger';
+            
+            if ($pos_authenticated) {
+                $logout_title = 'Cannot logout while signed in to POS. Sign out from POS first.';
+            } elseif ($has_active_till && !$till_closed) {
+                $logout_title = 'Cannot logout while till is open. You must close your till first.';
+            } else {
+                $logout_title = 'Logout from system';
+            }
+            ?>
+            <a href="<?php echo $logout_disabled ? '#' : '../auth/logout.php'; ?>" 
+               class="<?php echo $logout_class; ?>" 
+               title="<?php echo $logout_title; ?>"
+               <?php echo $logout_disabled ? 'onclick="return false;"' : ''; ?>>
                 <i class="bi bi-box-arrow-right"></i>
                 Logout
+                <?php if ($logout_disabled): ?>
+                    <small class="d-block text-muted" style="font-size: 0.7rem;">
+                        <?php if ($pos_authenticated): ?>
+                            <i class="bi bi-lock"></i> POS Signed In
+                        <?php else: ?>
+                            <i class="bi bi-lock"></i> Till Open
+                        <?php endif; ?>
+                    </small>
+                <?php endif; ?>
             </a>
         </div>
     </div>

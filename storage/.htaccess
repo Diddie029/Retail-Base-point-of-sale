@@ -1,0 +1,11 @@
+# Deny direct access to storage files
+<Files "*">
+    Order Deny,Allow
+    Deny from all
+</Files>
+
+# Allow access to invoice attachments only through PHP scripts
+<FilesMatch "\.(pdf|jpg|jpeg|png|gif|doc|docx|xls|xlsx)$">
+    Order Deny,Allow
+    Deny from all
+</FilesMatch>

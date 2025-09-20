@@ -330,524 +330,19 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
             border-radius: 4px;
         }
         
-        /* Auto BOM Grid Layout */
-        .auto-bom-grid-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-            gap: 20px;
-            padding: 20px 0;
-        }
-        
-        /* Auto BOM Product Cards */
-        .auto-bom-product-card {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            margin-bottom: 16px;
-            overflow: hidden;
-            transition: all 0.3s ease;
-            border: 1px solid #e5e7eb;
-            width: 100%;
-        }
-        
-        .auto-bom-product-card:hover {
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        }
-        
-        /* Card Header with Status */
-        .card-header {
-            background: #ffffff;
-            padding: 16px 20px;
-            border-bottom: 1px solid #f3f4f6;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .product-info {
-            flex: 1;
-        }
-        
-        .product-name {
-            font-size: 1.125rem;
-            font-weight: 600;
-            color: #ef4444;
-            margin-bottom: 4px;
-        }
-        
-        .product-sku {
-            color: #9ca3af;
-            font-size: 0.875rem;
-            margin: 0;
-        }
-        
-        .config-name-display {
-            background: #f3f4f6;
-            color: #374151;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 500;
-            display: inline-block;
-            margin-top: 4px;
-        }
-        
-        .status-badge-card {
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-        
-        .status-active {
-            background: #dcfce7;
-            color: #16a34a;
-        }
-        
-        .status-inactive {
-            background: #fef2f2;
-            color: #dc2626;
-        }
-        
-        /* Card Body */
-        .card-body {
-            padding: 16px 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-        
-        .base-product-section {
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-left: 4px solid #ef4444;
-            padding: 12px 16px;
-            border-radius: 6px;
-        }
-        
-        .base-product-title {
-            font-weight: 600;
-            color: #374151;
-            margin-bottom: 6px;
-            font-size: 0.875rem;
-        }
-        
-        .base-product-name {
-            font-size: 0.95rem;
-            font-weight: 500;
-            color: #111827;
-            margin-bottom: 8px;
-        }
-        
-        .base-product-details {
-            display: flex;
-            gap: 12px;
-            font-size: 0.8rem;
-            color: #6b7280;
-        }
-        
-        .base-detail-item {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .base-detail-label {
-            font-weight: 500;
-            color: #374151;
-        }
-        
-        .product-metrics {
-            display: flex;
-            gap: 15px;
-            justify-content: space-between;
-            flex-wrap: wrap;
-        }
-        
-        @media (max-width: 768px) {
-            .product-metrics {
-                flex-direction: column;
-                gap: 10px;
-            }
-        }
-        
-        .metric-box {
-            text-align: center;
-            padding: 8px 12px;
-            background: #ffffff;
-            border: 1px solid #e5e7eb;
-            border-radius: 6px;
-            min-width: 80px;
-        }
-        
-        .metric-number {
-            font-size: 1.25rem;
-            font-weight: 700;
-            color: #ef4444;
-            display: block;
-            line-height: 1.2;
-        }
-        
-        .metric-label {
-            font-size: 0.75rem;
-            color: #9ca3af;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            font-weight: 500;
-            margin-top: 4px;
-        }
-        
-        .config-label {
-            color: #6b7280;
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            font-weight: 500;
-        }
-        
-        .config-value {
-            color: #111827;
-            font-weight: 500;
-            font-size: 0.8rem;
-        }
-        
-        .family-label {
-            color: #6b7280;
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            font-weight: 500;
-        }
-        
-        .family-value {
-            color: #111827;
-            font-weight: 500;
-            font-size: 0.8rem;
-        }
-        
-        .action-buttons {
-            display: flex;
-            gap: 8px;
-        }
-        
-        .btn-small {
-            padding: 8px 12px;
-            font-size: 0.8rem;
-            white-space: nowrap;
-            border-radius: 8px;
-            font-weight: 500;
-            transition: all 0.2s ease;
-        }
-        
-        .btn-outline-primary {
-            border: 2px solid var(--indigo-color);
-            color: var(--indigo-color);
-            background: transparent;
-        }
-        
-        .btn-outline-primary:hover {
-            background: var(--indigo-color);
-            color: white;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
-        }
-        
-        .btn-outline-secondary {
-            border: 2px solid var(--gray-500);
-            color: var(--gray-600);
-            background: transparent;
-        }
-        
-        .btn-outline-secondary:hover {
-            background: var(--gray-500);
-            color: white;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(100, 116, 139, 0.3);
-        }
-        
-        .btn-outline-info {
-            border: 2px solid var(--sky-color);
-            color: var(--sky-color);
-            background: transparent;
-        }
-        
-        .btn-outline-info:hover {
-            background: var(--sky-color);
-            color: white;
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
-        }
         
         .table-container {
             flex: 1;
             overflow-y: auto;
             min-height: 0;
             background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border: 1px solid #dee2e6;
         }
 
         .table {
-            background: white;
-            border-radius: 12px;
-            overflow: hidden;
-            margin: 0;
-            width: 100%;
-        }
-        
-        .table thead th {
-            background: linear-gradient(135deg, var(--gray-50) 0%, var(--gray-100) 100%);
-            border-bottom: 2px solid var(--gray-300);
-            font-weight: 600;
-            color: var(--gray-700);
-            padding: 16px;
-            font-size: 0.875rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            position: relative;
-        }
-        
-        .table thead th:first-child {
-            border-top-left-radius: 12px;
-        }
-        
-        .table thead th:last-child {
-            border-top-right-radius: 12px;
-        }
-        
-        .table tbody td {
-            padding: 20px 16px;
-            vertical-align: middle;
-            border-bottom: 1px solid var(--gray-200);
-            transition: all 0.2s ease;
-        }
-        
-        .table tbody tr:hover {
-            background: linear-gradient(135deg, var(--gray-50) 0%, rgba(99, 102, 241, 0.02) 100%);
-            transform: scale(1.001);
-        }
-        
-        .table tbody tr:last-child td {
-            border-bottom: none;
-        }
-        
-        .product-image {
-            width: 48px;
-            height: 48px;
-            background: linear-gradient(135deg, var(--indigo-color) 0%, var(--purple-color) 100%);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
-        }
-        
-        .badge {
-            font-size: 0.75rem;
-            font-weight: 600;
-            padding: 6px 12px;
-            border-radius: 20px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .badge.bg-primary {
-            background: linear-gradient(135deg, var(--indigo-color) 0%, var(--purple-color) 100%) !important;
-            color: white;
-        }
-        
-        .badge.bg-info {
-            background: linear-gradient(135deg, var(--sky-color) 0%, var(--info-color) 100%) !important;
-            color: white;
-        }
-        
-        .badge.bg-success {
-            background: linear-gradient(135deg, var(--emerald-color) 0%, #059669 100%) !important;
-            color: white;
-        }
-        
-        .badge.bg-warning {
-            background: linear-gradient(135deg, var(--amber-color) 0%, #d97706 100%) !important;
-            color: white;
-        }
-        
-        .badge.bg-danger {
-            background: linear-gradient(135deg, var(--rose-color) 0%, var(--danger-color) 100%) !important;
-            color: white;
-        }
-        
-        .badge.bg-secondary {
-            background: linear-gradient(135deg, var(--gray-500) 0%, var(--gray-600) 100%) !important;
-            color: white;
-        }
-        
-        /* Base Unit Info */
-        .base-unit-display {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-top: 8px;
-        }
-        
-        .base-unit {
-            background: #e0e7ff;
-            color: #3730a3;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
-        
-        .base-quantity {
-            color: #6b7280;
-            font-size: 0.85rem;
-        }
-        
-        /* Stock Status */
-        .stock-status {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            margin-top: 8px;
-        }
-        
-        .stock-indicator {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-        
-        .stock-high {
-            background-color: #10b981;
-        }
-        
-        .stock-low {
-            background-color: #f59e0b;
-        }
-        
-        .stock-out {
-            background-color: #ef4444;
-        }
-        
-        .stock-text {
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-        
-        /* Selling Units Display */
-        .selling-units-display {
-            text-align: center;
-            background: #f0f4ff;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-        
-        .units-count-large {
-            font-size: 2rem;
-            font-weight: 800;
-            color: #667eea;
-            margin-bottom: 5px;
-        }
-        
-        .units-label {
-            color: #6b7280;
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            font-weight: 500;
-            letter-spacing: 0.5px;
-        }
-        
-        /* Family Badge */
-        .family-badge-card {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: #f3f4f6;
-            color: #374151;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 0.8rem;
-            font-weight: 500;
-            margin-bottom: 15px;
-        }
-        
-        .family-badge-card i {
-            color: #667eea;
-        }
-        
-        .no-family {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            color: #9ca3af;
-            font-size: 0.8rem;
-            margin-bottom: 15px;
-        }
-        
-        /* Card Footer with Actions */
-        .card-footer {
-            background: #fafbfc;
-            padding: 15px 20px;
-            border-top: 1px solid #e5e7eb;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .created-info {
-            color: #6b7280;
-            font-size: 0.8rem;
-        }
-        
-        .action-buttons-card {
-            display: flex;
-            gap: 8px;
-        }
-        
-        .btn-card {
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 0.8rem;
-            font-weight: 500;
-            transition: all 0.2s;
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        
-        .btn-primary-card {
-            background: #667eea;
-            color: white;
-        }
-        
-        .btn-primary-card:hover {
-            background: #5a67d8;
-            transform: translateY(-1px);
-        }
-        
-        .btn-secondary-card {
-            background: #6b7280;
-            color: white;
-        }
-        
-        .btn-secondary-card:hover {
-            background: #5b6371;
-            transform: translateY(-1px);
-        }
-        
-        .btn-info-card {
-            background: #0ea5e9;
-            color: white;
-        }
-        
-        .btn-info-card:hover {
-            background: #0284c7;
-            transform: translateY(-1px);
+            margin-bottom: 0;
         }
         
         /* Empty State */
@@ -913,39 +408,6 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 min-width: auto;
             }
             
-            .auto-bom-grid-container {
-                grid-template-columns: 1fr;
-                gap: 15px;
-            }
-            
-            .card-header-main {
-                flex-direction: column;
-                align-items: center;
-                text-align: center;
-                gap: 10px;
-            }
-            
-            .product-icon-large {
-                width: 50px;
-                height: 50px;
-                font-size: 1.5rem;
-            }
-            
-            .bom-details-grid {
-                grid-template-columns: 1fr;
-                gap: 15px;
-            }
-            
-            .action-buttons-card {
-                flex-wrap: wrap;
-                justify-content: center;
-            }
-            
-            .card-footer {
-                flex-direction: column;
-                gap: 10px;
-                text-align: center;
-            }
         }
         
         @media (max-width: 480px) {
@@ -1077,7 +539,7 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </form>
             </div>
 
-            <!-- Auto BOM Products Grid -->
+            <!-- Auto BOM Table -->
             <?php if (empty($auto_boms)): ?>
                 <div class="empty-state">
                     <i class="bi bi-gear-fill"></i>
@@ -1090,47 +552,46 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <?php endif; ?>
                 </div>
             <?php else: ?>
-                <!-- Auto BOM Table -->
+                <!-- Traditional Table Layout -->
                 <div class="table-container">
-                    <table class="table table-hover">
-                        <thead>
+                    <table class="table table-striped table-hover">
+                        <thead class="table-dark">
                             <tr>
-                                <th>
-                                    <input type="checkbox" id="selectAll" class="form-check-input">
-                                </th>
-                                <th>PRODUCT</th>
-                                <th>CONFIGURATION</th>
-                                <th>FAMILY</th>
-                                <th>SELLING UNITS</th>
-                                <th>BASE UNIT</th>
-                                <th>STOCK</th>
-                                <th>STATUS</th>
-                                <th>CREATED</th>
-                                <th>ACTIONS</th>
+                                <th>Configuration</th>
+                                <th>Sellable Product</th>
+                                <th>Base Product</th>
+                                <th>Base Unit</th>
+                                <th>Selling Units</th>
+                                <th>Family</th>
+                                <th>Stock</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($auto_boms as $bom): ?>
                             <tr>
                                 <td>
-                                    <input type="checkbox" class="form-check-input" value="<?php echo $bom['id']; ?>">
+                                    <strong><?php echo htmlspecialchars($bom['config_name']); ?></strong>
                                 </td>
                                 <td>
-                                    <div class="d-flex align-items-center">
-                                        <div class="product-image me-3">
-                                            <i class="bi bi-box-seam" style="font-size: 1.5rem;"></i>
-                                        </div>
-                                        <div>
-                                            <div class="fw-bold" style="color: var(--gray-800);"><?php echo htmlspecialchars($bom['base_product_name']); ?></div>
-                                            <small style="color: var(--gray-500);">SKU: <?php echo htmlspecialchars($bom['base_product_sku']); ?></small>
-                                        </div>
+                                    <div>
+                                        <strong><?php echo htmlspecialchars($bom['product_name']); ?></strong><br>
+                                        <small class="text-muted">SKU: <?php echo htmlspecialchars($bom['product_sku']); ?></small>
                                     </div>
                                 </td>
                                 <td>
-                                    <span class="badge bg-primary">
-                                        <i class="bi bi-gear-fill me-1"></i>
-                                        <?php echo htmlspecialchars($bom['config_name']); ?>
-                                    </span>
+                                    <div>
+                                        <?php echo htmlspecialchars($bom['base_product_name']); ?><br>
+                                        <small class="text-muted">SKU: <?php echo htmlspecialchars($bom['base_product_sku']); ?></small>
+                                    </div>
+                                </td>
+                                <td>
+                                    <?php echo number_format($bom['base_quantity']); ?> <?php echo htmlspecialchars($bom['base_unit']); ?>
+                                </td>
+                                <td>
+                                    <span class="badge bg-primary"><?php echo number_format($bom['selling_units_count']); ?> units</span>
                                 </td>
                                 <td>
                                     <?php if ($bom['family_name']): ?>
@@ -1140,28 +601,14 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <div class="text-center">
-                                        <div class="fw-bold" style="color: var(--indigo-color); font-size: 1.2rem;"><?php echo number_format($bom['selling_units_count']); ?></div>
-                                        <small style="color: var(--gray-500);">units</small>
-                                    </div>
-                                </td>
-                                <td>
-                                    <div>
-                                        <div class="fw-bold" style="color: var(--gray-800);"><?php echo htmlspecialchars($bom['base_unit']); ?></div>
-                                        <small style="color: var(--gray-500);">Qty: <?php echo number_format($bom['base_quantity']); ?></small>
-                                    </div>
-                                </td>
-                                <td>
-                                    <div class="d-flex align-items-center">
-                                        <span class="fw-bold me-2" style="color: var(--gray-800);"><?php echo number_format($bom['base_stock']); ?></span>
-                                        <?php if ($bom['base_stock'] > 50): ?>
-                                            <span class="badge bg-success">IN STOCK</span>
-                                        <?php elseif ($bom['base_stock'] > 10): ?>
-                                            <span class="badge bg-warning">LOW STOCK</span>
-                                        <?php else: ?>
-                                            <span class="badge bg-danger">CRITICAL</span>
-                                        <?php endif; ?>
-                                    </div>
+                                    <strong><?php echo number_format($bom['base_stock']); ?></strong>
+                                    <?php if ($bom['base_stock'] > 50): ?>
+                                        <span class="badge bg-success ms-1">Good</span>
+                                    <?php elseif ($bom['base_stock'] > 10): ?>
+                                        <span class="badge bg-warning ms-1">Low</span>
+                                    <?php else: ?>
+                                        <span class="badge bg-danger ms-1">Critical</span>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <span class="badge <?php echo $bom['is_active'] ? 'bg-success' : 'bg-secondary'; ?>">
@@ -1169,10 +616,10 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     </span>
                                 </td>
                                 <td>
-                                    <small style="color: var(--gray-600);"><?php echo date('M j, Y', strtotime($bom['created_at'])); ?></small>
+                                    <?php echo date('M j, Y', strtotime($bom['created_at'])); ?>
                                 </td>
                                 <td>
-                                    <div class="d-flex gap-1">
+                                    <div class="btn-group btn-group-sm" role="group">
                                         <?php if ($can_manage_auto_boms): ?>
                                         <a href="auto_bom_edit.php?id=<?php echo $bom['id']; ?>" class="btn btn-outline-primary btn-sm" title="Edit">
                                             <i class="bi bi-pencil"></i>
@@ -1221,77 +668,15 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="../assets/js/dashboard.js"></script>
     
     <script>
     $(document).ready(function() {
-        // Handle expandable details toggle
-        $('.toggle-details').click(function() {
-            const bomId = $(this).data('bom-id');
-            const detailsRow = $('#details-' + bomId);
-            const button = $(this);
-            const icon = button.find('i');
-            
-            if (detailsRow.is(':visible')) {
-                // Hide details
-                detailsRow.slideUp(200);
-                button.removeClass('expanded');
-                icon.removeClass('bi-chevron-up').addClass('bi-chevron-down');
-            } else {
-                // Show details
-                detailsRow.slideDown(200);
-                button.addClass('expanded');
-                icon.removeClass('bi-chevron-down').addClass('bi-chevron-up');
-            }
-        });
-        
-        // Optional: Close other expanded rows when opening a new one
-        $('.toggle-details').click(function() {
-            const currentBomId = $(this).data('bom-id');
-            
-            // Close all other expanded rows
-            $('.toggle-details').not(this).each(function() {
-                const otherBomId = $(this).data('bom-id');
-                const otherDetailsRow = $('#details-' + otherBomId);
-                const otherButton = $(this);
-                const otherIcon = otherButton.find('i');
-                
-                if (otherDetailsRow.is(':visible')) {
-                    otherDetailsRow.slideUp(200);
-                    otherButton.removeClass('expanded');
-                    otherIcon.removeClass('bi-chevron-up').addClass('bi-chevron-down');
-                }
-            });
-        });
-    });
-    
-    // Select All functionality
-    document.getElementById('selectAll').addEventListener('change', function() {
-        const checkboxes = document.querySelectorAll('tbody input[type="checkbox"]');
-        checkboxes.forEach(checkbox => {
-            checkbox.checked = this.checked;
-        });
-    });
-    
-    // Individual checkbox change
-    document.querySelectorAll('tbody input[type="checkbox"]').forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
-            const allCheckboxes = document.querySelectorAll('tbody input[type="checkbox"]');
-            const checkedCheckboxes = document.querySelectorAll('tbody input[type="checkbox"]:checked');
-            const selectAllCheckbox = document.getElementById('selectAll');
-            
-            if (checkedCheckboxes.length === allCheckboxes.length) {
-                selectAllCheckbox.checked = true;
-                selectAllCheckbox.indeterminate = false;
-            } else if (checkedCheckboxes.length === 0) {
-                selectAllCheckbox.checked = false;
-                selectAllCheckbox.indeterminate = false;
-            } else {
-                selectAllCheckbox.checked = false;
-                selectAllCheckbox.indeterminate = true;
-            }
-        });
+        // Initialize any card interactions if needed
     });
     </script>
+
+
 </body>
 </html>

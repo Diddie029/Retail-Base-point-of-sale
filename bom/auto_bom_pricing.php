@@ -921,7 +921,6 @@ if ($pricing_stats['total_units'] > 0) {
                 }
             })
             .fail(function(xhr, status, error) {
-                console.error('AJAX Error:', xhr.responseText);
                 let errorMessage = 'Error connecting to price calculation service.';
                 
                 if (xhr.status === 401) {
@@ -994,7 +993,6 @@ if ($pricing_stats['total_units'] > 0) {
                 }
             })
             .fail(function(xhr, status, error) {
-                console.error('AJAX Error:', xhr.responseText);
                 let errorMessage = 'Error connecting to recalculation service.';
                 
                 if (xhr.status === 401) {

@@ -328,6 +328,46 @@ $page_title = "Handle Expiry Item";
     <link rel="stylesheet" href="../assets/css/expiry_tracker.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <style>
+        .tracking-number {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            color: #2563eb;
+            background: #dbeafe;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .status-badge.status-active {
+            background: #dcfce7;
+            color: #166534;
+        }
+        
+        .status-badge.status-expired {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+        
+        .status-badge.status-disposed {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        
+        .status-badge.status-returned {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+    </style>
 </head>
 <body>
     <?php include '../include/navmenu.php'; ?>
@@ -363,6 +403,17 @@ $page_title = "Handle Expiry Item";
                         <div class="detail-group">
                             <label>SKU:</label>
                             <span><?php echo htmlspecialchars($expiry_item['sku']); ?></span>
+                        </div>
+                    </div>
+                    
+                    <div class="detail-row">
+                        <div class="detail-group">
+                            <label>Expiry Tracking Number:</label>
+                            <span class="tracking-number"><?php echo htmlspecialchars($expiry_item['expiry_tracking_number'] ?: 'N/A'); ?></span>
+                        </div>
+                        <div class="detail-group">
+                            <label>Status:</label>
+                            <span class="status-badge status-<?php echo $expiry_item['status']; ?>"><?php echo ucfirst($expiry_item['status']); ?></span>
                         </div>
                     </div>
                     

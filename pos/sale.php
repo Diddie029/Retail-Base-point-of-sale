@@ -10,6 +10,9 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Check POS authentication
+requirePOSAuthentication();
+
 // Get user information
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'];
@@ -711,11 +714,22 @@ if (isset($_GET['action']) && $_GET['action'] === 'release_till') {
     exit();
 }
 
-// Get products for the POS interface
+// Get products for the POS interface (including Auto BOM products)
 $stmt = $conn->query("
-    SELECT p.*, c.name as category_name
+    SELECT 
+        p.*, 
+        c.name as category_name,
+        abc.config_name as auto_bom_config_name,
+        abc.base_product_id,
+        bp.name as base_product_name,
+        CASE 
+            WHEN p.auto_bom_type IS NOT NULL THEN 'Auto BOM'
+            ELSE 'Regular'
+        END as product_type
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
+    LEFT JOIN auto_bom_configs abc ON p.id = abc.product_id
+    LEFT JOIN products bp ON abc.base_product_id = bp.id
     WHERE p.status = 'active'
     ORDER BY p.name
 ");
@@ -1605,41 +1619,58 @@ try {
                         <i class="bi bi-person"></i> <?php echo htmlspecialchars($username); ?>
                     </span>
                 </div>
-                <button type="button" class="btn btn-sm btn-primary till-action-btn" onclick="showSwitchTill()" title="Switch Till">
-                    <i class="bi bi-arrow-repeat"></i> Switch Till
-                </button>
-                <button type="button" class="btn btn-sm btn-danger till-action-btn" onclick="showCloseTill()" title="Close Till">
-                    <i class="bi bi-x-circle"></i> Close Till
-                </button>
-                <button type="button" class="btn btn-sm btn-secondary till-action-btn" onclick="releaseTill()" title="Release Till">
-                    <i class="bi bi-person-dash"></i> Release Till
-                </button>
-                <button type="button" class="btn btn-sm btn-info till-action-btn refresh-btn" onclick="refreshPage()" title="Refresh Page">
-                    <i class="bi bi-arrow-clockwise"></i> Refresh
-                </button>
-                <?php 
-                // Check permissions - admins automatically have all permissions
-                $has_cash_drop_permission = hasPermission('cash_drop', $permissions);
-                // For admins, always show cash drop regardless of permission in database
-                $show_cash_drop = $has_cash_drop_permission || $is_admin_user;
-                
-                // Debug: Log permission information
-                error_log("Admin Debug - User Role: " . $user_role);
-                error_log("Admin Debug - Is Admin User: " . ($is_admin_user ? 'Yes' : 'No'));
-                error_log("Admin Debug - Permissions Count: " . count($permissions));
-                error_log("Admin Debug - Has Cash Drop Permission: " . ($has_cash_drop_permission ? 'Yes' : 'No'));
-                error_log("Admin Debug - Show Cash Drop: " . ($show_cash_drop ? 'Yes' : 'No'));
-                ?>
-                <?php if ($show_cash_drop): ?>
-                <button type="button" class="btn btn-sm btn-warning till-action-btn" onclick="showDropAuth()" title="Drop">
-                    <i class="bi bi-cash-stack"></i> Drop
-                </button>
-                <?php else: ?>
-                <!-- Debug: Show button for testing even without permission -->
-                <button type="button" class="btn btn-sm btn-warning till-action-btn" onclick="alert('Drop Debug Info:\nRole: <?php echo $user_role; ?>\nIs Admin: <?php echo $is_admin_user ? 'Yes' : 'No'; ?>\nPermissions Count: <?php echo count($permissions); ?>\nHas Permission: <?php echo $has_cash_drop_permission ? 'Yes' : 'No'; ?>\nShow Drop: <?php echo $show_cash_drop ? 'Yes' : 'No'; ?>')" title="Drop (Debug)">
-                    <i class="bi bi-cash-stack"></i> Drop
-                </button>
-                <?php endif; ?>
+                <div class="row g-1">
+                    <div class="col-4">
+                        <button type="button" class="btn btn-xs btn-primary till-action-btn w-100" onclick="showSwitchTill()" title="Switch Till">
+                            <i class="bi bi-arrow-repeat"></i> Switch Till
+                        </button>
+                    </div>
+                    <div class="col-4">
+                        <button type="button" class="btn btn-xs btn-secondary till-action-btn w-100" onclick="releaseTill()" title="Release Till">
+                            <i class="bi bi-person-dash"></i> Release Till
+                        </button>
+                    </div>
+                    <div class="col-4">
+                        <button type="button" class="btn btn-xs btn-info till-action-btn refresh-btn w-100" onclick="refreshPage()" title="Refresh Page">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="col-4">
+                        <?php 
+                        // Check permissions - admins automatically have all permissions
+                        $has_cash_drop_permission = hasPermission('cash_drop', $permissions);
+                        // For admins, always show cash drop regardless of permission in database
+                        $show_cash_drop = $has_cash_drop_permission || $is_admin_user;
+                        
+                        // Debug: Log permission information
+                        error_log("Admin Debug - User Role: " . $user_role);
+                        error_log("Admin Debug - Is Admin User: " . ($is_admin_user ? 'Yes' : 'No'));
+                        error_log("Admin Debug - Permissions Count: " . count($permissions));
+                        error_log("Admin Debug - Has Cash Drop Permission: " . ($has_cash_drop_permission ? 'Yes' : 'No'));
+                        error_log("Admin Debug - Show Cash Drop: " . ($show_cash_drop ? 'Yes' : 'No'));
+                        ?>
+                        <?php if ($show_cash_drop): ?>
+                        <button type="button" class="btn btn-xs btn-warning till-action-btn w-100" onclick="showDropAuth()" title="Drop">
+                            <i class="bi bi-cash-stack"></i> Drop
+                        </button>
+                        <?php else: ?>
+                        <!-- Debug: Show button for testing even without permission -->
+                        <button type="button" class="btn btn-xs btn-warning till-action-btn w-100" onclick="alert('Drop Debug Info:\nRole: <?php echo $user_role; ?>\nIs Admin: <?php echo $is_admin_user ? 'Yes' : 'No'; ?>\nPermissions Count: <?php echo count($permissions); ?>\nHas Permission: <?php echo $has_cash_drop_permission ? 'Yes' : 'No'; ?>\nShow Drop: <?php echo $show_cash_drop ? 'Yes' : 'No'; ?>')" title="Drop (Debug)">
+                            <i class="bi bi-cash-stack"></i> Drop
+                        </button>
+                        <?php endif; ?>
+                    </div>
+                    <div class="col-4">
+                        <button type="button" class="btn btn-xs btn-danger till-action-btn w-100" onclick="showCloseTill()" title="Close Till">
+                            <i class="bi bi-x-circle"></i> Close Till
+                        </button>
+                    </div>
+                    <div class="col-4">
+                        <button type="button" class="btn btn-xs btn-dark till-action-btn w-100" id="signOutBtn" onclick="signOutFromPOS()" title="Sign out from POS">
+                            <i class="bi bi-box-arrow-right"></i> Sign Out
+                        </button>
+                    </div>
+                </div>
             </div>
             <?php else: ?>
             <div class="ms-3 d-flex align-items-center gap-2">
@@ -1706,6 +1737,14 @@ try {
         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
     </div>
     <?php unset($_SESSION['success_message']); ?>
+    <?php endif; ?>
+
+    <?php if (isset($_SESSION['pos_auth_success'])): ?>
+    <div class="alert alert-info alert-dismissible fade show" role="alert">
+        <i class="bi bi-shield-check"></i> <?php echo $_SESSION['pos_auth_success']; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    <?php unset($_SESSION['pos_auth_success']); ?>
     <?php endif; ?>
 
     <?php if (isset($_SESSION['error_message'])): ?>
@@ -1775,7 +1814,7 @@ try {
                     <div class="product-grid" id="productGrid">
                         <?php foreach ($products as $product): ?>
                     <?php $isOnSale = isProductOnSale($product); ?>
-                    <div class="product-card <?php echo !$selected_till ? 'disabled' : ''; ?>" 
+                    <div class="product-card position-relative <?php echo !$selected_till ? 'disabled' : ''; ?>" 
                         data-product-id="<?php echo $product['id']; ?>" 
                         data-category-id="<?php echo $product['category_id']; ?>"
                         data-product-name="<?php echo htmlspecialchars($product['name']); ?>"
@@ -1800,7 +1839,12 @@ try {
                                     <?php endif; ?>
                             </div>
                                 <h6 class="fw-bold mb-1"><?php echo htmlspecialchars($product['name']); ?></h6>
-                                <p class="text-muted small mb-2"><?php echo htmlspecialchars($product['category_name']); ?></p>
+                                <p class="text-muted small mb-1"><?php echo htmlspecialchars($product['category_name']); ?></p>
+                                <?php if ($product['product_type'] === 'Auto BOM'): ?>
+                                <div class="position-absolute top-0 end-0 p-1">
+                                    <i class="fas fa-cog text-info small" title="Auto BOM Product - Based on <?php echo htmlspecialchars($product['base_product_name']); ?>" style="font-size: 0.8rem;"></i>
+                                </div>
+                                <?php endif; ?>
                                 <div class="fw-bold text-success">
                                     <?php echo $settings['currency_symbol'] ?? 'KES'; ?> 
                                     <?php if ($isOnSale): ?>
@@ -2141,17 +2185,45 @@ try {
             console.error('Global error:', event.error);
         });
 
+        // DOM Ready state checker to prevent deferred DOM node errors
+        function isDOMReady() {
+            return document.readyState === 'loading' || document.readyState === 'interactive' || document.readyState === 'complete';
+        }
+
+        // Safe DOM element access function
+        function safeGetElementById(id) {
+            if (!isDOMReady()) {
+                console.warn(`Attempted to access element '${id}' before DOM is ready`);
+                return null;
+            }
+            return document.getElementById(id);
+        }
+
+        // Safe querySelector function
+        function safeQuerySelector(selector) {
+            if (!isDOMReady()) {
+                console.warn(`Attempted to query selector '${selector}' before DOM is ready`);
+                return null;
+            }
+            return document.querySelector(selector);
+        }
+
         // Update time display
         function updateTime() {
             const now = new Date();
             const timeString = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
             const dateString = now.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'});
-            document.getElementById('currentTime').textContent = `${timeString} ${dateString}`;
+            const timeElement = safeGetElementById('currentTime');
+            if (timeElement) {
+                timeElement.textContent = `${timeString} ${dateString}`;
+            }
         }
 
-        // Update time every second
-        setInterval(updateTime, 1000);
-        updateTime();
+        // Update time every second - only start after DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            updateTime();
+            setInterval(updateTime, 1000);
+        });
 
         // Pre-cache product data for better performance
         function cacheProductData() {
@@ -2184,24 +2256,31 @@ try {
             });
         }
 
-        // Cache product data on page load
-        cacheProductData();
+        // Cache product data on page load - only after DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            cacheProductData();
+        });
 
         // Initialize scan mode - focus search input for immediate scanning
         function initializeScanMode() {
-            const searchInput = document.getElementById('productSearch');
+            const searchInput = safeGetElementById('productSearch');
+            const posMain = safeQuerySelector('.pos-main');
+            
             if (searchInput) {
                 // Focus the search input for immediate barcode scanning
                 searchInput.focus();
                 
                 // Add scan mode class to indicate ready state
-                document.querySelector('.pos-main').classList.add('scan-mode');
-                
+                if (posMain) {
+                    posMain.classList.add('scan-mode');
+                }
             }
         }
 
-        // Initialize scan mode on page load
-        setTimeout(initializeScanMode, 500);
+        // Initialize scan mode on page load - only after DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(initializeScanMode, 500);
+        });
 
         // Add keyboard shortcut for refresh (Ctrl+R or F5 override)
         document.addEventListener('keydown', function(event) {
@@ -2217,36 +2296,42 @@ try {
         let barcodeScanTimeout = null;
         let isBarcodeScanning = false;
         
-        document.getElementById('productSearch').addEventListener('input', function() {
-            const searchTerm = this.value.trim();
-            
-            // Clear previous timeouts
-            if (searchTimeout) {
-                clearTimeout(searchTimeout);
-            }
-            if (barcodeScanTimeout) {
-                clearTimeout(barcodeScanTimeout);
-            }
+        // Initialize search functionality after DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = safeGetElementById('productSearch');
+            if (searchInput) {
+                searchInput.addEventListener('input', function() {
+                    const searchTerm = this.value.trim();
+                    
+                    // Clear previous timeouts
+                    if (searchTimeout) {
+                        clearTimeout(searchTimeout);
+                    }
+                    if (barcodeScanTimeout) {
+                        clearTimeout(barcodeScanTimeout);
+                    }
 
-            // Ultra-fast barcode detection for rapid scanning
-            const isBarcodePattern = /^[A-Za-z0-9\-_]{6,}$/.test(searchTerm);
-            const isLikelyBarcode = searchTerm.length >= 6 && isBarcodePattern;
-            
-            if (isLikelyBarcode) {
-                // Handle barcode scanning - ultra-fast for multiple rapid scans
-                isBarcodeScanning = true;
-                barcodeScanTimeout = setTimeout(() => {
-                    handleBarcodeScan(searchTerm);
-                }, 100); // Ultra-fast 100ms for instant scanning
-            } else if (searchTerm.length >= 3) {
-                // Handle regular text search for shorter terms
-                isBarcodeScanning = false;
-                searchTimeout = setTimeout(() => {
-                    performProductSearch(searchTerm);
-                }, 400); // Longer debounce to avoid interfering with scanning
-            } else if (searchTerm.length === 0) {
-                // Clear search immediately when empty
-                performProductSearch('');
+                    // Ultra-fast barcode detection for rapid scanning
+                    const isBarcodePattern = /^[A-Za-z0-9\-_]{6,}$/.test(searchTerm);
+                    const isLikelyBarcode = searchTerm.length >= 6 && isBarcodePattern;
+                    
+                    if (isLikelyBarcode) {
+                        // Handle barcode scanning - ultra-fast for multiple rapid scans
+                        isBarcodeScanning = true;
+                        barcodeScanTimeout = setTimeout(() => {
+                            handleBarcodeScan(searchTerm);
+                        }, 100); // Ultra-fast 100ms for instant scanning
+                    } else if (searchTerm.length >= 3) {
+                        // Handle regular text search for shorter terms
+                        isBarcodeScanning = false;
+                        searchTimeout = setTimeout(() => {
+                            performProductSearch(searchTerm);
+                        }, 400); // Longer debounce to avoid interfering with scanning
+                    } else if (searchTerm.length === 0) {
+                        // Clear search immediately when empty
+                        performProductSearch('');
+                    }
+                });
             }
         });
 
@@ -2285,35 +2370,40 @@ try {
             });
         }
 
-        // Handle Enter key for immediate scanning/searching
-        document.getElementById('productSearch').addEventListener('keypress', function(event) {
-            if (event.key === 'Enter') {
-                event.preventDefault();
-                const searchTerm = this.value.trim();
-                
-                if (searchTerm.length === 0) {
-                    return;
-                }
-                
-                // Clear any existing timeouts for immediate action
-                if (barcodeScanTimeout) {
-                    clearTimeout(barcodeScanTimeout);
-                }
-                if (searchTimeout) {
-                    clearTimeout(searchTimeout);
-                }
-                
-                // Enhanced barcode detection
-                const isBarcodePattern = /^[A-Za-z0-9\-_]{6,}$/.test(searchTerm);
-                const isLikelyBarcode = searchTerm.length >= 6 && isBarcodePattern;
-                
-                if (isLikelyBarcode) {
-                    // Trigger barcode scan immediately
-                    handleBarcodeScan(searchTerm);
-                } else {
-                    // Perform regular search immediately
-                    performProductSearch(searchTerm);
-                }
+        // Handle Enter key for immediate scanning/searching - only after DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = safeGetElementById('productSearch');
+            if (searchInput) {
+                searchInput.addEventListener('keypress', function(event) {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        const searchTerm = this.value.trim();
+                        
+                        if (searchTerm.length === 0) {
+                            return;
+                        }
+                        
+                        // Clear any existing timeouts for immediate action
+                        if (barcodeScanTimeout) {
+                            clearTimeout(barcodeScanTimeout);
+                        }
+                        if (searchTimeout) {
+                            clearTimeout(searchTimeout);
+                        }
+                        
+                        // Enhanced barcode detection
+                        const isBarcodePattern = /^[A-Za-z0-9\-_]{6,}$/.test(searchTerm);
+                        const isLikelyBarcode = searchTerm.length >= 6 && isBarcodePattern;
+                        
+                        if (isLikelyBarcode) {
+                            // Trigger barcode scan immediately
+                            handleBarcodeScan(searchTerm);
+                        } else {
+                            // Perform regular search immediately
+                            performProductSearch(searchTerm);
+                        }
+                    }
+                });
             }
         });
 
@@ -2332,38 +2422,40 @@ try {
             }
         });
 
-        // Product selection - optimized with targeted event delegation
-        const productGrid = document.getElementById('productGrid');
-        if (productGrid) {
-            productGrid.addEventListener('click', function(event) {
-                // Prevent event bubbling for better performance
-                event.stopPropagation();
+        // Product selection - optimized with targeted event delegation - only after DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            const productGrid = safeGetElementById('productGrid');
+            if (productGrid) {
+                productGrid.addEventListener('click', function(event) {
+                    // Prevent event bubbling for better performance
+                    event.stopPropagation();
 
-                const productCard = event.target.closest('.product-card');
-                if (!productCard || !productCard.dataset.productId) {
-                    return;
-                }
+                    const productCard = event.target.closest('.product-card');
+                    if (!productCard || !productCard.dataset.productId) {
+                        return;
+                    }
 
-                const productId = productCard.dataset.productId;
+                    const productId = productCard.dataset.productId;
 
-                // Check if it's a quick add button (quantity buttons)
-                if (event.target.classList.contains('quick-add-btn')) {
-                    const quantity = parseInt(event.target.dataset.quantity) || 1;
-                    addToCart(productId, quantity);
-                    return;
-                }
+                    // Check if it's a quick add button (quantity buttons)
+                    if (event.target.classList.contains('quick-add-btn')) {
+                        const quantity = parseInt(event.target.dataset.quantity) || 1;
+                        addToCart(productId, quantity);
+                        return;
+                    }
 
-                // Only handle clicks on the product card itself, not on buttons
-                if (event.target.closest('.quick-add-buttons')) {
-                    return; // Don't handle clicks on quick add buttons here
-                }
+                    // Only handle clicks on the product card itself, not on buttons
+                    if (event.target.closest('.quick-add-buttons')) {
+                        return; // Don't handle clicks on quick add buttons here
+                    }
 
-                // Default: instant add to cart (only for product card clicks)
-                if (productCard.contains(event.target)) {
-                    addToCart(productId, 1); // Add 1 quantity instantly
-                }
-            });
-        }
+                    // Default: instant add to cart (only for product card clicks)
+                    if (productCard.contains(event.target)) {
+                        addToCart(productId, 1); // Add 1 quantity instantly
+                    }
+                });
+            }
+        });
 
         // Track pending API calls to prevent duplicates
         const pendingApiCalls = new Set();
@@ -3026,6 +3118,12 @@ try {
                 elements.voidCartBtn.disabled = cart.length === 0;
             }
 
+            // Update Sign Out button based on cart status (debounced)
+            if (window.updateSignOutTimeout) {
+                clearTimeout(window.updateSignOutTimeout);
+            }
+            window.updateSignOutTimeout = setTimeout(updateSignOutButton, 50);
+
             // Update cart items display efficiently
             updateCartItemsDisplay(cart, elements.cartItems);
         }
@@ -3411,12 +3509,13 @@ try {
             });
         }
 
-        // Allow Enter key to search quotation
+        // Allow Enter key to search quotation - only after DOM is ready
         document.addEventListener('DOMContentLoaded', function() {
-            const quotationInput = document.getElementById('quotationNumber');
+            const quotationInput = safeGetElementById('quotationNumber');
             if (quotationInput) {
                 quotationInput.addEventListener('keypress', function(e) {
                     if (e.key === 'Enter') {
+                        e.preventDefault();
                         searchQuotation();
                     }
                 });
@@ -3810,6 +3909,11 @@ try {
             const button = event.target;
             if (button.disabled) return;
 
+            // Check if cart has items first
+            if (!verifyCartEmpty('release')) {
+                return;
+            }
+
             // Set loading state
             setButtonLoading(button, 'Checking...', true);
 
@@ -3961,6 +4065,11 @@ try {
             const button = event.target;
             if (button.disabled) return;
 
+            // Check if cart has items first
+            if (!verifyCartEmpty('switch')) {
+                return;
+            }
+
             // Set loading state
             setButtonLoading(button, 'Checking...', true);
 
@@ -3972,6 +4081,11 @@ try {
             // Prevent double-clicking
             const button = event.target;
             if (button.disabled) return;
+
+            // Check if cart has items first
+            if (!verifyCartEmpty('close')) {
+                return;
+            }
 
             // Set loading state
             setButtonLoading(button, 'Checking...', true);
@@ -4518,14 +4632,18 @@ try {
 
         // Global logout function
         function logout() {
+            // Check if user has an active till that's not closed
+            const hasActiveTill = <?php echo $selected_till ? 'true' : 'false'; ?>;
+            const tillClosed = <?php echo $selected_till && isset($selected_till['is_closed']) && $selected_till['is_closed'] == 1 ? 'true' : 'false'; ?>;
+            
+            if (hasActiveTill && !tillClosed) {
+                alert('Cannot logout while till is open. Please close your till first.');
+                return;
+            }
+            
             if (confirm('Are you sure you want to logout? Any unsaved changes will be lost.')) {
-                // Release till if selected
-                if (typeof releaseTill === 'function') {
-                    releaseTill();
-                }
-
                 // Redirect to logout
-                window.location.href = '../logout.php';
+                window.location.href = '../auth/logout.php';
             }
         }
 
@@ -4533,6 +4651,134 @@ try {
         function refreshPage() {
             performRefresh();
         }
+
+        // Show cart blocking notification
+        function showCartBlockingNotification(itemCount, total, currencySymbol) {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.className = 'cart-blocking-notification';
+            notification.innerHTML = `
+                <div class="notification-content">
+                    <div class="notification-header">
+                        <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                        <h5>Cannot Sign Out</h5>
+                    </div>
+                    <div class="notification-body">
+                        <p>You have <strong>${itemCount} item(s)</strong> in your cart worth <strong>${currencySymbol} ${total.toFixed(2)}</strong></p>
+                        <p class="mb-0">Please complete the transaction or clear the cart first.</p>
+                    </div>
+                    <div class="notification-actions">
+                        <button class="btn btn-warning btn-sm" onclick="processPayment()">
+                            <i class="bi bi-credit-card"></i> Process Payment
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="voidCart()">
+                            <i class="bi bi-x-circle"></i> Clear Cart
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="closeCartNotification()">
+                            <i class="bi bi-x"></i> Close
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            // Add styles
+            notification.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: white;
+                border: 2px solid #ffc107;
+                border-radius: 10px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                z-index: 9999;
+                min-width: 400px;
+                max-width: 500px;
+            `;
+            
+            // Add to page
+            document.body.appendChild(notification);
+            
+            // Add backdrop
+            const backdrop = document.createElement('div');
+            backdrop.className = 'notification-backdrop';
+            backdrop.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.5);
+                z-index: 9998;
+            `;
+            document.body.appendChild(backdrop);
+        }
+        
+        // Close cart notification
+        function closeCartNotification() {
+            const notification = document.querySelector('.cart-blocking-notification');
+            const backdrop = document.querySelector('.notification-backdrop');
+            if (notification) notification.remove();
+            if (backdrop) backdrop.remove();
+        }
+        
+        // Sign out from POS function - optimized for performance
+        let signOutInProgress = false;
+        function signOutFromPOS() {
+            // Prevent multiple rapid clicks
+            if (signOutInProgress) return;
+            
+            // Use requestAnimationFrame to prevent blocking
+            requestAnimationFrame(() => {
+                // Check if cart has items - prevent sign out if cart is not empty
+                if (window.cartData && window.cartData.length > 0) {
+                    const cartTotal = window.cartData.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                    const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
+                    
+                    showCartBlockingNotification(window.cartData.length, cartTotal, currencySymbol);
+                    return;
+                }
+                
+                // Use a more efficient confirmation method
+                if (confirm('Sign out from POS? You can sign in again to continue.')) {
+                    signOutInProgress = true;
+                    
+                    // Immediate redirect without waiting
+                    window.location.replace('logout_auth.php');
+                }
+            });
+        }
+
+        // Update Sign Out button based on cart status - optimized
+        let lastCartState = null;
+        function updateSignOutButton() {
+            const signOutBtn = document.getElementById('signOutBtn');
+            if (!signOutBtn) return;
+            
+            const hasItems = window.cartData && window.cartData.length > 0;
+            
+            // Only update if state has changed
+            if (lastCartState === hasItems) return;
+            lastCartState = hasItems;
+            
+            // Use requestAnimationFrame for smooth updates
+            requestAnimationFrame(() => {
+                if (hasItems) {
+                    signOutBtn.disabled = true;
+                    signOutBtn.classList.remove('btn-dark');
+                    signOutBtn.classList.add('btn-secondary');
+                    signOutBtn.title = 'Cannot sign out with items in cart';
+                    signOutBtn.innerHTML = '<i class="bi bi-lock"></i> Sign Out';
+                } else {
+                    signOutBtn.disabled = false;
+                    signOutBtn.classList.remove('btn-secondary');
+                    signOutBtn.classList.add('btn-dark');
+                    signOutBtn.title = 'Sign out from POS';
+                    signOutBtn.innerHTML = '<i class="bi bi-box-arrow-right"></i> Sign Out';
+                }
+            });
+        }
+
 
         // Perform the actual page refresh
         function performRefresh() {
@@ -5336,6 +5582,9 @@ try {
     <script>
         // Till management event listeners
         document.addEventListener('DOMContentLoaded', function() {
+            // Initialize Sign Out button state with delay to avoid blocking
+            setTimeout(updateSignOutButton, 100);
+            
             // Check if user is authenticated and show drop modal
             <?php if (isset($_SESSION['cash_drop_authenticated']) && $_SESSION['cash_drop_authenticated']): ?>
                 setTimeout(function() {
@@ -5352,15 +5601,18 @@ try {
                 <?php unset($_SESSION['intended_action']); ?>
             <?php endif; ?>
 
-            // Add form validation for authentication
-            const authForm = document.querySelector('form[action=""][method="POST"]');
-            if (authForm) {
-                authForm.addEventListener('submit', function(e) {
-                    const userIdInput = document.getElementById('auth_user_id');
-                    const passwordInput = document.getElementById('auth_password');
-                    const submitBtn = document.getElementById('authSubmitBtn');
-                    
-                    if (!userIdInput || !passwordInput) return;
+            // Add form validation for authentication forms only
+            const authForms = document.querySelectorAll('form[action=""][method="POST"]');
+            authForms.forEach(function(form) {
+                const userIdInput = form.querySelector('#auth_user_id, #till_close_auth_user_id');
+                const passwordInput = form.querySelector('#auth_password, #till_close_auth_password');
+                
+                // Only add validation to forms that have authentication fields
+                if (userIdInput && passwordInput) {
+                    form.addEventListener('submit', function(e) {
+                        const submitBtn = form.querySelector('#authSubmitBtn, #tillCloseSubmitBtn');
+                        
+                        if (!userIdInput || !passwordInput) return;
                     
                     // Validate inputs
                     if (!userIdInput.value.trim()) {
@@ -5377,13 +5629,14 @@ try {
                         return;
                     }
                     
-                    // Show loading state
-                    if (submitBtn) {
-                        submitBtn.disabled = true;
-                        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Authenticating...';
-                    }
-                });
-            }
+                        // Show loading state
+                        if (submitBtn) {
+                            submitBtn.disabled = true;
+                            submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Authenticating...';
+                        }
+                    });
+                }
+            });
 
             // Add form validation for drop form
             const dropForm = document.querySelector('form[method="POST"] input[name="action"][value="drop"]')?.closest('form');
@@ -6064,10 +6317,13 @@ try {
         /* Till Action Buttons Styling */
         .till-action-btn {
             font-weight: 600;
-            border: 2px solid transparent;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+            border: 1px solid transparent;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
             transition: all 0.2s ease;
-            min-width: 120px;
+            min-width: 60px;
+            font-size: 0.75rem;
+            padding: 0.25rem 0.4rem;
+            line-height: 1.2;
         }
 
         .till-action-btn:hover {
@@ -6134,6 +6390,81 @@ try {
             border-color: #0891b2;
             color: white;
             transform: translateY(-2px);
+        }
+
+        .till-action-btn.btn-dark {
+            background: linear-gradient(135deg, #343a40, #212529);
+            border-color: #343a40;
+            color: white;
+        }
+
+        .till-action-btn.btn-dark:hover {
+            background: linear-gradient(135deg, #212529, #000000);
+            border-color: #212529;
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        /* 3-Column Button Layout */
+        .row.g-1 .col-4 {
+            margin-bottom: 0.25rem;
+        }
+
+        /* Remove margin from the last row */
+        .row.g-1 .col-4:nth-last-child(-n+3) {
+            margin-bottom: 0;
+        }
+
+        /* Ensure buttons fill the column width properly */
+        .till-action-btn.w-100 {
+            width: 100% !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+        }
+
+        /* Smaller icons for compact buttons */
+        .till-action-btn i {
+            font-size: 0.8rem;
+        }
+        
+        /* Cart blocking notification styles */
+        .cart-blocking-notification .notification-content {
+            padding: 1.5rem;
+        }
+        
+        .cart-blocking-notification .notification-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            color: #856404;
+        }
+        
+        .cart-blocking-notification .notification-header h5 {
+            margin: 0;
+            font-weight: 600;
+        }
+        
+        .cart-blocking-notification .notification-body {
+            margin-bottom: 1.5rem;
+        }
+        
+        .cart-blocking-notification .notification-body p {
+            margin-bottom: 0.5rem;
+            color: #495057;
+        }
+        
+        .cart-blocking-notification .notification-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: center;
+        }
+        
+        .cart-blocking-notification .notification-actions .btn {
+            flex: 1;
+            max-width: 120px;
         }
 
         .till-icon {

@@ -75,17 +75,43 @@ function generateReturnNumber($settings) {
     $length = intval($settings['return_number_length'] ?? 6);
     $separator = $settings['return_number_separator'] ?? '-';
 
-    $sequentialNumber = getNextReturnNumber($length);
+    $sequentialNumber = getNextReturnNumber($conn, $length);
     $currentDate = date('Ymd');
 
     return $prefix . $separator . $currentDate . $separator . $sequentialNumber;
 }
 
-// Function to get next return number (you'll need to implement this in functions.php)
-function getNextReturnNumber($length) {
-    // This should query the database for the next sequential number
-    // For now, return a random number
-    return str_pad(mt_rand(1, pow(10, $length) - 1), $length, '0', STR_PAD_LEFT);
+// Function to get next return number
+function getNextReturnNumber($conn, $length) {
+    try {
+        // Get the highest return number for today
+        $today = date('Ymd');
+        $stmt = $conn->prepare("
+            SELECT return_number 
+            FROM returns 
+            WHERE return_number LIKE ? 
+            ORDER BY return_number DESC 
+            LIMIT 1
+        ");
+        $stmt->execute(["RTN-{$today}-%"]);
+        $lastReturn = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($lastReturn) {
+            // Extract the sequential number and increment
+            $parts = explode('-', $lastReturn['return_number']);
+            $lastNumber = intval(end($parts));
+            $nextNumber = $lastNumber + 1;
+        } else {
+            // First return of the day
+            $nextNumber = 1;
+        }
+        
+        return str_pad($nextNumber, $length, '0', STR_PAD_LEFT);
+    } catch (PDOException $e) {
+        error_log("Error getting next return number: " . $e->getMessage());
+        // Fallback to random number
+        return str_pad(mt_rand(1, pow(10, $length) - 1), $length, '0', STR_PAD_LEFT);
+    }
 }
 
 // Get suppliers for dropdown
@@ -173,9 +199,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'search_products') {
     }
 
     try {
-        // Search products from received orders for this supplier
+        // Debug logging
+        error_log("Search query: " . $query);
+        error_log("Supplier ID: " . $supplier_id);
+        
+        // First try to search products from received orders for this supplier
         $sql = "
-            SELECT DISTINCT p.id, p.name, p.sku, p.description, p.image_url,
+            SELECT DISTINCT p.id, p.name, p.sku, p.barcode, p.description, p.image_url,
                    p.quantity as current_stock, p.cost_price,
                    c.name as category_name, b.name as brand_name,
                    MAX(ioi.received_quantity) as max_return_qty,
@@ -188,8 +218,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'search_products') {
             WHERE io.status = 'received'
             AND io.supplier_id = :supplier_id
             AND ioi.received_quantity > 0
-            AND (p.name LIKE :query OR p.sku LIKE :query OR p.description LIKE :query)
-            GROUP BY p.id, p.name, p.sku, p.description, p.image_url, p.quantity, p.cost_price, c.name, b.name
+            AND (p.name LIKE :query 
+                 OR p.sku LIKE :query 
+                 OR p.barcode LIKE :query 
+                 OR p.description LIKE :query
+                 OR c.name LIKE :query
+                 OR b.name LIKE :query
+                 OR CONCAT(p.name, ' ', p.sku, ' ', COALESCE(p.barcode, ''), ' ', COALESCE(p.description, '')) LIKE :query)
+            GROUP BY p.id, p.name, p.sku, p.barcode, p.description, p.image_url, p.quantity, p.cost_price, c.name, b.name
             ORDER BY p.name ASC
             LIMIT 20
         ";
@@ -201,8 +237,49 @@ if (isset($_GET['action']) && $_GET['action'] === 'search_products') {
         ]);
 
         $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode(['success' => true, 'products' => $products]);
+        
+        // If no products found from received orders, search all products
+        if (empty($products)) {
+            error_log("No products found from received orders, searching all products");
+            
+            $fallback_sql = "
+                SELECT DISTINCT p.id, p.name, p.sku, p.barcode, p.description, p.image_url,
+                       p.quantity as current_stock, p.cost_price,
+                       c.name as category_name, b.name as brand_name,
+                       p.quantity as max_return_qty,
+                       p.cost_price as order_cost_price
+                FROM products p
+                LEFT JOIN categories c ON p.category_id = c.id
+                LEFT JOIN brands b ON p.brand_id = b.id
+                WHERE (p.name LIKE :query 
+                     OR p.sku LIKE :query 
+                     OR p.barcode LIKE :query 
+                     OR p.description LIKE :query
+                     OR c.name LIKE :query
+                     OR b.name LIKE :query
+                     OR CONCAT(p.name, ' ', p.sku, ' ', COALESCE(p.barcode, ''), ' ', COALESCE(p.description, '')) LIKE :query)
+                ORDER BY p.name ASC
+                LIMIT 20
+            ";
+            
+            $stmt = $conn->prepare($fallback_sql);
+            $stmt->execute([
+                ':query' => '%' . $query . '%'
+            ]);
+            
+            $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+        
+        // Debug logging
+        error_log("Found " . count($products) . " products");
+        
+        echo json_encode(['success' => true, 'products' => $products, 'debug' => [
+            'query' => $query,
+            'supplier_id' => $supplier_id,
+            'count' => count($products)
+        ]]);
     } catch (PDOException $e) {
+        error_log("Search error: " . $e->getMessage());
         echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
     }
     exit();
@@ -476,10 +553,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
         .return-cart {
             background: #f8fafc;
-            border: 1px solid #e2e8f0;
+            border: 2px solid #10b981;
             border-radius: 8px;
             padding: 1.5rem;
             margin-top: 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
 
         .return-item {
@@ -624,6 +702,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 <option value="expired">Expired Products</option>
                                 <option value="overstock">Overstock/Excess Inventory</option>
                                 <option value="quality">Quality Issues</option>
+                                <option value="recall">Product Recall</option>
+                                <option value="customer_return">Customer Return</option>
+                                <option value="warranty">Warranty Claim</option>
                                 <option value="other">Other</option>
                             </select>
                         </div>
@@ -656,12 +737,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         <label for="productSearch" class="form-label">Search Products</label>
                         <div class="input-group">
                             <input type="text" class="form-control" id="productSearch"
-                                   placeholder="Search by product name, SKU, or description...">
+                                   placeholder="Search by name, SKU, barcode, description, category, or brand...">
                             <button class="btn btn-outline-secondary" type="button" id="searchBtn">
                                 <i class="bi bi-search"></i>
                             </button>
+                            <button class="btn btn-outline-info" type="button" id="testSearchBtn" title="Test search with sample data">
+                                <i class="bi bi-bug"></i>
+                            </button>
                         </div>
-                        <div class="form-text">Only products from received orders for the selected supplier will be shown.</div>
+                        <div class="form-text">Search by product name, SKU, barcode, description, category, or brand. Only products from received orders for the selected supplier will be shown.</div>
                     </div>
 
                     <!-- Product List -->
@@ -683,9 +767,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         </div>
                     </div>
 
-                    <div class="mt-4">
+                    <div class="mt-4 d-flex justify-content-between">
                         <button type="button" class="btn btn-outline-secondary" id="backToSupplierBtn">
                             <i class="bi bi-arrow-left me-2"></i>Back to Supplier
+                        </button>
+                        <button type="button" class="btn btn-primary btn-lg" id="nextToReviewBtn" style="display: none;">
+                            <i class="bi bi-arrow-right me-2"></i>Next: Review & Submit
                         </button>
                     </div>
                 </div>
@@ -718,7 +805,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 <div class="card-body">
                                     <p class="mb-1"><strong>Total Items:</strong> <span id="reviewTotalItems">0</span></p>
                                     <p class="mb-1"><strong>Total Value:</strong> <span id="reviewTotalValue">$0.00</span></p>
-                                    <p class="mb-0"><strong>Return Number:</strong> <span id="reviewReturnNumber">Will be generated</span></p>
+                                    <p class="mb-1"><strong>Return Number:</strong> <span id="reviewReturnNumber" class="text-primary fw-bold">Will be generated</span></p>
+                                    <p class="mb-0"><strong>Created By:</strong> <span id="reviewCreatedBy"><?php echo htmlspecialchars($username); ?></span></p>
                                 </div>
                             </div>
                         </div>
@@ -741,6 +829,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         <button type="submit" class="btn btn-success" id="submitReturnBtn" disabled>
                             <i class="bi bi-send me-2"></i>Create Return
                         </button>
+                        <button type="button" class="btn btn-warning" id="debugSubmitBtn" onclick="debugSubmit()">
+                            <i class="bi bi-bug me-2"></i>Debug Submit
+                        </button>
                     </div>
                 </div>
             </form>
@@ -756,6 +847,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
         // Step management
         function showStep(stepNumber) {
+            console.log('Showing step:', stepNumber);
+            
             // Hide all steps
             document.getElementById('supplierStep').classList.add('d-none');
             document.getElementById('productsStep').classList.add('d-none');
@@ -785,6 +878,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             }
 
             currentStep = stepNumber;
+            console.log('Current step set to:', currentStep);
         }
 
         // Supplier selection
@@ -840,6 +934,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             }
         });
 
+        // Test search button
+        document.getElementById('testSearchBtn').addEventListener('click', function() {
+            if (!selectedSupplier) {
+                alert('Please select a supplier first.');
+                return;
+            }
+            
+            // Test with a simple query
+            document.getElementById('productSearch').value = 'test';
+            searchProducts('test');
+        });
+
         // Search products function
         function searchProducts(query) {
             if (!selectedSupplier) {
@@ -847,9 +953,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 return;
             }
 
+            // Show loading state
+            document.getElementById('productList').innerHTML = `
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-hourglass-split fs-1 mb-3"></i>
+                    <p>Searching for products...</p>
+                </div>
+            `;
+
+            console.log('Searching for:', query, 'Supplier:', selectedSupplier);
+
             fetch(`?action=search_products&q=${encodeURIComponent(query)}&supplier_id=${selectedSupplier}`)
-                .then(response => response.json())
+                .then(response => {
+                    console.log('Response status:', response.status);
+                    return response.json();
+                })
                 .then(data => {
+                    console.log('Search response:', data);
                     if (data.success) {
                         displayProducts(data.products);
                     } else {
@@ -861,7 +981,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     }
                 })
                 .catch(error => {
-                    console.error('Error:', error);
+                    console.error('Search error:', error);
                     document.getElementById('productList').innerHTML = `
                         <div class="alert alert-danger">
                             <i class="bi bi-exclamation-triangle me-2"></i>Search failed. Please try again.
@@ -894,9 +1014,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             <div class="product-name">${product.name}</div>
                             <div class="product-details">
                                 SKU: ${product.sku || 'N/A'} |
+                                ${product.barcode ? `Barcode: ${product.barcode} |` : ''}
                                 Category: ${product.category_name || 'N/A'} |
-                                Current Stock: ${product.current_stock} |
-                                Max Return: ${maxReturnQty}
+                                Brand: ${product.brand_name || 'N/A'} |
+                                Current Stock: ${product.current_stock}
+                                ${maxReturnQty > 0 ? ` | Max Return: ${maxReturnQty}` : ''}
                             </div>
                         </div>
                         <div class="ms-auto">
@@ -904,7 +1026,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 `<button type="button" class="btn btn-success btn-sm" disabled>
                                     <i class="bi bi-check-circle me-1"></i>Added
                                 </button>` :
-                                `<button type="button" class="btn btn-primary btn-sm" onclick="addToReturn(${product.id}, '${product.name.replace(/'/g, "\\'")}', ${product.order_cost_price || product.cost_price}, ${maxReturnQty})">
+                                `<button type="button" class="btn btn-primary btn-sm" onclick="addToReturn(${product.id}, '${product.name.replace(/'/g, "\\'")}', '${(product.sku || '').replace(/'/g, "\\'")}', '${(product.barcode || '').replace(/'/g, "\\'")}', ${product.order_cost_price || product.cost_price}, ${maxReturnQty})">
                                     <i class="bi bi-plus-circle me-1"></i>Add to Return
                                 </button>`
                             }
@@ -917,8 +1039,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
 
         // Add product to return
-        function addToReturn(productId, productName, costPrice, maxQty) {
-            const quantity = prompt(`Enter quantity to return for "${productName}" (max: ${maxQty}):`, '1');
+        function addToReturn(productId, productName, sku, barcode, costPrice, maxQty) {
+            // If maxQty is 0, allow any quantity (no limit)
+            const maxLimit = maxQty > 0 ? maxQty : 'unlimited';
+            const quantity = prompt(`Enter quantity to return for "${productName}"${maxQty > 0 ? ` (max: ${maxQty})` : ' (no limit)'}:`, '1');
 
             if (quantity === null) return;
 
@@ -928,7 +1052,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 return;
             }
 
-            if (qty > maxQty) {
+            // Only enforce max quantity limit if maxQty > 0
+            if (maxQty > 0 && qty > maxQty) {
                 alert(`You can return maximum ${maxQty} units of this product.`);
                 return;
             }
@@ -937,12 +1062,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             returnItems.push({
                 product_id: productId,
                 product_name: productName,
+                sku: sku,
+                barcode: barcode,
                 quantity: qty,
                 cost_price: costPrice,
                 return_reason: '',
                 notes: ''
             });
 
+            console.log('Added item to return:', returnItems[returnItems.length - 1]);
+            console.log('Total return items:', returnItems.length);
+            
             updateReturnCart();
             document.getElementById('returnCart').style.display = 'block';
         }
@@ -952,6 +1082,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             if (returnItems.length === 0) {
                 document.getElementById('returnItemsList').innerHTML = '<p class="text-muted">No items added yet.</p>';
                 document.getElementById('returnCart').style.display = 'none';
+                document.getElementById('nextToReviewBtn').style.display = 'none';
                 return;
             }
 
@@ -989,6 +1120,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             document.getElementById('proceedToReviewBtn').innerHTML = `
                 <i class="bi bi-check-circle me-2"></i>Review Return (${totalItems} items - $${totalValue.toFixed(2)})
             `;
+            
+            // Show the return cart and next step button when there are items
+            document.getElementById('returnCart').style.display = 'block';
+            document.getElementById('nextToReviewBtn').style.display = 'block';
+            console.log('Return cart shown with', returnItems.length, 'items');
         }
 
         // Update return quantity
@@ -1012,6 +1148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 alert('Please add at least one item to return.');
                 return;
             }
+            console.log('Proceeding to review with items:', returnItems);
             updateReview();
             showStep(3);
         });
@@ -1019,6 +1156,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // Back to products
         document.getElementById('backToProductsBtn').addEventListener('click', function() {
             showStep(2);
+        });
+
+        // Next to review button
+        document.getElementById('nextToReviewBtn').addEventListener('click', function() {
+            if (returnItems.length === 0) {
+                alert('Please add at least one item to return.');
+                return;
+            }
+            console.log('Proceeding to review with items:', returnItems);
+            updateReview();
+            showStep(3);
         });
 
         // Update review
@@ -1048,6 +1196,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             document.getElementById('reviewTotalItems').textContent = totalItems;
             document.getElementById('reviewTotalValue').textContent = `$${totalValue.toFixed(2)}`;
 
+            // Generate return number preview
+            const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            const returnNumber = `RTN-${today}-${String(Math.floor(Math.random() * 1000000)).padStart(6, '0')}`;
+            document.getElementById('reviewReturnNumber').textContent = returnNumber;
+
             // Update items list
             let itemsHtml = '';
             returnItems.forEach(item => {
@@ -1057,15 +1210,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             <div class="row align-items-center">
                                 <div class="col-md-6">
                                     <strong>${item.product_name}</strong>
+                                    <br><small class="text-muted">SKU: ${item.sku || 'N/A'} ${item.barcode ? `| Barcode: ${item.barcode}` : ''}</small>
                                 </div>
                                 <div class="col-md-2 text-center">
-                                    Qty: ${item.quantity}
+                                    <span class="badge bg-primary">${item.quantity}</span>
                                 </div>
                                 <div class="col-md-2 text-end">
                                     $${item.cost_price.toFixed(2)}
                                 </div>
                                 <div class="col-md-2 text-end">
-                                    $${(item.quantity * item.cost_price).toFixed(2)}
+                                    <strong>$${(item.quantity * item.cost_price).toFixed(2)}</strong>
                                 </div>
                             </div>
                         </div>
@@ -1077,6 +1231,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             // Update form data
             document.getElementById('returnItemsInput').value = JSON.stringify(returnItems);
             document.getElementById('submitReturnBtn').disabled = false;
+            
+            console.log('Review updated, submit button enabled:', document.getElementById('submitReturnBtn').disabled);
         }
 
         // Form submission
@@ -1084,6 +1240,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             document.getElementById('submitReturnBtn').disabled = true;
             document.getElementById('submitReturnBtn').innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Creating Return...';
         });
+
+        // Debug submit function
+        function debugSubmit() {
+            console.log('Debug Submit clicked');
+            console.log('Current step:', currentStep);
+            console.log('Return items:', returnItems);
+            console.log('Submit button disabled:', document.getElementById('submitReturnBtn').disabled);
+            console.log('Form data:', document.getElementById('returnItemsInput').value);
+            
+            // Force enable submit button for testing
+            document.getElementById('submitReturnBtn').disabled = false;
+            console.log('Submit button enabled for testing');
+        }
 
         // Auto-hide alerts
         setTimeout(function() {

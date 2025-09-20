@@ -20,12 +20,12 @@ $sectionContentMappings = [
         ['/customers/crm_dashboard.php', 'bi-speedometer2', 'CRM Dashboard']
     ],
     'inventory' => [
+        ['/inventory/inventory.php', 'bi-boxes', 'Inventory Dashboard'],
         ['/products/products.php', 'bi-list', 'All Products'],
         ['/categories/categories.php', 'bi-tags', 'Categories'],
         ['/product_families/families.php', 'bi-diagram-3', 'Product Families'],
         ['/brands/brands.php', 'bi-star', 'Brands'],
         ['/suppliers/suppliers.php', 'bi-truck', 'Suppliers'],
-        ['/inventory/inventory.php', 'bi-boxes', 'Inventory'],
         ['/products/bulk_operations.php', 'bi-lightning-charge', 'Bulk Operations'],
     ],
     'expiry' => [

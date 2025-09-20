@@ -84,9 +84,10 @@ if ($filter === 'receivable') {
 
 }
 
-// Default to pending orders when no specific filter is applied
+// Exclude received orders by default - show only active orders unless explicitly requested
 if (empty($status_filter) && empty($filter) && empty($search) && empty($supplier_filter) && empty($date_from) && empty($date_to)) {
-    $status_filter = 'pending';
+    // Default behavior: exclude received orders to show only active orders
+    $exclude_received = true;
 }
 
 // Build WHERE clause
@@ -104,6 +105,9 @@ if ($filter === 'receivable') {
 } elseif (!empty($status_filter)) {
     $where[] = "io.status = :status";
     $params[':status'] = $status_filter;
+} elseif (isset($exclude_received) && $exclude_received) {
+    // Exclude received orders by default
+    $where[] = "io.status != 'received'";
 }
 
 if (!empty($supplier_filter)) {
@@ -440,7 +444,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
                         <?php if ($filter === 'receivable'): ?>
                             All orders available for receiving (no status filtering applied)
                         <?php elseif (empty($_GET['search']) && empty($_GET['status']) && empty($_GET['supplier']) && empty($_GET['date_from']) && empty($_GET['date_to'])): ?>
-                            Showing pending orders that require attention
+                            Showing active orders (received orders excluded)
                         <?php else: ?>
                             View and manage all purchase orders
                         <?php endif; ?>
@@ -475,7 +479,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
             <?php elseif (empty($_GET['search']) && empty($_GET['status']) && empty($_GET['supplier']) && empty($_GET['date_from']) && empty($_GET['date_to'])): ?>
             <div class="alert alert-primary alert-dismissible fade show" role="alert">
                 <i class="bi bi-info-circle me-2"></i>
-                <strong>Showing Pending Orders:</strong> By default, this page displays pending orders that need attention. Use the filters above to view orders in other statuses.
+                <strong>Showing Active Orders:</strong> This page displays active orders (pending, sent, waiting for delivery, cancelled) but excludes received orders. Use the "Received" filter above to view completed orders.
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
             <?php elseif (!empty($_GET['status']) && $_GET['status'] === 'received'): ?>
@@ -591,6 +595,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
                         </button>
                         <a href="view_orders.php" class="btn btn-outline-secondary">
                             <i class="bi bi-x-circle me-2"></i>Clear Filters
+                        </a>
+                        <a href="view_orders.php?status=received" class="btn btn-outline-success">
+                            <i class="bi bi-check-circle me-2"></i>Show Received Orders
                         </a>
                     </div>
                 </form>

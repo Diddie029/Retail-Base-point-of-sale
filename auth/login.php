@@ -232,24 +232,6 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
     }
 }
 
-// Function to log login attempts
-function logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_type, $success) {
-    try {
-        $stmt = $conn->prepare("
-            INSERT INTO login_attempts (identifier, ip_address, user_agent, attempt_type, success)
-            VALUES (:identifier, :ip, :user_agent, :attempt_type, :success)
-        ");
-        $stmt->bindParam(':identifier', $identifier);
-        $stmt->bindParam(':ip', $ip_address);
-        $stmt->bindParam(':user_agent', $user_agent);
-        $stmt->bindParam(':attempt_type', $attempt_type);
-        $stmt->bindParam(':success', $success, PDO::PARAM_BOOL);
-        $stmt->execute();
-    } catch(PDOException $e) {
-        // Log to error log if database logging fails
-        error_log("Failed to log login attempt: " . $e->getMessage());
-    }
-}
 ?>
 
 <!DOCTYPE html>

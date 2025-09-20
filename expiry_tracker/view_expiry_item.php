@@ -35,9 +35,19 @@ if (!hasPermission('view_expiry_alerts', $permissions) && !hasPermission('manage
     exit();
 }
 
-// Get expiry item ID
+// Get expiry item ID with validation
 $expiry_id = isset($_GET['id']) ? trim($_GET['id']) : null;
+
+// Enhanced error handling for invalid ID
 if (!$expiry_id) {
+    $_SESSION['error_message'] = "Invalid expiry item ID provided.";
+    header("Location: expiry_tracker.php?error=invalid_item");
+    exit();
+}
+
+// Validate ID format (should be numeric)
+if (!is_numeric($expiry_id) || $expiry_id <= 0) {
+    $_SESSION['error_message'] = "Invalid expiry item ID format.";
     header("Location: expiry_tracker.php?error=invalid_item");
     exit();
 }
@@ -76,12 +86,23 @@ try {
         exit();
     }
 } catch (PDOException $e) {
-    // Log the actual error for debugging
+    // Enhanced error logging and user-friendly error handling
     error_log("View Expiry Item DB Error: " . $e->getMessage());
     error_log("Error Code: " . $e->getCode());
     error_log("Expiry ID: " . $expiry_id);
+    error_log("Stack Trace: " . $e->getTraceAsString());
 
-    header("Location: expiry_tracker.php?error=db_error&debug=" . urlencode($e->getMessage()));
+    // Set user-friendly error message
+    $_SESSION['error_message'] = "Unable to load expiry item details. Please try again or contact support if the problem persists.";
+    
+    // Redirect with error
+    header("Location: expiry_tracker.php?error=db_error");
+    exit();
+} catch (Exception $e) {
+    // Handle any other unexpected errors
+    error_log("Unexpected error in view_expiry_item.php: " . $e->getMessage());
+    $_SESSION['error_message'] = "An unexpected error occurred. Please try again.";
+    header("Location: expiry_tracker.php?error=unexpected");
     exit();
 }
 
@@ -119,6 +140,8 @@ try {
     }
 } catch (PDOException $e) {
     error_log("Expiry Actions DB Error: " . $e->getMessage());
+    // Continue execution even if activity data fails to load
+    $comprehensive_activities = [];
 }
 
 // 2. Get system activity logs related to this expiry item
@@ -146,6 +169,7 @@ try {
     }
 } catch (PDOException $e) {
     error_log("System Activities DB Error: " . $e->getMessage());
+    // Continue execution even if system activities fail to load
 }
 
 // 3. Get alert activities
@@ -174,6 +198,7 @@ try {
     }
 } catch (PDOException $e) {
     error_log("Alert Activities DB Error: " . $e->getMessage());
+    // Continue execution even if alert activities fail to load
 }
 
 // 4. Add creation and update activities from the expiry item itself
@@ -271,44 +296,60 @@ try {
     $alerts_history = [];
 }
 
-// Calculate comprehensive financial summary
+// Calculate comprehensive financial summary with input validation
 $financial_summary = [
     'total_cost' => 0,
     'total_revenue' => 0,
     'total_value_lost' => 0,
     'net_impact' => 0,
     'actions_count' => count($comprehensive_activities),
-    'total_original_quantity' => $expiry_item['quantity'],
-    'remaining_quantity' => $expiry_item['remaining_quantity'],
-    'disposed_quantity' => $expiry_item['quantity'] - $expiry_item['remaining_quantity'],
-    'cogs_per_unit' => $expiry_item['product_cost_price'] ?: $expiry_item['unit_cost'],
-    'unit_cost_per_unit' => $expiry_item['unit_cost'],
+    'total_original_quantity' => max(0, floatval($expiry_item['quantity'] ?? 0)),
+    'remaining_quantity' => max(0, floatval($expiry_item['remaining_quantity'] ?? 0)),
+    'disposed_quantity' => max(0, floatval($expiry_item['quantity'] ?? 0) - floatval($expiry_item['remaining_quantity'] ?? 0)),
+    'cogs_per_unit' => max(0, floatval($expiry_item['product_cost_price'] ?: $expiry_item['unit_cost'] ?: 0)),
+    'unit_cost_per_unit' => max(0, floatval($expiry_item['unit_cost'] ?? 0)),
     'actions_breakdown' => []
 ];
 
-// Calculate per-action financial details
+// Validate financial data integrity
+if ($financial_summary['total_original_quantity'] < 0) {
+    error_log("Invalid quantity data for expiry item ID: $expiry_id");
+    $financial_summary['total_original_quantity'] = 0;
+}
+
+if ($financial_summary['remaining_quantity'] > $financial_summary['total_original_quantity']) {
+    error_log("Remaining quantity exceeds total quantity for expiry item ID: $expiry_id");
+    $financial_summary['remaining_quantity'] = $financial_summary['total_original_quantity'];
+}
+
+// Calculate per-action financial details with validation
 foreach ($comprehensive_activities as $activity) {
     // Only count expiry actions for financial summary
     if ($activity['activity_type'] === 'expiry_action') {
-        $quantity_value = $activity['quantity_affected'] * $financial_summary['cogs_per_unit'];
-        $unit_cost_value = $activity['quantity_affected'] * $financial_summary['unit_cost_per_unit'];
+        // Validate and sanitize activity data
+        $quantity_affected = max(0, floatval($activity['quantity_affected'] ?? 0));
+        $cost = max(0, floatval($activity['cost'] ?? 0));
+        $revenue = max(0, floatval($activity['revenue'] ?? 0));
+        
+        $quantity_value = $quantity_affected * $financial_summary['cogs_per_unit'];
+        $unit_cost_value = $quantity_affected * $financial_summary['unit_cost_per_unit'];
 
-        $financial_summary['total_cost'] += $activity['cost'];
-        $financial_summary['total_revenue'] += $activity['revenue'];
+        $financial_summary['total_cost'] += $cost;
+        $financial_summary['total_revenue'] += $revenue;
         $financial_summary['total_value_lost'] += $quantity_value;
 
-        // Store detailed breakdown per action
+        // Store detailed breakdown per action with validated values
         $financial_summary['actions_breakdown'][] = [
-            'action_type' => $activity['action_type'],
-            'quantity_affected' => $activity['quantity_affected'],
+            'action_type' => htmlspecialchars($activity['action_type'] ?? 'unknown'),
+            'quantity_affected' => $quantity_affected,
             'cost_per_unit_cogs' => $financial_summary['cogs_per_unit'],
             'cost_per_unit_original' => $financial_summary['unit_cost_per_unit'],
             'total_value_cogs' => $quantity_value,
             'total_value_original' => $unit_cost_value,
-            'additional_costs' => $activity['cost'],
-            'revenue' => $activity['revenue'],
-            'net_impact' => $activity['revenue'] - ($activity['cost'] + $quantity_value),
-            'action_date' => $activity['activity_date']
+            'additional_costs' => $cost,
+            'revenue' => $revenue,
+            'net_impact' => $revenue - ($cost + $quantity_value),
+            'action_date' => $activity['activity_date'] ?? date('Y-m-d H:i:s')
         ];
     }
 }
@@ -323,15 +364,32 @@ $financial_summary['disposed_unit_cost_value'] = $financial_summary['disposed_qu
 
 $financial_summary['net_impact'] = $financial_summary['total_revenue'] - ($financial_summary['total_cost'] + $financial_summary['total_value_lost']);
 
-// Get system settings
+// Get system settings with error handling
 $settings = [];
-$stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
-while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-    $settings[$row['setting_key']] = $row['setting_value'];
+try {
+    $stmt = $conn->query("SELECT setting_key, setting_value FROM settings");
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $settings[$row['setting_key']] = $row['setting_value'];
+    }
+} catch (PDOException $e) {
+    error_log("Settings query error: " . $e->getMessage());
+    // Use default settings if query fails
+    $settings = [
+        'company_name' => 'POS System',
+        'theme_color' => '#6366f1',
+        'sidebar_color' => '#1e293b'
+    ];
 }
 
-// Calculate days until expiry
-$days_until_expiry = (strtotime($expiry_item['expiry_date']) - time()) / (60 * 60 * 24);
+// Calculate days until expiry with validation
+$expiry_timestamp = strtotime($expiry_item['expiry_date']);
+if ($expiry_timestamp === false) {
+    error_log("Invalid expiry date format for item ID: $expiry_id");
+    $days_until_expiry = 0;
+} else {
+    $days_until_expiry = ($expiry_timestamp - time()) / (60 * 60 * 24);
+}
+
 $is_expired = $days_until_expiry < 0;
 $is_critical = $days_until_expiry <= 7 && !$is_expired;
 
@@ -1008,7 +1066,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                 <i class="bi bi-tools me-2"></i>Handle Expiry
                             </a>
                             <?php endif; ?>
-                            <?php if (hasPermission('manage_expiry_tracker', $permissions)): ?>
+                            <?php if (hasPermission('manage_expiry_tracker', $permissions) && $expiry_item['status'] === 'active'): ?>
                             <a href="edit_expiry_date.php?id=<?php echo $expiry_id; ?>" class="btn btn-light">
                                 <i class="bi bi-pencil me-2"></i>Edit
                             </a>
@@ -1105,28 +1163,24 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                     </div>
                                 </div>
 
-                                <div class="info-item">
-                                    <div class="info-label">Expiry Date</div>
-                                    <div class="info-value <?php echo $is_critical ? 'text-warning' : ($is_expired ? 'text-danger' : ''); ?>">
-                                        <i class="bi bi-calendar-x"></i>
-                                        <?php echo date('M d, Y', strtotime($expiry_item['expiry_date'])); ?>
-                                    </div>
-                                </div>
 
                                 <div class="info-item">
                                     <div class="info-label">
-                                        Cost of Goods (COGS)
-                                        <i class="bi bi-info-circle text-muted ms-1"
-                                           title="Cost of Goods Sold - The actual cost to purchase/acquire the product from suppliers"
-                                           style="cursor: help; font-size: 0.8rem;"></i>
+                                        <i class="bi bi-cash-coin me-1"></i>
+                                        Cost per Unit
                                     </div>
                                     <div class="info-value">
-                                        <i class="bi bi-cash"></i>
-                                        <strong>KES <?php echo number_format($expiry_item['product_cost_price'] ?: $expiry_item['unit_cost'], 2); ?></strong>
-                                        <small class="text-success d-block">Auto-fetched from product master data</small>
-                                        <?php if ($expiry_item['product_cost_price'] && $expiry_item['unit_cost'] != $expiry_item['product_cost_price']): ?>
-                                            <small class="text-muted d-block">Expiry Unit Cost: KES <?php echo number_format($expiry_item['unit_cost'], 2); ?></small>
-                                        <?php endif; ?>
+                                        <div class="d-flex align-items-center">
+                                            <div>
+                                                <div class="h5 mb-1 text-primary">
+                                                    KES <?php echo number_format($expiry_item['product_cost_price'] ?: $expiry_item['unit_cost'], 2); ?>
+                                                </div>
+                                                <small class="text-success">
+                                                    <i class="bi bi-check-circle me-1"></i>
+                                                    Auto-synced from product data
+                                                </small>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1139,10 +1193,26 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                 </div>
 
                                 <div class="info-item">
-                                    <div class="info-label">Manufacturing Date</div>
-                                    <div class="info-value">
-                                        <i class="bi bi-calendar"></i>
-                                        <?php echo $expiry_item['manufacturing_date'] ? date('M d, Y', strtotime($expiry_item['manufacturing_date'])) : 'N/A'; ?>
+                                    <div class="info-label">Expiry Date</div>
+                                    <div class="info-value <?php echo $is_critical ? 'text-warning' : ($is_expired ? 'text-danger' : ''); ?>">
+                                        <i class="bi bi-calendar-x"></i>
+                                        <?php echo date('M d, Y', strtotime($expiry_item['expiry_date'])); ?>
+                                        <?php if ($is_expired): ?>
+                                            <small class="text-danger d-block mt-1">
+                                                <i class="bi bi-exclamation-triangle me-1"></i>
+                                                Expired <?php echo abs(round($days_until_expiry)); ?> days ago
+                                            </small>
+                                        <?php elseif ($is_critical): ?>
+                                            <small class="text-warning d-block mt-1">
+                                                <i class="bi bi-exclamation-triangle me-1"></i>
+                                                Expires in <?php echo round($days_until_expiry); ?> days
+                                            </small>
+                                        <?php else: ?>
+                                            <small class="text-success d-block mt-1">
+                                                <i class="bi bi-check-circle me-1"></i>
+                                                Expires in <?php echo round($days_until_expiry); ?> days
+                                            </small>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                             </div>
@@ -1165,7 +1235,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                     <div class="financial-value text-info">
                                         KES <?php echo number_format($financial_summary['total_cogs_value'], 2); ?>
                                     </div>
-                                    <div class="financial-label">Total COGS Value</div>
+                                    <div class="financial-label">Total Product Value</div>
                                     <small class="text-muted d-block mt-1">
                                         <?php echo number_format($financial_summary['total_original_quantity']); ?> units × KES <?php echo number_format($financial_summary['cogs_per_unit'], 2); ?>
                                     </small>
@@ -1230,7 +1300,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                             <tr>
                                                 <th>Action</th>
                                                 <th>Quantity</th>
-                                                <th>COGS Cost</th>
+                                                <th>Product Cost</th>
                                                 <th>Additional Cost</th>
                                                 <th>Revenue</th>
                                                 <th>Net Impact</th>
@@ -1290,36 +1360,22 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                 <!-- Cost Comparison -->
                                 <div class="col-12">
                                     <div class="p-3 border rounded">
-                                        <h6 class="mb-2">Cost Comparison</h6>
+                                        <h6 class="mb-3">
+                                            <i class="bi bi-calculator me-2"></i>
+                                            Cost Breakdown
+                                        </h6>
                                         <div class="row text-center">
-                                            <div class="col-6">
-                                                <div class="border-end">
-                                                    <div class="h4 text-primary mb-1">
-                                                        KES <?php echo number_format($financial_summary['cogs_per_unit'], 2); ?>
-                                                    </div>
-                                                    <small class="text-muted">COGS per Unit</small>
-                                                    <br><small class="text-success">Auto-fetched</small>
+                                            <div class="col-12">
+                                                <div class="h4 text-primary mb-1">
+                                                    KES <?php echo number_format($financial_summary['cogs_per_unit'], 2); ?>
                                                 </div>
-                                            </div>
-                                            <div class="col-6">
-                                                <div class="h4 text-secondary mb-1">
-                                                    KES <?php echo number_format($financial_summary['unit_cost_per_unit'], 2); ?>
-                                                </div>
-                                                <small class="text-muted">Expiry Unit Cost</small>
-                                                <br><small class="text-warning">Manual Entry</small>
+                                                <small class="text-muted">Product Cost per Unit</small>
+                                                <br><small class="text-success">
+                                                    <i class="bi bi-check-circle me-1"></i>
+                                                    Auto-synced from product master data
+                                                </small>
                                             </div>
                                         </div>
-                                        <?php
-                                        $cost_difference = $financial_summary['unit_cost_per_unit'] - $financial_summary['cogs_per_unit'];
-                                        if ($cost_difference != 0):
-                                        ?>
-                                        <div class="mt-2 text-center">
-                                            <small class="text-<?php echo $cost_difference > 0 ? 'warning' : 'info'; ?>">
-                                                Difference: KES <?php echo number_format(abs($cost_difference), 2); ?>
-                                                <?php echo $cost_difference > 0 ? 'higher' : 'lower'; ?> than COGS
-                                            </small>
-                                        </div>
-                                        <?php endif; ?>
                                     </div>
                                 </div>
 
@@ -1354,7 +1410,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                         <h6 class="mb-2">Financial Efficiency</h6>
                                         <div class="row">
                                             <div class="col-6">
-                                                <small class="text-muted d-block">COGS Recovery Rate</small>
+                                                <small class="text-muted d-block">Product Recovery Rate</small>
                                                 <div class="progress mb-2" style="height: 8px;">
                                                     <?php
                                                     $recovery_rate = $financial_summary['total_original_quantity'] > 0
@@ -1470,7 +1526,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                                             <strong>Revenue:</strong> <?php echo number_format($activity['revenue'], 2); ?><br>
                                                         <?php endif; ?>
                                                         <strong>Value Impact:</strong> KES <?php echo number_format($activity['quantity_affected'] * ($expiry_item['product_cost_price'] ?: $expiry_item['unit_cost']), 2); ?>
-                                                        <small class="text-muted">(at COGS)</small><br>
+                                                        <small class="text-muted">(at product cost)</small><br>
                                                         <?php
                                                         $cogs_per_unit = $expiry_item['product_cost_price'] ?: $expiry_item['unit_cost'];
                                                         $unit_cost_per_unit = $expiry_item['unit_cost'];
@@ -1686,7 +1742,7 @@ $page_title = "View Expiry Item - " . htmlspecialchars($expiry_item['product_nam
                                 </a>
                                 <?php endif; ?>
 
-                                <?php if (hasPermission('manage_expiry_tracker', $permissions)): ?>
+                                <?php if (hasPermission('manage_expiry_tracker', $permissions) && $expiry_item['status'] === 'active'): ?>
                                 <a href="edit_expiry_date.php?id=<?php echo $expiry_id; ?>" class="action-btn action-btn-secondary">
                                     <i class="bi bi-pencil"></i>
                                     Edit Details

@@ -14,6 +14,13 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Check POS authentication
+if (!isPOSAuthenticated()) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'error' => 'POS authentication required']);
+    exit();
+}
+
 // Set content type to JSON
 header('Content-Type: application/json');
 

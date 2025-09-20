@@ -137,20 +137,22 @@ function generatePDFLabels($products, $label_settings, $settings) {
     // Create new PDF instance
     $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false);
     
-    // Calculate total labels
+    // Calculate total labels for selected products only
     $total_labels = 0;
+    $selected_products_count = 0;
     foreach ($products as $product) {
         $product_id = $product['id'];
-        $quantity = isset($custom_quantities[$product_id])
-            ? max(1, (int)$custom_quantities[$product_id])
-            : max(1, (int)($product['quantity'] ?? 0));
-        $total_labels += $quantity;
+        if (isset($custom_quantities[$product_id])) {
+            $quantity = max(1, (int)$custom_quantities[$product_id]);
+            $total_labels += $quantity;
+            $selected_products_count++;
+        }
     }
 
     // Set document information
     $pdf->SetCreator($settings['company_name'] ?? 'POS System');
     $pdf->SetAuthor($settings['company_name'] ?? 'POS System');
-    $pdf->SetTitle('Shelf Labels - ' . $total_labels . ' Labels (' . count($products) . ' Products)');
+    $pdf->SetTitle('Shelf Labels - ' . $total_labels . ' Labels (' . $selected_products_count . ' Products)');
     
     // Set margins
     $pdf->SetMargins(10, 10, 10);
@@ -166,14 +168,14 @@ function generatePDFLabels($products, $label_settings, $settings) {
     // Set font
     $pdf->SetFont('helvetica', '', 10);
     
-    // Calculate label dimensions based on size
+    // Calculate label dimensions based on size - minimum height
     $label_sizes = [
-        'small' => ['width' => 50, 'height' => 20],
-        'standard' => ['width' => 75, 'height' => 35],
-        'large' => ['width' => 100, 'height' => 50]
+        'small' => ['width' => 40, 'height' => 10],
+        'standard' => ['width' => 60, 'height' => 15],
+        'large' => ['width' => 80, 'height' => 20]
     ];
     
-    $size = $label_settings['size'] ?? 'standard';
+    $size = $label_settings['size'] ?? 'small'; // Default to minimum size
     $label_width = $label_sizes[$size]['width'];
     $label_height = $label_sizes[$size]['height'];
     
@@ -189,13 +191,11 @@ function generatePDFLabels($products, $label_settings, $settings) {
     
     foreach ($products as $product) {
         $product_id = $product['id'];
-        $quantity = (int)($product['quantity'] ?? 0);
-        $print_quantity = isset($custom_quantities[$product_id])
-            ? max(1, (int)$custom_quantities[$product_id])
-            : max(1, $quantity); // At least 1 label per product
+        if (isset($custom_quantities[$product_id])) {
+            $print_quantity = max(1, (int)$custom_quantities[$product_id]);
 
-        // Print multiple labels for each product based on custom quantity
-        for ($label_index = 0; $label_index < $print_quantity; $label_index++) {
+            // Print multiple labels for each product based on custom quantity
+            for ($label_index = 0; $label_index < $print_quantity; $label_index++) {
             // Check if we need a new page
             if ($current_row >= $labels_per_col) {
                 $pdf->AddPage();
@@ -281,6 +281,7 @@ function generatePDFLabels($products, $label_settings, $settings) {
                 $current_col = 0;
                 $current_row++;
             }
+            }
         }
     }
     
@@ -318,38 +319,47 @@ function generatePDFLabels($products, $label_settings, $settings) {
 
         .labels-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin: 2rem 0;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 0.5rem;
+            margin: 1rem 0;
         }
 
         .print-label {
-            border: 2px solid #000;
-            border-radius: 8px;
-            padding: 0.5rem;
+            border: 1px solid #000;
+            border-radius: 4px;
+            padding: 0.25rem;
             background: white;
-            min-height: 90px;
+            min-height: 45px;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
             page-break-inside: avoid;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.25rem;
         }
 
-        .print-label.small { min-height: 70px; }
-        .print-label.standard { min-height: 90px; }
-        .print-label.large { min-height: 120px; }
+        .print-label.small { 
+            min-height: 40px; 
+            width: 120px;
+        }
+        .print-label.standard { 
+            min-height: 55px; 
+            width: 140px;
+        }
+        .print-label.large { 
+            min-height: 70px; 
+            width: 160px;
+        }
 
         .label-header {
             text-align: center;
             border-bottom: 1px solid #000;
-            padding-bottom: 0.15rem;
-            margin-bottom: 0.25rem;
+            padding-bottom: 0.1rem;
+            margin-bottom: 0.15rem;
         }
 
         .label-header h6 {
             margin: 0;
-            font-size: 0.6rem;
+            font-size: 0.45rem;
             font-weight: 600;
         }
 
@@ -357,19 +367,19 @@ function generatePDFLabels($products, $label_settings, $settings) {
             flex: 1;
             display: flex;
             flex-direction: column;
-            gap: 0.15rem;
+            gap: 0.1rem;
         }
 
         .label-product-name {
             font-weight: 800;
-            font-size: 0.75rem;
+            font-size: 0.55rem;
             line-height: 1.1;
             text-align: center;
             margin-bottom: 0.1rem;
         }
 
         .label-details {
-            font-size: 0.65rem;
+            font-size: 0.45rem;
             text-align: center;
             line-height: 1.1;
             font-weight: 700;
@@ -377,56 +387,57 @@ function generatePDFLabels($products, $label_settings, $settings) {
 
         .label-price {
             font-weight: 900;
-            font-size: 1rem;
+            font-size: 0.7rem;
             color: var(--primary-color);
             text-align: center;
-            margin: 0.25rem 0;
+            margin: 0.15rem 0;
         }
 
         .label-footer {
             text-align: center;
-            font-size: 0.45rem;
+            font-size: 0.4rem;
             border-top: 1px solid #000;
-            padding-top: 0.15rem;
-            margin-top: 0.25rem;
+            padding-top: 0.1rem;
+            margin-top: 0.15rem;
         }
 
         .barcode-section {
             text-align: center;
-            margin: 0.25rem 0;
+            margin: 0.15rem 0;
             padding: 0.15rem 0;
         }
 
         .barcode-image {
             max-width: 100%;
-            height: 20px;
+            height: 30px;
+            width: 160px;
             margin-bottom: 0.1rem;
         }
 
         .barcode-text {
-            font-size: 0.5rem;
+            font-size: 0.45rem;
             font-weight: bold;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.4px;
         }
 
         .price-container {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 0.15rem;
+            gap: 0.1rem;
         }
 
         .original-price {
             text-decoration: line-through;
             color: #94a3b8;
-            font-size: 0.7rem;
+            font-size: 0.5rem;
             font-weight: normal;
         }
 
         .sale-price {
             color: #dc2626;
             font-weight: 900;
-            font-size: 0.9rem;
+            font-size: 0.65rem;
         }
 
         .print-options {
@@ -452,19 +463,97 @@ function generatePDFLabels($products, $label_settings, $settings) {
         }
 
         @media print {
-            .no-print {
+            /* Hide everything except labels */
+            .no-print,
+            .sidebar,
+            .header,
+            .main-content > header,
+            .print-options,
+            .print-section h5,
+            .print-section p,
+            .print-section .row,
+            .print-section .col-md-6,
+            .print-section ul,
+            .print-section h6,
+            nav,
+            .navbar,
+            .btn,
+            .alert,
+            .breadcrumb,
+            .card-header,
+            .card-footer {
                 display: none !important;
+            }
+            
+            /* Show only print-only content */
+            .print-only {
+                display: block !important;
+            }
+            
+            /* Show only the labels grid - optimized for compact but readable printing */
+            .labels-grid.print-only {
+                display: grid !important;
+                grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)) !important;
+                gap: 0.25rem !important;
+                margin: 0 !important;
+                padding: 0 !important;
             }
             
             .print-label {
                 border: 1px solid #000 !important;
-                margin: 2px !important;
+                margin: 1px !important;
                 page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                padding: 0.15rem !important;
             }
             
+            /* Reset body and main content for print */
             body {
                 margin: 0 !important;
                 padding: 0 !important;
+                background: white !important;
+            }
+            
+            .main-content {
+                margin: 0 !important;
+                padding: 0 !important;
+                background: white !important;
+            }
+            
+            .content {
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            
+            .print-section {
+                margin: 0 !important;
+                padding: 0 !important;
+                box-shadow: none !important;
+                border: none !important;
+                background: white !important;
+            }
+            
+            /* Ensure labels are properly sized for print - balanced compact size */
+            .print-label.small { 
+                min-height: 35px !important;
+                width: 120px !important;
+                font-size: 0.4rem !important;
+            }
+            .print-label.standard { 
+                min-height: 45px !important;
+                width: 140px !important;
+                font-size: 0.45rem !important;
+            }
+            .print-label.large { 
+                min-height: 55px !important;
+                width: 160px !important;
+                font-size: 0.5rem !important;
+            }
+            
+            /* Ensure barcodes are visible and scannable */
+            .barcode-image {
+                width: 150px !important;
+                height: 30px !important;
             }
         }
     </style>
@@ -521,27 +610,52 @@ function generatePDFLabels($products, $label_settings, $settings) {
 
             <!-- Labels Display -->
             <?php
-            // Calculate total labels to be printed
+            // Calculate total labels to be printed using custom quantities
             $total_labels = 0;
+            $selected_products_count = 0;
             foreach ($products as $product) {
-                $quantity = (int)($product['quantity'] ?? 0);
-                $total_labels += max(1, $quantity); // At least 1 label per product
+                $product_id = $product['id'];
+                if (isset($custom_quantities[$product_id])) {
+                    $quantity = max(1, (int)$custom_quantities[$product_id]);
+                    $total_labels += $quantity;
+                    $selected_products_count++;
+                }
             }
             ?>
             <div class="print-section">
-                <h5><i class="bi bi-tags me-2"></i>Generated Labels (<?php echo $total_labels; ?> total labels for <?php echo count($products); ?> products)</h5>
-                <p class="text-muted">Each product will be printed according to its quantity. Labels include product information, pricing, and company details.</p>
+                <h5 class="no-print"><i class="bi bi-tags me-2"></i>Generated Labels (<?php echo $total_labels; ?> total labels for <?php echo $selected_products_count; ?> selected products)</h5>
+                <p class="text-muted no-print">Printing only the selected products with your specified quantities. Labels include product information, pricing, and company details.</p>
+                
+                <!-- Debug info for selected products and quantities -->
+                <div class="no-print">
+                    <h6><i class="bi bi-list-check me-2"></i>Selected Products & Quantities:</h6>
+                    <div class="row">
+                        <?php foreach ($products as $product): 
+                            $product_id = $product['id'];
+                            if (isset($custom_quantities[$product_id])) {
+                                $print_quantity = max(1, (int)$custom_quantities[$product_id]);
+                        ?>
+                        <div class="col-md-4 mb-2">
+                            <div class="card card-body py-2">
+                                <strong><?php echo htmlspecialchars($product['name']); ?></strong>
+                                <small class="text-muted">SKU: <?php echo htmlspecialchars($product['sku'] ?? 'N/A'); ?></small>
+                                <span class="badge bg-primary"><?php echo $print_quantity; ?> labels</span>
+                            </div>
+                        </div>
+                        <?php 
+                            }
+                        endforeach; ?>
+                    </div>
+                </div>
 
-                <div class="labels-grid">
+                <div class="labels-grid print-only">
                     <?php foreach ($products as $product):
                         $product_id = $product['id'];
-                        $quantity = (int)($product['quantity'] ?? 0);
-                        $print_quantity = isset($custom_quantities[$product_id])
-                            ? max(1, (int)$custom_quantities[$product_id])
-                            : max(1, $quantity); // At least 1 label per product
+                        if (isset($custom_quantities[$product_id])) {
+                            $print_quantity = max(1, (int)$custom_quantities[$product_id]);
 
-                        for ($i = 0; $i < $print_quantity; $i++): ?>
-                    <div class="print-label <?php echo $label_settings['size'] ?? 'standard'; ?>">
+                            for ($i = 0; $i < $print_quantity; $i++): ?>
+                    <div class="print-label <?php echo $label_settings['size'] ?? 'small'; ?>">
                         <div class="label-header">
                             <h6><?php echo htmlspecialchars($settings['company_name'] ?? 'Company Name'); ?></h6>
                         </div>
@@ -559,7 +673,7 @@ function generatePDFLabels($products, $label_settings, $settings) {
                             <!-- Barcode Section -->
                             <?php if (!empty($product['sku'])): ?>
                             <div class="barcode-section">
-                                <img src="https://barcode.tec-it.com/barcode.ashx?data=<?php echo urlencode($product['sku']); ?>&code=Code128&dpi=96&dataseparator=" alt="Barcode" class="barcode-image">
+                                <img src="https://barcode.tec-it.com/barcode.ashx?data=<?php echo urlencode($product['sku']); ?>&code=Code128&dpi=150&dataseparator=" alt="Barcode" class="barcode-image">
                                 <div class="barcode-text"><small><?php echo htmlspecialchars($product['sku']); ?></small></div>
                             </div>
                             <?php endif; ?>
@@ -586,8 +700,10 @@ function generatePDFLabels($products, $label_settings, $settings) {
                             Generated on <?php echo date('M d, Y'); ?>
                         </div>
                     </div>
-                    <?php endfor; ?>
-                    <?php endforeach; ?>
+                    <?php 
+                            endfor;
+                        }
+                    endforeach; ?>
                 </div>
             </div>
 
@@ -605,11 +721,11 @@ function generatePDFLabels($products, $label_settings, $settings) {
                         </ul>
                     </div>
                     <div class="col-md-6">
-                        <h6>Label Sizes:</h6>
+                        <h6>Label Sizes (Optimized Spacing):</h6>
                         <ul>
-                            <li><strong>Small:</strong> 2" x 1" - Good for price tags</li>
-                            <li><strong>Standard:</strong> 3" x 2" - Most common size</li>
-                            <li><strong>Large:</strong> 4" x 3" - Detailed information</li>
+                            <li><strong>Small:</strong> 1.4" x 0.9" - Compact with good readability</li>
+                            <li><strong>Standard:</strong> 1.7" x 1.1" - Balanced size and spacing</li>
+                            <li><strong>Large:</strong> 2.1" x 1.4" - Comfortable reading with details</li>
                         </ul>
                     </div>
                 </div>

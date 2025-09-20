@@ -42,6 +42,62 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
+// Function to generate order number
+function generateOrderNumber($settings) {
+    $autoGenerate = isset($settings['auto_generate_order_number']) && $settings['auto_generate_order_number'] == '1';
+
+    if (!$autoGenerate) {
+        return 'ORD-' . date('YmdHis') . '-' . str_pad(mt_rand(1, 999), 3, '0', STR_PAD_LEFT);
+    }
+
+    $prefix = $settings['order_number_prefix'] ?? 'ORD';
+    $length = intval($settings['order_number_length'] ?? 6);
+    $separator = $settings['order_number_separator'] ?? '-';
+    $format = $settings['order_number_format'] ?? 'prefix-date-number';
+
+    $sequentialNumber = getNextOrderNumber($length);
+    $currentDate = date('Ymd');
+
+    switch ($format) {
+        case 'prefix-date-number':
+            return $prefix . $separator . $currentDate . $separator . $sequentialNumber;
+        case 'prefix-number':
+            return $prefix . $separator . $sequentialNumber;
+        case 'date-number':
+            return $currentDate . $separator . $sequentialNumber;
+        case 'number-only':
+            return $sequentialNumber;
+        default:
+            return $prefix . $separator . $currentDate . $separator . $sequentialNumber;
+    }
+}
+
+function getNextOrderNumber($length) {
+    global $conn;
+
+    try {
+        // Get the highest order number from all orders
+        $stmt = $conn->prepare("
+            SELECT order_number
+            FROM inventory_orders
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+        $stmt->execute();
+        $lastOrder = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($lastOrder) {
+            $lastNumber = intval(preg_replace('/[^0-9]/', '', $lastOrder['order_number']));
+            return str_pad($lastNumber + 1, $length, '0', STR_PAD_LEFT);
+        } else {
+            return str_pad(1, $length, '0', STR_PAD_LEFT);
+        }
+    } catch (PDOException $e) {
+        error_log("Error getting next order number: " . $e->getMessage());
+        return str_pad(1, $length, '0', STR_PAD_LEFT);
+    }
+}
+
 // Get products with low stock and their suppliers
 $stmt = $conn->prepare("
     SELECT p.*, s.name as supplier_name, s.pickup_available, s.pickup_address, s.pickup_hours,
@@ -109,11 +165,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Insert order header
             $stmt = $conn->prepare("
-                INSERT INTO orders (
-                    order_number, supplier_id, user_id, order_type, status,
-                    special_instructions, created_at, updated_at
+                INSERT INTO inventory_orders (
+                    order_number, supplier_id, user_id, order_date, status,
+                    notes, created_at, updated_at
                 ) VALUES (
-                    :order_number, :supplier_id, :user_id, :order_type, 'pending',
+                    :order_number, :supplier_id, :user_id, CURDATE(), 'pending',
                     :special_instructions, NOW(), NOW()
                 )
             ");
@@ -121,7 +177,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bindParam(':order_number', $order_number);
             $stmt->bindParam(':supplier_id', $supplier_id);
             $stmt->bindParam(':user_id', $user_id);
-            $stmt->bindParam(':order_type', $order_type);
             $stmt->bindParam(':special_instructions', $special_instructions);
             $stmt->execute();
 
@@ -129,19 +184,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Insert order items
             $stmt = $conn->prepare("
-                INSERT INTO order_items (
-                    order_id, product_id, quantity_ordered, unit_price, created_at
+                INSERT INTO inventory_order_items (
+                    order_id, product_id, quantity, cost_price, total_amount, created_at
                 ) VALUES (
-                    :order_id, :product_id, :quantity, :unit_price, NOW()
+                    :order_id, :product_id, :quantity, :unit_price, :total_amount, NOW()
                 )
             ");
 
             foreach ($order_items as $item) {
                 if (!empty($item['product_id']) && !empty($item['quantity']) && $item['quantity'] > 0) {
+                    $quantity = intval($item['quantity']);
+                    $unit_price = floatval($item['unit_price'] ?? 0);
+                    $total_amount = $quantity * $unit_price;
+                    
                     $stmt->bindParam(':order_id', $order_id);
                     $stmt->bindParam(':product_id', $item['product_id']);
-                    $stmt->bindParam(':quantity', $item['quantity']);
-                    $stmt->bindParam(':unit_price', $item['unit_price'] ?? 0);
+                    $stmt->bindParam(':quantity', $quantity);
+                    $stmt->bindParam(':unit_price', $unit_price);
+                    $stmt->bindParam(':total_amount', $total_amount);
                     $stmt->execute();
                 }
             }
@@ -156,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($order_type === 'pickup' && $supplier['pickup_available']) {
                 $success .= "Ready for in-store pickup at: " . $supplier['pickup_address'];
             } else {
-                $success .= "Delivery order placed with supplier.";
+                $success .= "Order placed with supplier for delivery.";
             }
 
         } catch (PDOException $e) {
@@ -244,6 +304,80 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             border: 1px solid #0ea5e9;
             border-radius: 8px;
             padding: 1rem;
+        }
+
+        .search-results {
+            position: relative;
+            z-index: 1000;
+        }
+
+        .search-results .list-group {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+
+        .search-results .list-group-item {
+            cursor: pointer;
+            border: none;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .search-results .list-group-item:hover {
+            background-color: #f8f9fa;
+        }
+
+        .search-results .list-group-item:last-child {
+            border-bottom: none;
+        }
+
+        .product-search-section {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .low-stock-item {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .low-stock-item:hover {
+            background: #fff8e1;
+        }
+
+        .search-results-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .search-result-item {
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .search-result-item:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .product-name {
+            color: #212529;
+            font-weight: 600;
+        }
+
+        .search-results .list-group-item {
+            border-left: 3px solid transparent;
+        }
+
+        .search-results .list-group-item:hover {
+            border-left-color: #0d6efd;
         }
     </style>
 </head>
@@ -343,32 +477,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </div>
 
-                <!-- Order Items -->
-                <div class="order-card">
+                <!-- Order Items - Only show after supplier selection -->
+                <div class="order-card" id="orderItemsSection" style="display: none;">
                     <h4 class="mb-3">
                         <i class="bi bi-cart-plus me-2"></i>Order Items
                     </h4>
 
+                    <!-- Product Search and Selection -->
+                    <div class="product-search-section mb-4">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="productSearchInput" 
+                                           placeholder="Search products by name, SKU, or barcode..." 
+                                           onkeyup="searchProducts()" autocomplete="off">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="clearSearch()">
+                                        <i class="bi bi-x-circle"></i>
+                                    </button>
+                                </div>
+                                <div id="productSearchResults" class="search-results mt-2" style="display: none;"></div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="d-flex gap-2">
+                                    <button type="button" class="btn btn-outline-success" onclick="toggleBarcodeScanner()">
+                                        <i class="bi bi-upc-scan me-2"></i>Scan Barcode
+                                    </button>
+                                    <button type="button" class="btn btn-outline-info" onclick="showLowStockProducts()">
+                                        <i class="bi bi-exclamation-triangle me-2"></i>Low Stock
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Barcode Scanner Input -->
+                        <div id="barcodeScanner" class="card mt-3" style="display: none;">
+                            <div class="card-body">
+                                <h6 class="card-title">
+                                    <i class="bi bi-upc-scan me-2"></i>Barcode Scanner
+                                </h6>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="barcodeInput" 
+                                           placeholder="Scan or enter barcode..." 
+                                           onkeypress="handleBarcodeInput(event)">
+                                    <button class="btn btn-success" type="button" onclick="scanBarcode()">
+                                        <i class="bi bi-search"></i> Search
+                                    </button>
+                                </div>
+                                <small class="text-muted">Press Enter after scanning or entering barcode</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Selected Order Items -->
                     <div id="orderItems">
-                        <!-- Low stock products will be added here -->
-                        <?php if (!empty($low_stock_products)): ?>
+                        <!-- Order items will be added here -->
+                    </div>
+
+                    <!-- Low Stock Products (Hidden by default) -->
+                    <div id="lowStockProducts" style="display: none;">
                             <div class="alert alert-warning">
                                 <strong>Recommended items (Low Stock):</strong>
                             </div>
+                        <?php if (!empty($low_stock_products)): ?>
                             <?php foreach ($low_stock_products as $index => $product): ?>
-                                <div class="product-row">
-                                    <input type="hidden" name="order_items[<?php echo $index; ?>][product_id]" value="<?php echo $product['id']; ?>">
-                                    <input type="hidden" name="order_items[<?php echo $index; ?>][unit_price]" value="<?php echo $product['cost_price']; ?>">
-
+                                <div class="product-row low-stock-item" data-product-id="<?php echo $product['id']; ?>">
                                     <div class="product-info">
                                         <strong><?php echo htmlspecialchars($product['name']); ?></strong>
-                                        <br><small class="text-muted">SKU: <?php echo htmlspecialchars($product['sku']); ?> | Current Stock: <?php echo $product['quantity']; ?></small>
+                                        <br><small class="text-muted">
+                                            <?php if (!empty($product['sku'])): ?>
+                                                <span class="badge bg-primary me-1">SKU: <?php echo htmlspecialchars($product['sku']); ?></span>
+                                            <?php endif; ?>
+                                            <?php if (!empty($product['barcode'])): ?>
+                                                <span class="badge bg-info me-1">Barcode: <?php echo htmlspecialchars($product['barcode']); ?></span>
+                                            <?php endif; ?>
+                                            <?php if (!empty($product['product_number'])): ?>
+                                                <span class="badge bg-secondary me-1">#<?php echo htmlspecialchars($product['product_number']); ?></span>
+                                            <?php endif; ?>
+                                            <span class="text-muted">| Stock: <?php echo $product['quantity']; ?></span>
+                                        </small>
                                     </div>
 
                                     <div class="quantity-controls">
                                         <label class="form-label">Quantity</label>
-                                        <input type="number" class="form-control quantity-input"
-                                               name="order_items[<?php echo $index; ?>][quantity]" min="1" max="1000"
+                                        <input type="number" class="form-control quantity-input" min="1" max="1000"
                                                placeholder="Qty" value="">
                                     </div>
 
@@ -377,22 +568,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                         <div class="input-group">
                                             <span class="input-group-text"><?php echo getCurrencySymbol($settings); ?></span>
                                             <input type="number" class="form-control" step="0.01" min="0"
-                                                   name="order_items[<?php echo $index; ?>][unit_price]"
                                                    value="<?php echo number_format($product['cost_price'], 2); ?>" readonly>
                                         </div>
                                     </div>
 
-                                    <button type="button" class="btn btn-outline-danger" onclick="removeItem(this)">
-                                        <i class="bi bi-trash"></i>
+                                    <button type="button" class="btn btn-success" onclick="addLowStockProduct(this)">
+                                        <i class="bi bi-plus-circle"></i> Add
                                     </button>
                                 </div>
                             <?php endforeach; ?>
                         <?php endif; ?>
                     </div>
-
-                    <button type="button" class="btn btn-outline-primary" onclick="addProduct()">
-                        <i class="bi bi-plus-circle me-2"></i>Add Another Product
-                    </button>
                 </div>
 
                 <!-- Special Instructions -->
@@ -443,6 +629,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const pickupInfo = document.getElementById('pickupInfo');
             const pickupDetails = document.getElementById('pickupDetails');
             const orderPickup = document.getElementById('order_pickup');
+            const orderItemsSection = document.getElementById('orderItemsSection');
 
             if (selectedOption.value && selectedOption.dataset.pickup === 'true') {
                 pickupDetails.innerHTML = `
@@ -458,31 +645,199 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 orderPickup.disabled = true;
                 document.getElementById('order_delivery').checked = true;
             }
+
+            // Show order items section when supplier is selected
+            if (selectedOption.value) {
+                orderItemsSection.style.display = 'block';
+                // Load products for the selected supplier
+                loadSupplierProducts(selectedOption.value);
+            } else {
+                orderItemsSection.style.display = 'none';
+            }
         }
 
-        function addProduct() {
-            const container = document.getElementById('orderItems');
+        // Load products for selected supplier
+        function loadSupplierProducts(supplierId) {
+            // This will be used to filter products by supplier
+            window.currentSupplierId = supplierId;
+        }
 
+        // Product search functionality
+        let searchTimeout;
+        let currentSearchRequest = null;
+        
+        function searchProducts() {
+            clearTimeout(searchTimeout);
+            const searchTerm = document.getElementById('productSearchInput').value.trim();
+            const resultsDiv = document.getElementById('productSearchResults');
+            
+            if (searchTerm.length < 2) {
+                resultsDiv.style.display = 'none';
+                return;
+            }
+
+            // Cancel previous request if still pending
+            if (currentSearchRequest) {
+                currentSearchRequest.abort();
+            }
+
+            searchTimeout = setTimeout(() => {
+                const supplierId = document.getElementById('supplier_id').value;
+                if (!supplierId) {
+                    resultsDiv.innerHTML = '<div class="alert alert-warning">Please select a supplier first</div>';
+                    resultsDiv.style.display = 'block';
+                    return;
+                }
+
+                // Show loading state
+                resultsDiv.innerHTML = '<div class="alert alert-info"><i class="bi bi-hourglass-split me-2"></i>Searching products...</div>';
+                resultsDiv.style.display = 'block';
+
+                // Create abort controller for request cancellation
+                const controller = new AbortController();
+                currentSearchRequest = controller;
+
+                fetch(`../api/search_products.php?search=${encodeURIComponent(searchTerm)}&supplier_id=${supplierId}`, {
+                    signal: controller.signal
+                })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.success && data.suggestions.length > 0) {
+                            displaySearchResults(data.suggestions);
+                        } else {
+                            resultsDiv.innerHTML = '<div class="alert alert-info"><i class="bi bi-search me-2"></i>No products found</div>';
+                            resultsDiv.style.display = 'block';
+                        }
+                    })
+                    .catch(error => {
+                        if (error.name !== 'AbortError') {
+                            console.error('Search error:', error);
+                            resultsDiv.innerHTML = '<div class="alert alert-danger"><i class="bi bi-exclamation-triangle me-2"></i>Error searching products</div>';
+                            resultsDiv.style.display = 'block';
+                        }
+                    })
+                    .finally(() => {
+                        currentSearchRequest = null;
+                    });
+            }, 200); // Reduced timeout for faster response
+        }
+
+        function displaySearchResults(products) {
+            const resultsDiv = document.getElementById('productSearchResults');
+            let html = '<div class="list-group search-results-list">';
+            
+            products.forEach((product, index) => {
+                const identifiers = [];
+                if (product.sku) identifiers.push(`SKU: ${product.sku}`);
+                if (product.barcode) identifiers.push(`Barcode: ${product.barcode}`);
+                
+                html += `
+                    <div class="list-group-item list-group-item-action search-result-item" 
+                         data-index="${index}"
+                         onclick="addProductFromSearch(${product.id}, '${product.name.replace(/'/g, "\\'")}', '${product.sku || ''}', '${product.barcode || ''}', ${product.cost_price}, ${product.quantity})"
+                         onmouseover="highlightSearchResult(this)"
+                         onmouseout="unhighlightSearchResult(this)">
+                        <div class="d-flex w-100 justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1 product-name">${product.name}</h6>
+                                <div class="mb-1">
+                                    ${identifiers.map(id => `<span class="badge bg-primary me-1">${id}</span>`).join('')}
+                                    <span class="badge bg-${product.stock_status === 'low' ? 'warning' : 'success'}">Stock: ${product.quantity}</span>
+                                </div>
+                                <small class="text-muted">
+                                    ${product.category_name || ''} ${product.supplier_name ? '| ' + product.supplier_name : ''}
+                                </small>
+                            </div>
+                            <div class="text-end">
+                                <div class="fw-bold text-success">$${product.cost_price}</div>
+                                <button class="btn btn-sm btn-outline-success" onclick="event.stopPropagation(); addProductFromSearch(${product.id}, '${product.name.replace(/'/g, "\\'")}', '${product.sku || ''}', '${product.barcode || ''}', ${product.cost_price}, ${product.quantity})">
+                                    <i class="bi bi-plus-circle"></i> Add
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            resultsDiv.innerHTML = html;
+            resultsDiv.style.display = 'block';
+        }
+
+        function highlightSearchResult(element) {
+            element.style.backgroundColor = '#f8f9fa';
+            element.style.borderColor = '#0d6efd';
+        }
+
+        function unhighlightSearchResult(element) {
+            element.style.backgroundColor = '';
+            element.style.borderColor = '';
+        }
+
+        function clearSearch() {
+            document.getElementById('productSearchInput').value = '';
+            document.getElementById('productSearchResults').style.display = 'none';
+        }
+
+        function addProductFromSearch(productId, productName, sku, barcode, costPrice, quantity) {
+            // Check if product is already in the order
+            const existingItems = document.querySelectorAll('input[name*="[product_id]"]');
+            for (let item of existingItems) {
+                if (item.value == productId) {
+                    alert('Product is already in the order');
+                    return;
+                }
+            }
+
+            addProductToOrder(productId, productName, sku, barcode, costPrice, quantity);
+            clearSearch();
+        }
+
+        function addLowStockProduct(button) {
+            const productRow = button.closest('.low-stock-item');
+            const productId = productRow.dataset.productId;
+            const productName = productRow.querySelector('strong').textContent;
+            const sku = productRow.querySelector('.badge.bg-primary')?.textContent.replace('SKU: ', '') || '';
+            const barcode = productRow.querySelector('.badge.bg-info')?.textContent.replace('Barcode: ', '') || '';
+            const costPrice = productRow.querySelector('input[type="number"]').value;
+            const quantity = productRow.querySelector('.quantity-input').value || 1;
+
+            if (!quantity || quantity < 1) {
+                alert('Please enter a valid quantity');
+                return;
+            }
+
+            addProductToOrder(productId, productName, sku, barcode, costPrice, quantity);
+        }
+
+        function addProductToOrder(productId, productName, sku, barcode, costPrice, currentStock) {
+            const container = document.getElementById('orderItems');
             const productRow = document.createElement('div');
             productRow.className = 'product-row';
+            
+            const identifiers = [];
+            if (sku) identifiers.push(`SKU: ${sku}`);
+            if (barcode) identifiers.push(`Barcode: ${barcode}`);
+            
             productRow.innerHTML = `
                 <div class="product-info">
-                    <select class="form-select" name="order_items[${itemIndex}][product_id]" onchange="updateProductInfo(this, ${itemIndex})" required>
-                        <option value="">Choose a product...</option>
-                        <?php
-                        $stmt = $conn->query("SELECT id, name, sku, cost_price FROM products WHERE status = 'active' ORDER BY name ASC");
-                        while ($product = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                            echo '<option value="' . $product['id'] . '" data-price="' . $product['cost_price'] . '">' . htmlspecialchars($product['name'] . ' (' . $product['sku'] . ')') . '</option>';
-                        }
-                        ?>
-                    </select>
+                    <strong>${productName}</strong>
+                    <br><small class="text-muted">
+                        ${identifiers.map(id => `<span class="badge bg-primary me-1">${id}</span>`).join('')}
+                        <span class="text-muted">| Stock: ${currentStock}</span>
+                    </small>
                 </div>
 
                 <div class="quantity-controls">
                     <label class="form-label">Quantity</label>
                     <input type="number" class="form-control quantity-input"
                            name="order_items[${itemIndex}][quantity]" min="1" max="1000"
-                           placeholder="Qty" onchange="updateSummary()">
+                           placeholder="Qty" onchange="updateSummary()" value="1">
                 </div>
 
                 <div class="unit-price">
@@ -490,7 +845,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="input-group">
                         <span class="input-group-text"><?php echo getCurrencySymbol($settings); ?></span>
                         <input type="number" class="form-control" step="0.01" min="0"
-                               name="order_items[${itemIndex}][unit_price]" readonly>
+                               name="order_items[${itemIndex}][unit_price]" value="${costPrice}" readonly>
                     </div>
                 </div>
 
@@ -499,8 +854,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </button>
             `;
 
+            // Add hidden input for product_id
+            const hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.name = `order_items[${itemIndex}][product_id]`;
+            hiddenInput.value = productId;
+            productRow.appendChild(hiddenInput);
+
             container.appendChild(productRow);
             itemIndex++;
+            updateSummary();
+        }
+
+        function showLowStockProducts() {
+            const lowStockDiv = document.getElementById('lowStockProducts');
+            if (lowStockDiv.style.display === 'none') {
+                lowStockDiv.style.display = 'block';
+            } else {
+                lowStockDiv.style.display = 'none';
+            }
         }
 
         function updateProductInfo(select, index) {
@@ -552,6 +924,175 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 updateSummary();
             }
         });
+
+        // Prevent form submission on Enter key in search input
+        document.addEventListener('keydown', function(e) {
+            if (e.target.id === 'productSearchInput' && e.key === 'Enter') {
+                e.preventDefault();
+                return false;
+            }
+        });
+
+        // Close search results when clicking outside
+        document.addEventListener('click', function(e) {
+            const searchContainer = document.querySelector('.product-search-section');
+            const searchResults = document.getElementById('productSearchResults');
+            
+            if (searchContainer && !searchContainer.contains(e.target) && searchResults) {
+                searchResults.style.display = 'none';
+            }
+        });
+
+        // Initialize search input behavior
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.getElementById('productSearchInput');
+            if (searchInput) {
+                // Clear search when supplier changes
+                const supplierSelect = document.getElementById('supplier_id');
+                if (supplierSelect) {
+                    supplierSelect.addEventListener('change', function() {
+                        clearSearch();
+                    });
+                }
+            }
+        });
+
+        // Barcode scanner functionality
+        function toggleBarcodeScanner() {
+            const scanner = document.getElementById('barcodeScanner');
+            const input = document.getElementById('barcodeInput');
+            
+            if (scanner.style.display === 'none') {
+                scanner.style.display = 'block';
+                input.focus();
+            } else {
+                scanner.style.display = 'none';
+                input.value = '';
+            }
+        }
+
+        function handleBarcodeInput(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                scanBarcode();
+            }
+        }
+
+        function scanBarcode() {
+            const barcode = document.getElementById('barcodeInput').value.trim();
+            
+            if (!barcode) {
+                alert('Please enter a barcode');
+                return;
+            }
+
+            // Show loading state
+            const searchBtn = document.querySelector('#barcodeScanner .btn');
+            const originalText = searchBtn.innerHTML;
+            searchBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Searching...';
+            searchBtn.disabled = true;
+
+            // Call the barcode scan API
+            fetch(`../api/scan_barcode.php?barcode=${encodeURIComponent(barcode)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (data.exact_match) {
+                            // Add the product directly
+                            addProductFromBarcode(data.product);
+                        } else {
+                            // Show multiple matches for selection
+                            showBarcodeMatches(data.products, barcode);
+                        }
+                    } else {
+                        alert('Product not found: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    console.error('Barcode scan error:', error);
+                    alert('Error scanning barcode. Please try again.');
+                })
+                .finally(() => {
+                    // Reset button state
+                    searchBtn.innerHTML = originalText;
+                    searchBtn.disabled = false;
+                    document.getElementById('barcodeInput').value = '';
+                });
+        }
+
+        function addProductFromBarcode(product) {
+            // Check if product is already in the order
+            const existingItems = document.querySelectorAll('input[name*="[product_id]"]');
+            for (let item of existingItems) {
+                if (item.value == product.id) {
+                    alert('Product is already in the order');
+                    return;
+                }
+            }
+
+            // Add the product to the order
+            const container = document.getElementById('orderItems');
+            const productRow = document.createElement('div');
+            productRow.className = 'product-row';
+            
+            const identifiers = [];
+            if (product.sku) identifiers.push('SKU: ' + product.sku);
+            if (product.barcode) identifiers.push('Barcode: ' + product.barcode);
+            
+            productRow.innerHTML = `
+                <div class="product-info">
+                    <strong>${product.name}</strong>
+                    <br><small class="text-muted">
+                        ${identifiers.map(id => `<span class="badge bg-primary me-1">${id}</span>`).join('')}
+                        <span class="text-muted">| Stock: ${product.quantity}</span>
+                    </small>
+                </div>
+
+                <div class="quantity-controls">
+                    <label class="form-label">Quantity</label>
+                    <input type="number" class="form-control quantity-input"
+                           name="order_items[${itemIndex}][quantity]" min="1" max="1000"
+                           placeholder="Qty" onchange="updateSummary()">
+                </div>
+
+                <div class="unit-price">
+                    <label class="form-label">Unit Price</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><?php echo getCurrencySymbol($settings); ?></span>
+                        <input type="number" class="form-control" step="0.01" min="0"
+                               name="order_items[${itemIndex}][unit_price]" value="${product.price}" readonly>
+                    </div>
+                </div>
+
+                <button type="button" class="btn btn-outline-danger" onclick="removeItem(this)">
+                    <i class="bi bi-trash"></i>
+                </button>
+            `;
+
+            // Add hidden input for product_id
+            const hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.name = `order_items[${itemIndex}][product_id]`;
+            hiddenInput.value = product.id;
+            productRow.appendChild(hiddenInput);
+
+            container.appendChild(productRow);
+            itemIndex++;
+            updateSummary();
+            
+            // Hide barcode scanner
+            document.getElementById('barcodeScanner').style.display = 'none';
+        }
+
+        function showBarcodeMatches(products, barcode) {
+            let message = `Multiple products found for barcode "${barcode}":\n\n`;
+            products.forEach((product, index) => {
+                message += `${index + 1}. ${product.name} (${product.sku || 'No SKU'})\n`;
+            });
+            message += '\nPlease use the "Add Another Product" dropdown to select the correct one.';
+            
+            alert(message);
+        }
     </script>
 </body>
 </html>

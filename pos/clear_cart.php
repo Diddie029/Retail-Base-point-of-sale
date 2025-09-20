@@ -11,6 +11,13 @@ if (!isset($_SESSION['user_id'])) {
     exit();
 }
 
+// Check POS authentication
+if (!isPOSAuthenticated()) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'error' => 'POS authentication required']);
+    exit();
+}
+
 // Clear cart from session
 unset($_SESSION['cart']);
 

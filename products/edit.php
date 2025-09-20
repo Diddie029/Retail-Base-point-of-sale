@@ -38,7 +38,7 @@ if (!hasPermission('edit_products', $permissions)) {
 // Get product ID
 $product_id = (int)($_GET['id'] ?? 0);
 if ($product_id <= 0) {
-    header("Location: index.php");
+    header("Location: products.php");
     exit();
 }
 
@@ -57,7 +57,7 @@ $product = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$product) {
     $_SESSION['error'] = 'Product not found.';
-    header("Location: index.php");
+    header("Location: products.php");
     exit();
 }
 
@@ -135,6 +135,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Validation
     if (empty($name)) {
         $errors['name'] = 'Product name is required';
+    }
+    
+    if (empty($description)) {
+        $errors['description'] = 'Product description is required';
     }
     
     if ($category_id <= 0) {
@@ -367,7 +371,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                         <i class="bi bi-eye"></i>
                         View Product
                     </a>
-                    <a href="index.php" class="btn btn-outline-secondary">
+                    <a href="products.php" class="btn btn-outline-secondary">
                         <i class="bi bi-arrow-left"></i>
                         Back to Products
                     </a>
@@ -389,7 +393,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
             <?php endif; ?>
 
             <!-- Product Info Card -->
-            <div class="data-section mb-4">
+            <div class="data-section mb-4 sticky-top" style="top: 20px; z-index: 1000; background: white; box-shadow: 0 2px 10px rgba(0,0,0,0.1); border-radius: 8px; padding: 20px;">
                 <div class="section-header">
                     <h3 class="section-title">
                         <i class="bi bi-box me-2"></i>
@@ -430,6 +434,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                             <?php if (isset($errors['name'])): ?>
                             <div class="invalid-feedback"><?php echo htmlspecialchars($errors['name']); ?></div>
                             <?php endif; ?>
+                            <div class="form-text">
+                                <i class="bi bi-lightbulb me-1"></i>
+                                <strong>Example:</strong> "Samsung Galaxy S23 128GB" or "Premium Coffee Beans 500g"
+                            </div>
                         </div>
 
                         <div class="form-group">
@@ -448,6 +456,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                             <div class="invalid-feedback"><?php echo htmlspecialchars($errors['category_id']); ?></div>
                             <?php endif; ?>
                             <div class="form-text">
+                                <i class="bi bi-lightbulb me-1"></i>
+                                <strong>Purpose:</strong> Groups similar products together for better organization and reporting. 
                                 <a href="../categories/add.php" target="_blank">Add new category</a>
                             </div>
                         </div>
@@ -455,11 +465,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
 
                     <div class="form-row">
                         <div class="form-group">
-                                <label for="description" class="form-label">Description</label>
-                                <textarea class="form-control" id="description" name="description" rows="3"
+                                <label for="description" class="form-label">Description *</label>
+                                <textarea class="form-control <?php echo isset($errors['description']) ? 'is-invalid' : ''; ?>" 
+                                          id="description" name="description" rows="3" required
                                           placeholder="Enter product description"><?php echo htmlspecialchars($product['description'] ?? ''); ?></textarea>
+                                <?php if (isset($errors['description'])): ?>
+                                <div class="invalid-feedback"><?php echo htmlspecialchars($errors['description']); ?></div>
+                                <?php endif; ?>
                                 <div class="form-text">
-                                    Detailed description of the product
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Purpose:</strong> Detailed description helps customers understand the product. Include key features, specifications, or usage instructions.
                                 </div>
                             </div>
 
@@ -472,7 +487,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                     <option value="subscription" <?php echo ($product['product_type'] ?? '') === 'subscription' ? 'selected' : ''; ?>>Subscription</option>
                                 </select>
                                 <div class="form-text">
-                                    Type of product being sold
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Types:</strong> Physical (tangible items), Digital (downloadable), Service (consulting/repairs), Subscription (recurring billing)
                                 </div>
                             </div>
                         </div>
@@ -500,7 +516,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['sku']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Unique identifier for inventory tracking. Leave empty to auto-generate.
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>SKU (Stock Keeping Unit):</strong> Unique identifier for inventory tracking. Use format like "PROD-001" or "SAMSUNG-S23-128". Leave empty to auto-generate.
                                 </div>
                             </div>
 
@@ -519,7 +536,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['product_number']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Internal product number for tracking. Leave empty to auto-generate.
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Product Number:</strong> Internal reference number for your business. Use format like "PN-2024-001" or "ITEM-12345". Leave empty to auto-generate.
                                 </div>
                             </div>
 
@@ -538,7 +556,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['barcode']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Barcode for product scanning (optional but recommended)
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Barcode:</strong> Used for quick product scanning at checkout. Can be UPC, EAN, or custom format. Leave empty to auto-generate.
                                 </div>
                             </div>
                         </div>
@@ -559,6 +578,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                             <?php if (isset($errors['price'])): ?>
                             <div class="invalid-feedback"><?php echo htmlspecialchars($errors['price']); ?></div>
                             <?php endif; ?>
+                            <div class="form-text">
+                                <i class="bi bi-lightbulb me-1"></i>
+                                <strong>Customer Price:</strong> The price customers pay for this product. This is the main selling price.
+                            </div>
                         </div>
 
                         <div class="form-group">
@@ -570,7 +593,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['cost_price']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Your cost to acquire this product (used for profit calculations)
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Cost Price:</strong> What you paid to acquire this product. Used for profit margin calculations and inventory valuation.
                                 </div>
                             </div>
                         </div>
@@ -640,7 +664,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['sale_price']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Special sale price (must be less than regular price)
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Sale Price:</strong> Special discounted price for promotions. Must be less than the regular selling price.
                                 </div>
                             </div>
 
@@ -649,7 +674,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <input type="datetime-local" class="form-control" id="sale_start_date" name="sale_start_date"
                                        value="<?php echo htmlspecialchars($product['sale_start_date'] ?? ''); ?>">
                                 <div class="form-text">
-                                    When the sale should start (leave empty for immediate)
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Sale Start:</strong> When the sale should begin. Leave empty for immediate activation.
                                 </div>
                             </div>
                         </div>
@@ -663,7 +689,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['sale_dates']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    When the sale should end (leave empty for indefinite)
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Sale End:</strong> When the sale should end. Leave empty for indefinite duration.
                                 </div>
                             </div>
 
@@ -698,6 +725,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                             <?php if (isset($errors['quantity'])): ?>
                             <div class="invalid-feedback"><?php echo htmlspecialchars($errors['quantity']); ?></div>
                             <?php endif; ?>
+                            <div class="form-text">
+                                <i class="bi bi-lightbulb me-1"></i>
+                                <strong>Current Stock:</strong> Number of units currently available in inventory.
+                            </div>
                             </div>
 
                             <div class="form-group">
@@ -709,7 +740,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['minimum_stock']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Minimum stock level before reorder alert
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Minimum Stock:</strong> Alert threshold - you'll be notified when stock falls below this level.
                                 </div>
                             </div>
                         </div>
@@ -724,7 +756,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['maximum_stock']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Maximum stock level (leave empty for unlimited)
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Maximum Stock:</strong> Storage capacity limit. Leave empty for unlimited storage.
                                 </div>
                             </div>
 
@@ -737,7 +770,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['reorder_point']); ?></div>
                                 <?php endif; ?>
                             <div class="form-text">
-                                    Point at which to reorder this product
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Reorder Point:</strong> When stock reaches this level, consider placing a new order to avoid stockouts.
                                 </div>
                             </div>
                         </div>
@@ -762,6 +796,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                     <?php endforeach; ?>
                                 </select>
                                 <div class="form-text">
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Brand:</strong> Manufacturer or brand name (e.g., Samsung, Nike, Apple). 
                                     <a href="../brands/add.php" target="_blank">Add new brand</a>
                                 </div>
                             </div>
@@ -778,6 +814,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                     <?php endforeach; ?>
                                 </select>
                                 <div class="form-text">
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Product Family:</strong> Groups related products with shared pricing and units (e.g., "Cooking Oils", "Rice Products"). 
                                     <a href="../product_families/add.php" target="_blank">Add new family</a>
                                 </div>
                             </div>
@@ -794,6 +832,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                     <?php endforeach; ?>
                                 </select>
                                 <div class="form-text">
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Supplier:</strong> Company or vendor who supplies this product. Required for purchase orders and cost tracking. 
                                     <a href="../suppliers/add.php" target="_blank">Add new supplier</a>
                                 </div>
                             </div>
@@ -808,7 +848,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                     <option value="discontinued" <?php echo ($product['status'] ?? '') === 'discontinued' ? 'selected' : ''; ?>>Discontinued</option>
                                 </select>
                         <div class="form-text">
-                                    Current status of the product
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Status:</strong> Active (available for sale), Inactive (temporarily unavailable), Discontinued (no longer sold)
                         </div>
                     </div>
 
@@ -818,7 +859,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_product_number') {
                                        value="<?php echo htmlspecialchars($product['tags'] ?? ''); ?>"
                                        placeholder="Comma-separated tags">
                         <div class="form-text">
-                                    Tags for search and categorization
+                                    <i class="bi bi-lightbulb me-1"></i>
+                                    <strong>Tags:</strong> Keywords for search and filtering (e.g., "electronics, smartphone, android"). Separate multiple tags with commas.
                                 </div>
                             </div>
                         </div>
