@@ -13,6 +13,39 @@ if (!isset($_SESSION['user_id'])) {
 // Check POS authentication
 requirePOSAuthentication();
 
+// Check if cashier needs to re-authenticate after till closure (only for non-admin users)
+if (isset($_SESSION['till_closure_occurred']) && !isset($_SESSION['till_closure_authenticated'])) {
+    $user_role = $_SESSION['role_name'] ?? 'User';
+
+    // Only force re-authentication for cashiers, not admins
+    if (strtolower($user_role) !== 'admin') {
+        // Check if the till closure occurred recently (within last 5 minutes)
+        $closure_time = $_SESSION['till_closure_timestamp'] ?? 0;
+        $current_time = time();
+        $time_diff = $current_time - $closure_time;
+
+        if ($time_diff <= 300) { // 5 minutes = 300 seconds
+            // Store the intended page for redirect after authentication
+            $_SESSION['redirect_after_auth'] = $_SERVER['PHP_SELF'];
+
+            // Clear the till closure flag to prevent infinite redirects
+            unset($_SESSION['till_closure_occurred']);
+            unset($_SESSION['till_closure_timestamp']);
+            unset($_SESSION['till_closure_till_id']);
+
+            // Redirect to login with a message
+            $_SESSION['auth_message'] = "Till was closed. Please authenticate again to continue using the POS system.";
+            header("Location: ../auth/login.php");
+            exit();
+        } else {
+            // Till closure was too long ago, clear the flag
+            unset($_SESSION['till_closure_occurred']);
+            unset($_SESSION['till_closure_timestamp']);
+            unset($_SESSION['till_closure_till_id']);
+        }
+    }
+}
+
 // Get user information
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'];
@@ -288,7 +321,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $other_amount = floatval($_POST['other_amount'] ?? 0);
     $other_description = $_POST['other_description'] ?? '';
     $closing_notes = $_POST['closing_notes'] ?? '';
-    $allow_exceed = isset($_POST['allow_exceed']) ? 1 : 0;
+    $allow_exceed = 1; // Always allow by default
 
     if ($selected_till) {
         // Additional security check: Verify user has access to this specific till
@@ -320,11 +353,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // Get total sales for today for this cashier
         $today = date('Y-m-d');
         
-        // Get total sales for the current cashier (user_id) for today using the new function
-        $total_sales = getCashierSalesTotal($conn, $selected_till['id'], $user_id, $today);
+        // Get total sales for the current till (all cashiers) for today using the new function
+        $total_sales = getTillSalesTotal($conn, $selected_till['id'], $today);
         
-        // Get total cash drops for today for this cashier using the new function
-        $total_drops = getTotalCashDrops($conn, $selected_till['id'], $user_id, $today);
+        // Get total cash drops for today for this till (all cashiers) using the new function
+        $total_drops = getTotalCashDrops($conn, $selected_till['id'], null, $today);
         
         // Calculate expected balance: opening + sales - drops
         $expected_balance = $opening_amount + $total_sales - $total_drops;
@@ -335,106 +368,114 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         // Calculate difference between expected and actual
         $difference = $total_closing - $expected_balance;
 
-        // Check if closing amount is reasonable (unless allowed to exceed)
-        if (!$allow_exceed && abs($difference) > 0.01) { // Allow for small rounding differences
-            if ($difference > 0) {
-                $_SESSION['error_message'] = "Closing amount (" . formatCurrency($total_closing, $settings) . ") exceeds expected balance (" . formatCurrency($expected_balance, $settings) . ") by " . formatCurrency($difference, $settings) . ". Please check amounts or enable 'Allow Exceed' option.";
-        } else {
-                $_SESSION['error_message'] = "Closing amount (" . formatCurrency($total_closing, $settings) . ") is less than expected balance (" . formatCurrency($expected_balance, $settings) . ") by " . formatCurrency(abs($difference), $settings) . ". Please check amounts or enable 'Allow Exceed' option.";
-            }
-        } else {
-            // Determine shortage type
-            $shortage_type = 'exact';
-            if ($difference < -0.01) {
-                $shortage_type = 'shortage'; // Less money than expected
-            } elseif ($difference > 0.01) {
-                $shortage_type = 'excess'; // More money than expected
-            }
+        // Always allow closing regardless of amount difference
+        // Determine shortage type
+        $shortage_type = 'exact';
+        if ($difference < -0.01) {
+            $shortage_type = 'shortage'; // Less money than expected
+        } elseif ($difference > 0.01) {
+            $shortage_type = 'excess'; // More money than expected
+        }
 
-            // Log the till closing action for audit trail
-            error_log("Till Closing - User: $username (ID: $user_id) closing Till: {$selected_till['till_name']} (ID: {$selected_till['id']})");
-            error_log("Till Closing - Opening: $opening_amount, Sales: $total_sales, Drops: $total_drops, Expected: $expected_balance, Actual: $total_closing, Difference: $difference");
+        // Log the till closing action for audit trail
+        error_log("Till Closing - User: $username (ID: $user_id) closing Till: {$selected_till['till_name']} (ID: {$selected_till['id']})");
+        error_log("Till Closing - Opening: $opening_amount, Sales: $total_sales, Drops: $total_drops, Expected: $expected_balance, Actual: $total_closing, Difference: $difference");
 
-            // Create till closing record with additional calculation details
-            $stmt = $conn->prepare("
-                INSERT INTO till_closings (till_id, user_id, opening_amount, total_sales, total_drops, expected_balance, cash_amount, voucher_amount, loyalty_points, other_amount, other_description, actual_counted_amount, total_amount, difference, shortage_type, closing_notes, allow_exceed, closed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-            ");
-            $stmt->execute([
-                $selected_till['id'],
-                $user_id,
-                $opening_amount,
-                $total_sales,
-                $total_drops,
-                $expected_balance,
-                $cash_amount,
-                $voucher_amount,
-                $loyalty_points,
-                $other_amount,
-                $other_description,
-                $cash_amount, // actual_counted_amount (focusing on cash for now)
-                $total_closing,
-                $difference,
-                $shortage_type,
-                $closing_notes,
-                $allow_exceed
-            ]);
+        // Create till closing record with additional calculation details
+        $stmt = $conn->prepare("
+            INSERT INTO till_closings (till_id, user_id, opening_amount, total_sales, total_drops, expected_balance, cash_amount, voucher_amount, loyalty_points, other_amount, other_description, actual_counted_amount, total_amount, difference, shortage_type, closing_notes, allow_exceed, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ");
+        $stmt->execute([
+            $selected_till['id'],
+            $user_id,
+            $opening_amount,
+            $total_sales,
+            $total_drops,
+            $expected_balance,
+            $cash_amount,
+            $voucher_amount,
+            $loyalty_points,
+            $other_amount,
+            $other_description,
+            $cash_amount, // actual_counted_amount (focusing on cash for now)
+            $total_closing,
+            $difference,
+            $shortage_type,
+            $closing_notes,
+            $allow_exceed
+        ]);
 
-            // Reset till balance to 0, set status to closed, and release user assignment
-            $stmt = $conn->prepare("UPDATE register_tills SET current_balance = 0, till_status = 'closed', current_user_id = NULL WHERE id = ?");
-            $stmt->execute([$selected_till['id']]);
+        // Reset till balance to 0, set status to closed, and release user assignment
+        $stmt = $conn->prepare("UPDATE register_tills SET current_balance = 0, till_status = 'closed', current_user_id = NULL WHERE id = ?");
+        $stmt->execute([$selected_till['id']]);
 
-            // Clear till selection
-            unset($_SESSION['selected_till_id']);
-            unset($_SESSION['selected_till_name']);
-            unset($_SESSION['selected_till_code']);
-            unset($_SESSION['till_opening_amount']);
-            $selected_till = null;
+        // Clear till selection
+        unset($_SESSION['selected_till_id']);
+        unset($_SESSION['selected_till_name']);
+        unset($_SESSION['selected_till_code']);
+        unset($_SESSION['till_opening_amount']);
+        $selected_till = null;
 
-            $success_message = "Till closed successfully. ";
-            $success_message .= "Opening: " . formatCurrency($opening_amount, $settings) . ", ";
-            $success_message .= "Sales: " . formatCurrency($total_sales, $settings) . ", ";
-            $success_message .= "Drops: " . formatCurrency($total_drops, $settings) . ", ";
-            $success_message .= "Expected: " . formatCurrency($expected_balance, $settings) . ", ";
-            $success_message .= "Actual: " . formatCurrency($total_closing, $settings);
-            if (abs($difference) > 0.01) {
-                $success_message .= ", Difference: " . formatCurrency($difference, $settings);
-            }
-            $success_message .= " <a href='#' onclick='showTillClosingSlipModal(); return false;' class='text-decoration-none'><i class='bi bi-printer'></i> Print slips manually if needed</a>";
-            $_SESSION['success_message'] = $success_message;
+        $success_message = "Till closed successfully. ";
+        $success_message .= "Opening: " . formatCurrency($opening_amount, $settings) . ", ";
+        $success_message .= "Sales: " . formatCurrency($total_sales, $settings) . ", ";
+        $success_message .= "Drops: " . formatCurrency($total_drops, $settings) . ", ";
+        $success_message .= "Expected: " . formatCurrency($expected_balance, $settings) . ", ";
+        $success_message .= "Actual: " . formatCurrency($total_closing, $settings);
+        if (abs($difference) > 0.01) {
+            $success_message .= ", Difference: " . formatCurrency($difference, $settings);
+        }
+        $success_message .= " <a href='#' onclick='showTillClosingSlipModal(); return false;' class='text-decoration-none'><i class='bi bi-printer'></i> Print slips manually if needed</a>";
+        $_SESSION['success_message'] = $success_message;
 
-            // Generate till closing slip
-            $till_closing_slip_data = [
-                'till_id' => $selected_till['id'],
-                'till_name' => $selected_till['till_name'],
-                'till_code' => $selected_till['till_code'],
-                'cashier_name' => $username,
-                'closing_user_name' => $_SESSION['till_close_username'] ?? $username,
-                'closing_date' => date('Y-m-d H:i:s'),
-                'opening_amount' => $opening_amount,
-                'total_sales' => $total_sales,
-                'total_drops' => $total_drops,
-                'expected_balance' => $expected_balance,
-                'actual_cash' => $cash_amount,
-                'voucher_amount' => $voucher_amount,
-                'loyalty_points' => $loyalty_points,
-                'other_amount' => $other_amount,
-                'other_description' => $other_description,
-                'total_closing' => $total_closing,
-                'difference' => $difference,
-                'closing_notes' => $closing_notes,
-                'company_name' => $settings['company_name'] ?? 'Point of Sale System',
-                'company_address' => $settings['company_address'] ?? '',
-                'company_phone' => $settings['company_phone'] ?? '',
-                'currency_symbol' => $settings['currency_symbol'] ?? 'KES'
-            ];
+        // Generate till closing slip
+        $till_closing_slip_data = [
+            'till_id' => $selected_till['id'],
+            'till_name' => $selected_till['till_name'],
+            'till_code' => $selected_till['till_code'],
+            'cashier_name' => $username,
+            'closing_user_name' => $_SESSION['till_close_username'] ?? $username,
+            'closing_date' => date('Y-m-d H:i:s'),
+            'opening_amount' => $opening_amount,
+            'total_sales' => $total_sales,
+            'total_drops' => $total_drops,
+            'expected_balance' => $expected_balance,
+            'actual_cash' => $cash_amount,
+            'voucher_amount' => $voucher_amount,
+            'loyalty_points' => $loyalty_points,
+            'other_amount' => $other_amount,
+            'other_description' => $other_description,
+            'total_closing' => $total_closing,
+            'difference' => $difference,
+            'closing_notes' => $closing_notes,
+            'company_name' => $settings['company_name'] ?? 'Point of Sale System',
+            'company_address' => $settings['company_address'] ?? '',
+            'company_phone' => $settings['company_phone'] ?? '',
+            'currency_symbol' => $settings['currency_symbol'] ?? 'KES'
+        ];
 
-            // Generate till closing slip HTML
-            $till_closing_slip_html = generateTillClosingSlipHTML($till_closing_slip_data);
-            
-            // Store for printing
-            $_SESSION['till_closing_slip_html'] = $till_closing_slip_html;
-            $_SESSION['auto_print_till_closing'] = true;
+        // Generate till closing slip HTML
+        $till_closing_slip_html = generateTillClosingSlipHTML($till_closing_slip_data);
+        
+        // Store for printing
+        $_SESSION['till_closing_slip_html'] = $till_closing_slip_html;
+        $_SESSION['auto_print_till_closing'] = true;
+
+        // Invalidate cashier session for security - require re-authentication on sale page
+        if (!$is_admin_user) {
+            // Set flag to require re-authentication on sale page
+            $_SESSION['till_closure_occurred'] = true;
+            $_SESSION['till_closure_timestamp'] = time();
+            $_SESSION['till_closure_till_id'] = $selected_till['id'];
+
+            // Log the session invalidation
+            error_log("Till closure session invalidation triggered for user: $username (ID: $user_id) on Till: {$selected_till['till_name']}");
+
+            // Optional: Clear sensitive session data
+            unset($_SESSION['till_close_authenticated']);
+            unset($_SESSION['till_close_user_id']);
+            unset($_SESSION['till_close_username']);
         }
     }
 
@@ -4505,26 +4546,20 @@ try {
             document.getElementById('total_counted_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + totalClosing.toFixed(2);
             document.getElementById('total_display').textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + totalClosing.toFixed(2);
 
-            const differenceElement = document.getElementById('difference_display');
             const differenceAlert = document.getElementById('difference_alert');
             const differenceMessage = document.getElementById('difference_message');
-            
-            differenceElement.textContent = '<?php echo $settings['currency_symbol'] ?? 'KES'; ?> ' + difference.toFixed(2);
 
             // Update styling and alerts based on difference
             if (Math.abs(difference) <= 0.01) {
                 // Perfect match
-                differenceElement.className = 'text-success fw-bold';
                 differenceAlert.style.display = 'none';
             } else if (difference > 0) {
                 // Over amount
-                differenceElement.className = 'text-danger fw-bold';
                 differenceAlert.className = 'alert alert-danger alert-sm mt-2 mb-0';
                 differenceAlert.style.display = 'block';
                 differenceMessage.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Closing amount exceeds expected balance by ${'<?php echo $settings['currency_symbol'] ?? 'KES'; ?>'} ${Math.abs(difference).toFixed(2)}.`;
             } else {
                 // Under amount
-                differenceElement.className = 'text-warning fw-bold';
                 differenceAlert.className = 'alert alert-warning alert-sm mt-2 mb-0';
                 differenceAlert.style.display = 'block';
                 differenceMessage.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Closing amount is ${'<?php echo $settings['currency_symbol'] ?? 'KES'; ?>'} ${Math.abs(difference).toFixed(2)} less than expected balance.`;
@@ -5113,15 +5148,15 @@ try {
                                 <div class="row">
                                     <div class="col-12">
                                         <div class="d-flex justify-content-between mb-2">
-                                            <span>Cashier:</span>
-                                            <strong class="text-primary">
-                                                <?php echo htmlspecialchars($_SESSION['cash_drop_username'] ?? 'Unknown'); ?>
+                                            <span><i class="bi bi-cash-register"></i> Current Till:</span>
+                                            <strong class="text-info">
+                                                <?php echo htmlspecialchars($selected_till['till_name'] ?? 'Unknown'); ?>
                                             </strong>
                                         </div>
                                         <div class="d-flex justify-content-between mb-2">
-                                            <span>Current Till:</span>
-                                            <strong class="text-info">
-                                                <?php echo htmlspecialchars($selected_till['till_name'] ?? 'Unknown'); ?>
+                                            <span><i class="bi bi-person"></i> Cashier:</span>
+                                            <strong class="text-primary">
+                                                <?php echo htmlspecialchars($username); ?>
                                             </strong>
                                         </div>
                                     </div>
@@ -5301,11 +5336,11 @@ try {
                         $opening_amount = floatval($_SESSION['till_opening_amount'] ?? 0);
                         $today = date('Y-m-d');
                         
-                        // Get total sales for today for this cashier using the new function
-                        $total_sales = getCashierSalesTotal($conn, $selected_till['id'], $user_id, $today);
-                        
-                        // Get total cash drops for today for this cashier using the new function
-                        $total_drops = getTotalCashDrops($conn, $selected_till['id'], $user_id, $today);
+                        // Get total sales for today for this till (all cashiers) using the new function
+                        $total_sales = getTillSalesTotal($conn, $selected_till['id'], $today);
+                                        
+        // Get total cash drops for today for this till (all cashiers) using the new function
+        $total_drops = getTotalCashDrops($conn, $selected_till['id'], null, $today);
                         
                         // Calculate expected balance: opening + sales - drops
                         $expected_balance = $opening_amount + $total_sales - $total_drops;
@@ -5325,36 +5360,11 @@ try {
                                             <span><i class="bi bi-person"></i> Cashier:</span>
                                             <strong class="text-primary"><?php echo htmlspecialchars($username); ?></strong>
                                         </div>
-                                        <div class="d-flex justify-content-between mb-2">
-                                            <span><i class="bi bi-cash-coin"></i> Opening Amount:</span>
-                                            <strong class="text-primary"><?php echo formatCurrency($opening_amount, $settings); ?></strong>
-                                        </div>
-                                        <div class="d-flex justify-content-between mb-2">
-                                            <span><i class="bi bi-cart-plus"></i> Total Sales (This Cashier):</span>
-                                            <strong class="text-success"><?php echo formatCurrency($total_sales, $settings); ?></strong>
-                                        </div>
                                     </div>
                                     <div class="col-md-6">
-                                        <div class="d-flex justify-content-between mb-2">
-                                            <span><i class="bi bi-cash-stack"></i> Total Drops (This Cashier):</span>
-                                            <strong class="text-warning"><?php echo formatCurrency($total_drops, $settings); ?></strong>
-                                        </div>
-                                        <div class="d-flex justify-content-between mb-2">
-                                            <span><i class="bi bi-equals"></i> Expected Balance:</span>
-                                            <strong class="text-info"><?php echo formatCurrency($expected_balance, $settings); ?></strong>
-                                        </div>
-                                        <div class="d-flex justify-content-between mb-2">
-                                            <span><i class="bi bi-info-circle"></i> Formula:</span>
-                                            <small class="text-muted">(Opening + Sales) - Drops</small>
-                                        </div>
                                     </div>
                                 </div>
                                 <hr>
-                                <div class="alert alert-info mb-0">
-                                    <i class="bi bi-lightbulb"></i>
-                                    <strong>Expected Balance:</strong> <?php echo formatCurrency($expected_balance, $settings); ?> 
-                                    (Based on this cashier's sales and drops - should match your actual closing amount)
-                                </div>
                             </div>
                         </div>
                         <?php endif; ?>
@@ -5441,18 +5451,10 @@ try {
                                             <span><strong>Total Counted:</strong></span>
                                             <strong id="total_counted_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</strong>
                                         </div>
-                                        <div class="d-flex justify-content-between mb-2">
-                                            <span>Difference:</span>
-                                            <span id="difference_display" class="text-muted"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
-                                        </div>
                                         <hr>
                                         <div class="d-flex justify-content-between">
                                             <strong>Total Closing:</strong>
                                             <strong id="total_display"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</strong>
-                                        </div>
-                                        <div class="d-flex justify-content-between mt-2">
-                                            <span>Difference:</span>
-                                            <span id="difference_display" class="text-muted"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> 0.00</span>
                                         </div>
                                         <div class="alert alert-sm mt-2 mb-0" id="difference_alert" style="display: none;">
                                             <i class="bi bi-info-circle"></i>
@@ -5461,12 +5463,6 @@ try {
                                     </div>
                                 </div>
 
-                                <div class="form-check mt-3">
-                                    <input class="form-check-input" type="checkbox" name="allow_exceed" id="allow_exceed" checked>
-                                    <label class="form-check-label" for="allow_exceed">
-                                        Allow closing amount to exceed till balance
-                                    </label>
-                                </div>
 
                                 <div class="mb-3 mt-3">
                                     <label for="closing_notes" class="form-label">Closing Notes (Optional)</label>
@@ -7375,8 +7371,8 @@ function generateTillClosingSlipHTML($data) {
             <div style='margin: 15px 0; border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0;'>
                 <div style='font-size: 14px; font-weight: bold; text-align: center; margin-bottom: 10px;'>TILL CALCULATION</div>
                 <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Opening Amount:</span><span>{$currency_symbol} {$opening_amount}</span></div>
-                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Total Sales:</span><span>{$currency_symbol} {$total_sales}</span></div>
-                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Total Drops:</span><span>{$currency_symbol} {$total_drops}</span></div>
+                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Total Sales (All Cashiers):</span><span>{$currency_symbol} {$total_sales}</span></div>
+                <div style='margin: 3px 0; display: flex; justify-content: space-between;'><span>Total Drops (All Cashiers):</span><span>{$currency_symbol} {$total_drops}</span></div>
                 <div style='margin: 8px 0; padding-top: 5px; border-top: 1px solid #000; display: flex; justify-content: space-between; font-weight: bold;'><span>Expected Balance:</span><span>{$currency_symbol} {$expected_balance}</span></div>
             </div>
             

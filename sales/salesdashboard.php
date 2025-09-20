@@ -559,6 +559,22 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                         </div>
                                     </div>
                                 </div>
+
+                                <!-- Till Details -->
+                                <div class="col-md-6">
+                                    <div class="feature-card" onclick="window.location.href='../pos/till_details.php'">
+                                        <div class="d-flex align-items-center">
+                                            <div class="feature-icon" style="background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%); color: white;">
+                                                <i class="bi bi-eye"></i>
+                                            </div>
+                                            <div class="ms-3">
+                                                <h6 class="mb-1">Till Transaction Details</h6>
+                                                <p class="text-muted mb-0">View detailed till transactions and history</p>
+                                                <small class="text-info">Read-only view</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -744,11 +760,12 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <th>Difference</th>
                                     <th>Status</th>
                                     <th>Notes</th>
+                                    <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="tillClosingHistoryTableBody">
                                 <tr>
-                                    <td colspan="11" class="text-center text-muted">Click "Load History" to view data</td>
+                                    <td colspan="12" class="text-center text-muted">Click "Load History" to view data</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1186,9 +1203,23 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </td>
                         <td><span class="badge bg-${statusClass}">${statusText}</span></td>
                         <td>
-                            <button class="btn btn-sm btn-outline-primary" onclick="viewTillClosingDetails(${item.id})" title="View Details">
-                                <i class="bi bi-eye"></i>
-                            </button>
+                            <div class="btn-group">
+                                <button class="btn btn-sm btn-outline-primary" onclick="viewTillClosingDetails(${item.id})" title="View Closing Details">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-info dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" title="More Actions">
+                                    <i class="bi bi-chevron-down"></i>
+                                </button>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="../pos/till_details.php?till_id=${item.till_id}&date=${item.closed_at.split(' ')[0]}" target="_blank">
+                                        <i class="bi bi-eye"></i> View Transaction Details
+                                    </a></li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li><a class="dropdown-item" href="#" onclick="printClosingDetails(${item.id})">
+                                        <i class="bi bi-printer"></i> Print Closing Report
+                                    </a></li>
+                                </ul>
+                            </div>
                         </td>
                     </tr>
                 `;
@@ -1281,6 +1312,25 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         </td>
                         <td><span class="badge bg-${statusClass}">${statusText}</span></td>
                         <td>${item.closing_notes || ''}</td>
+                        <td>
+                            <div class="btn-group">
+                                <button class="btn btn-sm btn-outline-primary" onclick="viewTillClosingDetails(${item.id})" title="View Closing Details">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-info dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" title="More Actions">
+                                    <i class="bi bi-chevron-down"></i>
+                                </button>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="../pos/till_details.php?till_id=${item.till_id}&date=${item.closed_at.split(' ')[0]}" target="_blank">
+                                        <i class="bi bi-eye"></i> View Transaction Details
+                                    </a></li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li><a class="dropdown-item" href="#" onclick="printClosingDetails(${item.id})">
+                                        <i class="bi bi-printer"></i> Print Closing Report
+                                    </a></li>
+                                </ul>
+                            </div>
+                        </td>
                     </tr>
                 `;
                 tbody.innerHTML += row;

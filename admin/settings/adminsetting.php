@@ -3907,6 +3907,7 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Initial quotation number preview update
         updateQuotationNumberPreview();
+        });
     </script>
 </body>
 </html>

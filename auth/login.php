@@ -59,6 +59,13 @@ if ($attempts >= $max_attempts) {
 $message = '';
 $messageType = '';
 
+// Check for authentication message (e.g., from till closure)
+if (isset($_SESSION['auth_message'])) {
+    $message = $_SESSION['auth_message'];
+    $messageType = 'warning'; // Use warning style for till closure message
+    unset($_SESSION['auth_message']); // Clear the message after displaying
+}
+
 if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
     // Verify CSRF token
     if (!isset($_POST['csrf_token']) || !isset($_SESSION['csrf_token']) ||
@@ -179,14 +186,20 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
                         // Log successful login attempt
                         logLoginAttempt($conn, $identifier, $ip_address, $user_agent, $attempt_type, true);
 
-                        // Determine redirect URL based on role
-                        $redirect_url = $user['redirect_url'] ?? '../dashboard/dashboard.php';
-                        
+                        // Check for redirect after authentication (e.g., after till closure)
+                        if (isset($_SESSION['redirect_after_auth'])) {
+                            $redirect_url = $_SESSION['redirect_after_auth'];
+                            unset($_SESSION['redirect_after_auth']);
+                        } else {
+                            // Determine redirect URL based on role
+                            $redirect_url = $user['redirect_url'] ?? '../dashboard/dashboard.php';
+                        }
+
                         // Ensure the redirect URL is safe and exists
                         if (empty($redirect_url) || !preg_match('/^[a-zA-Z0-9\/\.\-_]+$/', $redirect_url)) {
                             $redirect_url = '../dashboard/dashboard.php';
                         }
-                        
+
                         // Redirect to role-specific page
                         header("Location: " . $redirect_url);
                         exit();

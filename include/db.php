@@ -5803,13 +5803,39 @@ if (!function_exists('getHeldTransactionsCount')) {
         }
     }
 
+    function getTillSalesTotal($conn, $till_id, $date = null) {
+        try {
+            $whereConditions = ["s.till_id = ?"];
+            $params = [$till_id];
+
+            if ($date) {
+                $whereConditions[] = "DATE(s.created_at) = ?";
+                $params[] = $date;
+            }
+
+            $whereClause = "WHERE " . implode(" AND ", $whereConditions);
+
+            $stmt = $conn->prepare("
+                SELECT COALESCE(SUM(s.final_amount), 0) as total_sales
+                FROM sales s
+                $whereClause AND s.status != 'void'
+            ");
+            $stmt->execute($params);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            return floatval($result['total_sales']);
+        } catch (PDOException $e) {
+            error_log("Error getting total till sales: " . $e->getMessage());
+            return 0;
+        }
+    }
+
     function getCashierSalesTotal($conn, $till_id, $user_id, $date = null) {
         try {
             $whereConditions = ["s.till_id = ?", "s.user_id = ?"];
             $params = [$till_id, $user_id];
             
             if ($date) {
-                $whereConditions[] = "DATE(s.sale_date) = ?";
+                $whereConditions[] = "DATE(s.created_at) = ?";
                 $params[] = $date;
             }
             
