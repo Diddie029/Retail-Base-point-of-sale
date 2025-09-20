@@ -3455,69 +3455,68 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // Add event listeners for SKU preview updates
-        document.addEventListener('DOMContentLoaded', function() {
-            const skuInputs = ['sku_prefix', 'sku_separator', 'sku_length', 'sku_format'];
-            skuInputs.forEach(inputId => {
-                const input = document.getElementById(inputId);
-                if (input) {
-                    input.addEventListener('input', updateSKUPreview);
-                    input.addEventListener('change', updateSKUPreview);
-                }
-            });
-            
-            // Initial preview update
-            updateSKUPreview();
+        const skuInputs = ['sku_prefix', 'sku_separator', 'sku_length', 'sku_format'];
+        skuInputs.forEach(inputId => {
+            const input = document.getElementById(inputId);
+            if (input) {
+                input.addEventListener('input', updateSKUPreview);
+                input.addEventListener('change', updateSKUPreview);
+            }
+        });
 
-            // Order Number Preview Functionality (only if order tab is active)
-            if (document.getElementById('order_number_prefix')) {
-                function updateOrderNumberPreview() {
-                    const prefix = document.getElementById('order_number_prefix').value || 'ORD';
-                    const separator = document.getElementById('order_number_separator').value || '-';
-                    const length = parseInt(document.getElementById('order_number_length').value) || 6;
-                    const format = document.getElementById('order_number_format').value || 'prefix-date-number';
+        // Initial preview update
+        updateSKUPreview();
 
-                    // Generate sample number
-                    let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
-                    const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        // Order Number Preview Functionality (only if order tab is active)
+        if (document.getElementById('order_number_prefix')) {
+            function updateOrderNumberPreview() {
+                const prefix = document.getElementById('order_number_prefix').value || 'ORD';
+                const separator = document.getElementById('order_number_separator').value || '-';
+                const length = parseInt(document.getElementById('order_number_length').value) || 6;
+                const format = document.getElementById('order_number_format').value || 'prefix-date-number';
 
-                    let preview = '';
-                    switch(format) {
-                        case 'prefix-date-number':
-                            preview = prefix + separator + currentDate + separator + sampleNumber;
-                            break;
-                        case 'prefix-number':
-                            preview = prefix + separator + sampleNumber;
-                            break;
-                        case 'date-prefix-number':
-                            preview = currentDate + separator + prefix + separator + sampleNumber;
-                            break;
-                        case 'number-only':
-                            preview = sampleNumber;
-                            break;
-                        default:
-                            preview = prefix + separator + currentDate + separator + sampleNumber;
-                    }
+                // Generate sample number
+                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-                    document.getElementById('orderNumberPreview').textContent = preview;
+                let preview = '';
+                switch(format) {
+                    case 'prefix-date-number':
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                        break;
+                    case 'prefix-number':
+                        preview = prefix + separator + sampleNumber;
+                        break;
+                    case 'date-prefix-number':
+                        preview = currentDate + separator + prefix + separator + sampleNumber;
+                        break;
+                    case 'number-only':
+                        preview = sampleNumber;
+                        break;
+                    default:
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
                 }
 
-                // Add event listeners for order number preview updates
-                const orderNumberInputs = ['order_number_prefix', 'order_number_separator', 'order_number_length', 'order_number_format'];
-                orderNumberInputs.forEach(inputId => {
-                    const input = document.getElementById(inputId);
-                    if (input) {
-                        input.addEventListener('input', updateOrderNumberPreview);
-                        input.addEventListener('change', updateOrderNumberPreview);
-                    }
-                });
-
-                // Initial order number preview update
-                updateOrderNumberPreview();
+                document.getElementById('orderNumberPreview').textContent = preview;
             }
 
-            // Invoice Number Preview Functionality (only if invoice tab is active)
-            if (document.getElementById('invoice_prefix')) {
-                function updateInvoiceNumberPreview() {
+            // Add event listeners for order number preview updates
+            const orderNumberInputs = ['order_number_prefix', 'order_number_separator', 'order_number_length', 'order_number_format'];
+            orderNumberInputs.forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.addEventListener('input', updateOrderNumberPreview);
+                    input.addEventListener('change', updateOrderNumberPreview);
+                }
+            });
+
+            // Initial order number preview update
+            updateOrderNumberPreview();
+        }
+
+        // Invoice Number Preview Functionality (only if invoice tab is active)
+        if (document.getElementById('invoice_prefix')) {
+            function updateInvoiceNumberPreview() {
                     const prefix = document.getElementById('invoice_prefix').value || 'INV';
                     const separator = document.getElementById('invoice_separator').value || '-';
                     const length = parseInt(document.getElementById('invoice_length').value) || 6;
@@ -3562,9 +3561,9 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 updateInvoiceNumberPreview();
             }
 
-            // BOM Number Preview Functionality (only if BOM tab is active)
-            if (document.getElementById('bom_number_prefix')) {
-                function updateBOMNumberPreview() {
+        // BOM Number Preview Functionality (only if BOM tab is active)
+        if (document.getElementById('bom_number_prefix')) {
+            function updateBOMNumberPreview() {
                     const prefix = document.getElementById('bom_number_prefix').value || 'BOM';
                     const separator = document.getElementById('bom_number_separator').value || '-';
                     const length = parseInt(document.getElementById('bom_number_length').value) || 6;
@@ -3896,20 +3895,18 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
-                // Add event listeners for quotation number preview updates
-                const quotationInputs = ['quotation_prefix', 'quotation_number_length'];
-                quotationInputs.forEach(inputId => {
-                    const input = document.getElementById(inputId);
-                    if (input) {
-                        input.addEventListener('input', updateQuotationNumberPreview);
-                        input.addEventListener('change', updateQuotationNumberPreview);
-                    }
-                });
-
-                // Initial quotation number preview update
-                updateQuotationNumberPreview();
+        // Add event listeners for quotation number preview updates
+        const quotationInputs = ['quotation_prefix', 'quotation_number_length'];
+        quotationInputs.forEach(inputId => {
+            const input = document.getElementById(inputId);
+            if (input) {
+                input.addEventListener('input', updateQuotationNumberPreview);
+                input.addEventListener('change', updateQuotationNumberPreview);
             }
         });
+
+        // Initial quotation number preview update
+        updateQuotationNumberPreview();
     </script>
 </body>
 </html>

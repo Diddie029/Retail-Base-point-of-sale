@@ -9,6 +9,17 @@ A comprehensive, web-based Point of Sale system built with PHP, MySQL, and moder
 
 ## 🚀 Features
 
+### 🆕 Latest Features (Version 2.5)
+- **🔧 Till Reconciliation System**: Complete cash management with opening/closing procedures, variance tracking, and detailed reconciliation reports
+- **📦 Bill of Materials (BOM)**: Multi-level product assembly with automatic cost calculation and pricing analytics
+- **🎁 Loyalty Program**: Customer points system with rewards management and tiered benefits
+- **💰 Financial Management**: Advanced budgeting, cash flow tracking, and comprehensive financial reporting
+- **📊 Day Not Closed Tracking**: Automated monitoring and management of missed till closings with bulk operations
+- **🔒 Enhanced Security**: Comprehensive security logging, monitoring, and audit trails
+- **📈 Advanced Reporting**: Till reconciliation reports, BOM cost analysis, and real-time financial dashboards
+- **🎨 Improved UI/UX**: Modern responsive design with sticky headers, pagination, and enhanced user experience
+- **⚡ Performance Optimizations**: Improved database queries, caching, and overall system performance
+
 ### Core Functionality
 - **Sales Management**: Complete sales processing with customer management
 - **Inventory Management**: Real-time inventory tracking with low stock alerts
@@ -27,6 +38,11 @@ A comprehensive, web-based Point of Sale system built with PHP, MySQL, and moder
 - **PDF Generation**: Automated invoice and receipt generation
 - **Backup & Restore**: Automated database backups with scheduling
 - **Email Integration**: Email notifications and testing capabilities
+- **Till Reconciliation**: Advanced cash management with closing reconciliation
+- **Bill of Materials (BOM)**: Multi-level product assembly and costing
+- **Auto BOM Pricing**: Automatic cost calculation for assembled products
+- **Loyalty Program**: Customer points and rewards management
+- **Financial Management**: Comprehensive budgeting and cash flow tracking
 
 ### Product Features
 - **Product Variants**: Size, color, and custom attribute management
@@ -51,6 +67,11 @@ A comprehensive, web-based Point of Sale system built with PHP, MySQL, and moder
 - **Tax Calculation**: Configurable tax rates and calculations
 - **Payment Methods**: Multiple payment method support
 - **Receipt Generation**: Professional receipt printing
+- **Till Management**: Multi-till support with opening/closing procedures
+- **Cash Drop Tracking**: Monitor cash removals during shifts
+- **Till Reconciliation**: Daily cash reconciliation with variance tracking
+- **Customer Loyalty**: Points earning and redemption system
+- **Walk-in Customer Support**: Automatic walk-in customer creation
 
 ### Supplier & Procurement
 - **Supplier Performance**: Track supplier reliability and performance metrics
@@ -66,6 +87,10 @@ A comprehensive, web-based Point of Sale system built with PHP, MySQL, and moder
 - **Security Features**: Login attempt monitoring and rate limiting
 - **Backup Management**: Automated and manual backup capabilities
 - **System Maintenance**: Database cleanup and optimization tools
+- **Till Reconciliation Reports**: Comprehensive cash management reporting
+- **Day Not Closed Tracking**: Monitor and manage missed till closings
+- **Financial Dashboard**: Real-time financial metrics and analytics
+- **Security Logs**: Detailed security event monitoring
 
 ## 🛠️ Technology Stack
 
@@ -175,10 +200,16 @@ Configure via Admin Panel:
 5. **Process Sales** - Start selling with the POS interface
 
 ### Daily Operations
-- **Morning**: Check low stock alerts and create purchase orders
-- **Throughout Day**: Process customer sales and manage inventory
-- **Evening**: Review daily sales reports and reconcile cash
-- **Weekly**: Analyze performance metrics and adjust inventory levels
+- **Morning**: Check low stock alerts, create purchase orders, and open tills
+- **Throughout Day**: Process customer sales, manage inventory, and track cash drops
+- **Evening**: Close tills, reconcile cash, and review daily sales reports
+- **Weekly**: Analyze performance metrics, adjust inventory levels, and review financial reports
+
+### Till Management Workflow
+- **Till Opening**: Set opening amounts and register till access
+- **During Shift**: Process sales, record cash drops, and monitor till balance
+- **Till Closing**: Count cash, reconcile differences, and generate closing reports
+- **Reconciliation**: Review variance reports and investigate discrepancies
 
 ### Inventory Management
 - Set reorder points for automatic alerts
@@ -188,11 +219,35 @@ Configure via Admin Panel:
 
 ## 🔧 API Endpoints
 
-The system includes RESTful API endpoints for integration:
+The system includes comprehensive RESTful API endpoints for integration:
 
+### Product & Inventory APIs
 - `GET /api/get_products.php` - Retrieve product catalog
 - `GET /api/get_subcategories.php` - Get category subcategories
 - `POST /api/search_products.php` - Search products by various criteria
+- `GET /api/get_categories_and_families.php` - Get product categories and families
+- `POST /api/scan_barcode.php` - Scan and retrieve product by barcode
+
+### Till & Reconciliation APIs
+- `GET /api/till_reconciliation.php` - Till reconciliation data and reports
+- `POST /api/till_reconciliation.php` - Close missed days and manage till operations
+- `GET /api/get_tills.php` - Retrieve active till information
+
+### Customer & Loyalty APIs
+- `GET /api/get_customers.php` - Retrieve customer database
+- `GET /api/get_customer_loyalty.php` - Get customer loyalty information
+- `POST /api/add_loyalty_points.php` - Add loyalty points to customers
+- `POST /api/search_customers_loyalty.php` - Search customers with loyalty data
+
+### BOM & Pricing APIs
+- `GET /api/get_auto_bom_products.php` - Get BOM products for assembly
+- `GET /api/get_auto_bom_units.php` - Get BOM unit information
+- `POST /api/auto_bom_price_calculation.php` - Calculate BOM pricing
+- `POST /api/recalculate_unit_price.php` - Recalculate product unit prices
+
+### Financial APIs
+- `GET /api/budget/` - Budget management endpoints
+- `POST /api/calculate_quotation_taxes.php` - Calculate quotation taxes
 
 ## 🔒 Security Features
 
@@ -212,6 +267,13 @@ The system includes RESTful API endpoints for integration:
 - **Supplier Reports**: Performance metrics and order history
 - **Financial Reports**: Revenue, profit, and expense analysis
 - **Customer Reports**: Purchase history and customer insights
+- **Till Reconciliation Reports**: Cash variance and closing analysis
+- **Till Short/Excess Reports**: Detailed cash discrepancy tracking
+- **Day Not Closed Reports**: Missed till closing management
+- **BOM Cost Analysis**: Bill of materials pricing reports
+- **Loyalty Program Reports**: Customer points and rewards tracking
+- **Budget vs Actual Reports**: Financial performance analysis
+- **Cash Flow Reports**: Real-time cash flow monitoring
 
 ### Export Options
 - PDF reports for professional presentation
@@ -275,7 +337,19 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🔄 Version History
 
-### Version 2.0 (Current)
+### Version 2.5 (Current)
+- **Till Reconciliation System**: Complete cash management with opening/closing procedures
+- **Bill of Materials (BOM)**: Multi-level product assembly and automatic costing
+- **Loyalty Program**: Customer points system with rewards management
+- **Financial Management**: Advanced budgeting, cash flow tracking, and reconciliation
+- **Day Not Closed Tracking**: Automated monitoring and management of missed till closings
+- **Enhanced Security**: Comprehensive security logging and monitoring
+- **Advanced Reporting**: Till reconciliation, BOM cost analysis, and financial reports
+- **Improved UI/UX**: Modern responsive design with sticky headers and pagination
+- **API Enhancements**: RESTful APIs for till management and reconciliation
+- **Performance Optimizations**: Improved database queries and caching
+
+### Version 2.0
 - Complete rewrite with modern PHP architecture
 - Enhanced security features
 - Improved user interface
@@ -301,8 +375,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Multi-store Support**: Chain management capabilities
 - **E-commerce Integration**: Online store connectivity
 - **Advanced Analytics**: AI-powered business insights
-- **Loyalty Program**: Customer rewards and points system
 - **Multi-language Support**: Internationalization features
+- **Advanced BOM Features**: More complex assembly workflows
+- **Enhanced Loyalty Program**: Tiered rewards and advanced customer segmentation
+- **Real-time Notifications**: Push notifications for till alerts and low stock
+- **Advanced Till Features**: Multi-currency support and advanced reconciliation
 
 ### Technical Improvements
 - **Microservices Architecture**: Scalable system design
@@ -310,6 +387,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Real-time Updates**: WebSocket integration
 - **Cloud Deployment**: AWS/Azure support
 - **Performance Optimization**: Caching and optimization
+- **Database Optimization**: Improved queries and indexing
+- **Frontend Enhancements**: Modern JavaScript with pagination and sticky headers
+- **Security Hardening**: Enhanced authentication and authorization
+- **Code Quality**: Improved error handling and debugging capabilities
 
 ## 📞 Contact
 

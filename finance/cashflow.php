@@ -86,6 +86,138 @@ function getCashInflows($conn, $start_date, $end_date) {
     return $inflows;
 }
 
+function getTillCashData($conn, $start_date, $end_date) {
+    $till_data = [];
+    
+    // Get till cash amounts from till closings with more details
+    $stmt = $conn->prepare("
+        SELECT 
+            tc.id,
+            tc.closed_at,
+            DATE(tc.closed_at) as transaction_date,
+            TIME(tc.closed_at) as close_time,
+            tc.till_id,
+            rt.till_name,
+            rt.location,
+            tc.opening_amount,
+            tc.total_sales,
+            tc.cash_amount,
+            tc.total_amount,
+            tc.difference,
+            tc.shortage_type,
+            tc.created_at,
+            u.username as closed_by,
+            u.username as closer_name,
+            (SELECT COUNT(*) FROM sales WHERE till_id = tc.till_id AND DATE(sale_date) = DATE(tc.closed_at)) as transaction_count,
+            (SELECT SUM(final_amount) FROM sales WHERE till_id = tc.till_id AND DATE(sale_date) = DATE(tc.closed_at)) as actual_sales
+        FROM till_closings tc
+        LEFT JOIN register_tills rt ON tc.till_id = rt.id
+        LEFT JOIN users u ON tc.user_id = u.id
+        WHERE DATE(tc.closed_at) BETWEEN :start_date AND :end_date
+        ORDER BY tc.closed_at DESC
+    ");
+    $stmt->bindParam(':start_date', $start_date);
+    $stmt->bindParam(':end_date', $end_date);
+    $stmt->execute();
+    $till_closings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    return $till_closings;
+}
+
+function getOpenTillsNotClosed($conn) {
+    $open_tills = [];
+    
+    // Get tills that are opened but not closed yet (using created_at as proxy for opened_at)
+    $stmt = $conn->prepare("
+        SELECT 
+            rt.id as till_id,
+            rt.till_name,
+            rt.location,
+            rt.till_status,
+            rt.created_at as opened_at,
+            rt.current_balance,
+            rt.current_user_id,
+            u.username as `current_user`,
+            u.username as current_user_name,
+            DATEDIFF(NOW(), rt.created_at) as days_open,
+            TIMESTAMPDIFF(HOUR, rt.created_at, NOW()) as hours_open,
+            TIMESTAMPDIFF(MINUTE, rt.created_at, NOW()) as minutes_open,
+            (SELECT COUNT(*) FROM sales WHERE till_id = rt.id AND DATE(sale_date) = DATE(rt.created_at)) as transaction_count,
+            (SELECT SUM(final_amount) FROM sales WHERE till_id = rt.id AND DATE(sale_date) = DATE(rt.created_at)) as total_sales,
+            (SELECT SUM(CASE WHEN payment_method = 'cash' THEN final_amount ELSE 0 END) FROM sales WHERE till_id = rt.id AND DATE(sale_date) = DATE(rt.created_at)) as cash_sales,
+            (SELECT MAX(sale_date) FROM sales WHERE till_id = rt.id AND DATE(sale_date) = DATE(rt.created_at)) as last_sale
+        FROM register_tills rt
+        LEFT JOIN users u ON rt.current_user_id = u.id
+        WHERE rt.is_active = 1 
+        AND rt.till_status = 'opened'
+        AND rt.created_at IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM till_closings tc 
+            WHERE tc.till_id = rt.id 
+            AND DATE(tc.closed_at) = DATE(rt.created_at)
+        )
+        ORDER BY rt.created_at DESC
+    ");
+    $stmt->execute();
+    $open_tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    return $open_tills;
+}
+
+function getCurrentSessionSales($conn) {
+    $current_session = [];
+    
+    // Get today's sales by till with more details
+    $stmt = $conn->prepare("
+        SELECT 
+            s.till_id,
+            rt.till_name,
+            rt.location,
+            COUNT(s.id) as transaction_count,
+            SUM(s.final_amount) as total_sales,
+            SUM(CASE WHEN s.payment_method = 'cash' THEN s.final_amount ELSE 0 END) as cash_sales,
+            SUM(CASE WHEN s.payment_method != 'cash' THEN s.final_amount ELSE 0 END) as non_cash_sales,
+            MIN(s.sale_date) as first_sale,
+            MAX(s.sale_date) as last_sale,
+            AVG(s.final_amount) as avg_transaction,
+            COUNT(DISTINCT s.customer_id) as unique_customers
+        FROM sales s
+        LEFT JOIN register_tills rt ON s.till_id = rt.id
+        WHERE DATE(s.sale_date) = CURDATE()
+        GROUP BY s.till_id, rt.till_name, rt.location
+        ORDER BY total_sales DESC
+    ");
+    $stmt->execute();
+    $today_sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Get current till status with more details
+    $stmt = $conn->prepare("
+        SELECT 
+            rt.id,
+            rt.till_name,
+            rt.location,
+            rt.till_status,
+            rt.current_balance,
+            rt.current_user_id,
+            rt.created_at as opened_at,
+            u.username as `current_user`,
+            u.username as current_user_name,
+            TIMESTAMPDIFF(HOUR, rt.created_at, NOW()) as hours_open,
+            TIMESTAMPDIFF(MINUTE, rt.created_at, NOW()) as minutes_open
+        FROM register_tills rt
+        LEFT JOIN users u ON rt.current_user_id = u.id
+        WHERE rt.is_active = 1
+        ORDER BY rt.till_name
+    ");
+    $stmt->execute();
+    $till_status = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    return [
+        'today_sales' => $today_sales,
+        'till_status' => $till_status
+    ];
+}
+
 function getCashOutflows($conn, $start_date, $end_date) {
     $outflows = [];
     
@@ -220,6 +352,9 @@ function getCashFlowTrends($conn, $start_date, $end_date, $period = 'daily') {
 // Get cash flow data
 $inflows = getCashInflows($conn, $start_date, $end_date);
 $outflows = getCashOutflows($conn, $start_date, $end_date);
+$till_cash_data = getTillCashData($conn, $start_date, $end_date);
+$open_tills_not_closed = getOpenTillsNotClosed($conn);
+$current_session = getCurrentSessionSales($conn);
 $metrics = calculateCashFlowMetrics($inflows, $outflows);
 $trends = getCashFlowTrends($conn, $start_date, $end_date, $period);
 
@@ -445,6 +580,81 @@ $cash_flow_statement = categorizeCashFlow($inflows, $outflows);
             background: linear-gradient(135deg, #fdbb2d 0%, #22c1c3 100%);
         }
         
+        .cashflow-card.till-cash {
+            background: linear-gradient(135deg, #ff9a56 0%, #ff6b95 100%);
+        }
+        
+        .cashflow-card.till-deposits {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        
+        .cashflow-card.till-session {
+            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+        }
+        
+        .cashflow-card.till-accuracy {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+        }
+        
+        .cashflow-card.open-tills-count {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+        }
+        
+        .cashflow-card.open-tills-sales {
+            background: linear-gradient(135deg, #ffa726 0%, #ff9800 100%);
+        }
+        
+        .cashflow-card.open-tills-cash {
+            background: linear-gradient(135deg, #ab47bc 0%, #9c27b0 100%);
+        }
+        
+        /* Enhanced table styling */
+        .table-responsive {
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .table-responsive::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        .table-responsive::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+        
+        .table-responsive::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 4px;
+        }
+        
+        .table-responsive::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+        
+        .sticky-top {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: white !important;
+        }
+        
+        .table-hover tbody tr:hover {
+            background-color: rgba(0,123,255,0.1);
+        }
+        
+        .btn-group-actions .btn {
+            margin: 0 2px;
+        }
+        
+        .search-filter-row {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        
         .chart-container {
             position: relative;
             height: 400px;
@@ -597,6 +807,475 @@ $cash_flow_statement = categorizeCashFlow($inflows, $outflows);
                             <small class="opacity-75">Core business operations</small>
                         </div>
                     </div>
+                </div>
+
+                <!-- Till Cash Tracking Section -->
+                <div class="row mb-4">
+                    <!-- Current Session Sales -->
+                    <div class="col-lg-6 mb-4">
+                        <div class="metric-card">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h5 class="mb-0"><i class="bi bi-cash-coin text-success"></i> Current Session Sales</h5>
+                                <div>
+                                    <button class="btn btn-sm btn-outline-success me-2" onclick="refreshSessionData()" title="Refresh current session data">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="exportCurrentSession()" title="Export current session data">
+                                        <i class="bi bi-download"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Search and Filter -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <input type="text" class="form-control form-control-sm" id="sessionSearch" placeholder="Search tills..." onkeyup="filterSessionTable()">
+                                </div>
+                                <div class="col-md-6">
+                                    <select class="form-select form-select-sm" id="sessionFilter" onchange="filterSessionTable()">
+                                        <option value="">All Status</option>
+                                        <option value="opened">Opened</option>
+                                        <option value="closed">Closed</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-sm table-hover" id="sessionTable">
+                                    <thead class="sticky-top bg-light">
+                                        <tr>
+                                            <th>Till</th>
+                                            <th>Cashier</th>
+                                            <th>Status</th>
+                                            <th>Transactions</th>
+                                            <th>Cash Sales</th>
+                                            <th>Total Sales</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($current_session['today_sales'])): ?>
+                                        <tr>
+                                            <td colspan="7" class="text-center text-muted">
+                                                <i class="bi bi-info-circle"></i> No sales recorded today
+                                            </td>
+                                        </tr>
+                                        <?php else: ?>
+                                        <?php foreach ($current_session['today_sales'] as $session): ?>
+                                        <?php
+                                        $till_status = null;
+                                        foreach ($current_session['till_status'] as $status) {
+                                            if ($status['id'] == $session['till_id']) {
+                                                $till_status = $status;
+                                                break;
+                                            }
+                                        }
+                                        ?>
+                                        <tr data-till-id="<?php echo $session['till_id']; ?>" data-status="<?php echo $till_status['till_status'] ?? 'unknown'; ?>">
+                                            <td>
+                                                <strong><?php echo htmlspecialchars($session['till_name'] ?? 'N/A'); ?></strong>
+                                                <?php if ($session['location']): ?>
+                                                <br><small class="text-muted"><?php echo htmlspecialchars($session['location']); ?></small>
+                                                <?php endif; ?>
+                                                <?php if ($session['unique_customers'] > 0): ?>
+                                                <br><small class="text-info"><?php echo $session['unique_customers']; ?> customers</small>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($till_status && $till_status['current_user_name']): ?>
+                                                    <strong><?php echo htmlspecialchars($till_status['current_user_name']); ?></strong>
+                                                    <br><small class="text-muted">@<?php echo htmlspecialchars($till_status['current_user']); ?></small>
+                                                    <?php if ($till_status['hours_open'] > 0): ?>
+                                                    <br><small class="text-success"><?php echo $till_status['hours_open']; ?>h <?php echo $till_status['minutes_open'] % 60; ?>m</small>
+                                                    <?php endif; ?>
+                                                <?php else: ?>
+                                                    <span class="text-muted">No cashier</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($till_status): ?>
+                                                    <span class="badge bg-<?php echo $till_status['till_status'] == 'opened' ? 'success' : 'secondary'; ?>">
+                                                        <?php echo ucfirst($till_status['till_status']); ?>
+                                                    </span>
+                                                    <?php if ($till_status['current_balance'] > 0): ?>
+                                                    <br><small class="text-muted">Balance: <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($till_status['current_balance'], 2); ?></small>
+                                                    <?php endif; ?>
+                                                <?php else: ?>
+                                                    <span class="badge bg-secondary">Unknown</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-center">
+                                                <?php echo number_format($session['transaction_count']); ?>
+                                                <?php if ($session['avg_transaction'] > 0): ?>
+                                                <br><small class="text-muted">Avg: <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($session['avg_transaction'], 2); ?></small>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-end">
+                                                <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($session['cash_sales'], 2); ?>
+                                                <?php if ($session['total_sales'] > 0): ?>
+                                                <br><small class="text-muted"><?php echo number_format(($session['cash_sales'] / $session['total_sales']) * 100, 1); ?>%</small>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-end fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($session['total_sales'], 2); ?></td>
+                                            <td>
+                                                <button class="btn btn-sm btn-outline-info" onclick="viewSessionDetails(<?php echo $session['till_id']; ?>)" title="View Details">
+                                                    <i class="bi bi-eye"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Till Cash Summary -->
+                    <div class="col-lg-6 mb-4">
+                        <div class="metric-card">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h5 class="mb-0"><i class="bi bi-bank text-primary"></i> Till Cash Summary</h5>
+                                <div>
+                                    <button class="btn btn-sm btn-outline-primary me-2" onclick="exportTillCashReport()" title="Export Till Cash Report">
+                                        <i class="bi bi-file-earmark-spreadsheet"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-info" onclick="viewDetailedReport()" title="View Detailed Report">
+                                        <i class="bi bi-list-ul"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Search and Filter -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <input type="text" class="form-control form-control-sm" id="tillSearch" placeholder="Search tills, cashiers..." onkeyup="filterTillTable()">
+                                </div>
+                                <div class="col-md-6">
+                                    <select class="form-select form-select-sm" id="tillFilter" onchange="filterTillTable()">
+                                        <option value="">All Differences</option>
+                                        <option value="exact">Exact</option>
+                                        <option value="shortage">Shortage</option>
+                                        <option value="excess">Excess</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-sm table-hover" id="tillTable">
+                                    <thead class="sticky-top bg-light">
+                                        <tr>
+                                            <th>Date & Time</th>
+                                            <th>Till</th>
+                                            <th>Closed By</th>
+                                            <th>Opening</th>
+                                            <th>Transactions</th>
+                                            <th>Cash Sales</th>
+                                            <th>Total Deposit</th>
+                                            <th>Difference</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($till_cash_data)): ?>
+                                        <tr>
+                                            <td colspan="9" class="text-center text-muted">
+                                                <i class="bi bi-info-circle"></i> No till closings in selected period
+                                            </td>
+                                        </tr>
+                                        <?php else: ?>
+                                        <?php foreach ($till_cash_data as $till): ?>
+                                        <tr data-difference="<?php echo $till['difference'] == 0 ? 'exact' : $till['shortage_type']; ?>">
+                                            <td>
+                                                <strong><?php echo date('M d', strtotime($till['transaction_date'])); ?></strong>
+                                                <br><small class="text-muted"><?php echo date('H:i', strtotime($till['close_time'])); ?></small>
+                                            </td>
+                                            <td>
+                                                <strong><?php echo htmlspecialchars($till['till_name'] ?? 'N/A'); ?></strong>
+                                                <?php if ($till['location']): ?>
+                                                <br><small class="text-muted"><?php echo htmlspecialchars($till['location']); ?></small>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($till['closer_name']): ?>
+                                                    <strong><?php echo htmlspecialchars($till['closer_name']); ?></strong>
+                                                    <br><small class="text-muted">@<?php echo htmlspecialchars($till['closed_by']); ?></small>
+                                                <?php else: ?>
+                                                    <span class="text-muted">Unknown</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-end">
+                                                <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($till['opening_amount'], 2); ?>
+                                            </td>
+                                            <td class="text-center">
+                                                <?php echo number_format($till['transaction_count'] ?? 0); ?>
+                                                <?php if ($till['actual_sales'] && $till['actual_sales'] != $till['total_sales']): ?>
+                                                <br><small class="text-warning">Actual: <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($till['actual_sales'], 2); ?></small>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td class="text-end"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($till['cash_amount'], 2); ?></td>
+                                            <td class="text-end fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($till['total_amount'], 2); ?></td>
+                                            <td class="text-end">
+                                                <?php if ($till['difference'] != 0): ?>
+                                                    <span class="badge bg-<?php echo $till['shortage_type'] == 'shortage' ? 'danger' : ($till['shortage_type'] == 'excess' ? 'success' : 'warning'); ?>">
+                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format(abs($till['difference']), 2); ?>
+                                                    </span>
+                                                    <br><small class="text-muted"><?php echo ucfirst($till['shortage_type']); ?></small>
+                                                <?php else: ?>
+                                                    <span class="badge bg-success">Exact</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <button class="btn btn-sm btn-outline-info" onclick="viewTillDetails(<?php echo $till['id']; ?>)" title="View Details">
+                                                    <i class="bi bi-eye"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Open Tills Not Closed Section -->
+                <?php if (!empty($open_tills_not_closed)): ?>
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="metric-card">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h5 class="mb-0"><i class="bi bi-exclamation-triangle text-warning"></i> Open Tills Not Closed</h5>
+                                <div>
+                                    <button class="btn btn-sm btn-outline-warning me-2" onclick="exportOpenTills()" title="Export Open Tills Report">
+                                        <i class="bi bi-file-earmark-spreadsheet"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-info" onclick="refreshOpenTills()" title="Refresh Open Tills Data">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="alert alert-warning mb-3">
+                                <i class="bi bi-info-circle"></i> 
+                                <strong>Warning:</strong> The following tills have been opened but not yet closed. 
+                                This may indicate incomplete cash reconciliation.
+                            </div>
+                            
+                            <!-- Search and Filter -->
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <input type="text" class="form-control form-control-sm" id="openTillsSearch" placeholder="Search open tills..." onkeyup="filterOpenTillsTable()">
+                                </div>
+                                <div class="col-md-6">
+                                    <select class="form-select form-select-sm" id="openTillsFilter" onchange="filterOpenTillsTable()">
+                                        <option value="">All Days Open</option>
+                                        <option value="0">Today</option>
+                                        <option value="1">1+ Days</option>
+                                        <option value="2">2+ Days</option>
+                                        <option value="3">3+ Days</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-sm table-hover" id="openTillsTable">
+                                    <thead class="sticky-top bg-light">
+                                        <tr>
+                                            <th>Till</th>
+                                            <th>Cashier</th>
+                                            <th>Opened</th>
+                                            <th>Days Open</th>
+                                            <th>Current Balance</th>
+                                            <th>Transactions</th>
+                                            <th>Cash Sales</th>
+                                            <th>Total Sales</th>
+                                            <th>Last Sale</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($open_tills_not_closed as $open_till): ?>
+                                        <tr data-days-open="<?php echo $open_till['days_open']; ?>">
+                                            <td>
+                                                <strong><?php echo htmlspecialchars($open_till['till_name']); ?></strong>
+                                                <?php if ($open_till['location']): ?>
+                                                <br><small class="text-muted"><?php echo htmlspecialchars($open_till['location']); ?></small>
+                                                <?php endif; ?>
+                                                <span class="badge bg-warning ms-2">Not Closed</span>
+                                            </td>
+                                            <td>
+                                                <?php if ($open_till['current_user_name']): ?>
+                                                    <strong><?php echo htmlspecialchars($open_till['current_user_name']); ?></strong>
+                                                    <br><small class="text-muted">@<?php echo htmlspecialchars($open_till['current_user']); ?></small>
+                                                <?php else: ?>
+                                                    <span class="text-muted">No cashier</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <strong><?php echo date('M d, Y', strtotime($open_till['opened_at'])); ?></strong>
+                                                <br><small class="text-muted"><?php echo date('H:i', strtotime($open_till['opened_at'])); ?></small>
+                                            </td>
+                                            <td class="text-center">
+                                                <span class="badge bg-<?php echo $open_till['days_open'] >= 3 ? 'danger' : ($open_till['days_open'] >= 1 ? 'warning' : 'info'); ?>">
+                                                    <?php echo $open_till['days_open']; ?> day<?php echo $open_till['days_open'] != 1 ? 's' : ''; ?>
+                                                </span>
+                                                <br><small class="text-muted"><?php echo $open_till['hours_open']; ?>h <?php echo $open_till['minutes_open'] % 60; ?>m</small>
+                                            </td>
+                                            <td class="text-end">
+                                                <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($open_till['current_balance'], 2); ?>
+                                            </td>
+                                            <td class="text-center">
+                                                <?php echo number_format($open_till['transaction_count'] ?? 0); ?>
+                                            </td>
+                                            <td class="text-end">
+                                                <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($open_till['cash_sales'] ?? 0, 2); ?>
+                                            </td>
+                                            <td class="text-end fw-bold">
+                                                <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($open_till['total_sales'] ?? 0, 2); ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($open_till['last_sale']): ?>
+                                                    <small><?php echo date('H:i', strtotime($open_till['last_sale'])); ?></small>
+                                                    <br><small class="text-muted"><?php echo date('M d', strtotime($open_till['last_sale'])); ?></small>
+                                                <?php else: ?>
+                                                    <span class="text-muted">No sales</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <button class="btn btn-sm btn-outline-warning" onclick="forceCloseTill(<?php echo $open_till['till_id']; ?>)" title="Force Close Till">
+                                                    <i class="bi bi-x-circle"></i>
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-info" onclick="viewOpenTillDetails(<?php echo $open_till['till_id']; ?>)" title="View Details">
+                                                    <i class="bi bi-eye"></i>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <!-- Till Cash Summary Cards -->
+                <div class="row mb-4">
+                    <?php
+                    // Calculate till cash totals
+                    $total_cash_sales = array_sum(array_column($till_cash_data, 'cash_amount'));
+                    $total_deposits = array_sum(array_column($till_cash_data, 'total_amount'));
+                    $total_differences = array_sum(array_column($till_cash_data, 'difference'));
+                    $shortage_count = count(array_filter($till_cash_data, function($till) { return $till['shortage_type'] == 'shortage'; }));
+                    $excess_count = count(array_filter($till_cash_data, function($till) { return $till['shortage_type'] == 'excess'; }));
+                    $exact_count = count(array_filter($till_cash_data, function($till) { return $till['difference'] == 0; }));
+                    
+                    // Current session totals
+                    $current_total_sales = array_sum(array_column($current_session['today_sales'], 'total_sales'));
+                    $current_cash_sales = array_sum(array_column($current_session['today_sales'], 'cash_sales'));
+                    $current_transactions = array_sum(array_column($current_session['today_sales'], 'transaction_count'));
+                    
+                    // Open tills totals
+                    $open_tills_count = count($open_tills_not_closed);
+                    $open_tills_total_sales = array_sum(array_column($open_tills_not_closed, 'total_sales'));
+                    $open_tills_total_cash = array_sum(array_column($open_tills_not_closed, 'cash_sales'));
+                    $open_tills_current_balance = array_sum(array_column($open_tills_not_closed, 'current_balance'));
+                    ?>
+                    
+                    <div class="col-xl-3 col-md-6 mb-3">
+                        <div class="cashflow-card till-cash">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Total Till Cash Sales</h6>
+                                <i class="bi bi-cash-coin fs-4"></i>
+                            </div>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($total_cash_sales, 2); ?></h3>
+                            <small class="opacity-75">From till closings</small>
+                        </div>
+                    </div>
+                    
+                    <div class="col-xl-3 col-md-6 mb-3">
+                        <div class="cashflow-card till-deposits">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Total Deposits</h6>
+                                <i class="bi bi-bank fs-4"></i>
+                            </div>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($total_deposits, 2); ?></h3>
+                            <small class="opacity-75">Actual bank deposits</small>
+                        </div>
+                    </div>
+                    
+                    <div class="col-xl-3 col-md-6 mb-3">
+                        <div class="cashflow-card till-session">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Today's Session</h6>
+                                <i class="bi bi-clock fs-4"></i>
+                            </div>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($current_total_sales, 2); ?></h3>
+                            <small class="opacity-75"><?php echo number_format($current_transactions); ?> transactions</small>
+                        </div>
+                    </div>
+                    
+                    <div class="col-xl-3 col-md-6 mb-3">
+                        <div class="cashflow-card till-accuracy">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Till Accuracy</h6>
+                                <i class="bi bi-check-circle fs-4"></i>
+                            </div>
+                            <h3 class="mb-0">
+                                <?php 
+                                $total_closings = count($till_cash_data);
+                                $accuracy_rate = $total_closings > 0 ? ($exact_count / $total_closings) * 100 : 0;
+                                echo number_format($accuracy_rate, 1) . '%';
+                                ?>
+                            </h3>
+                            <small class="opacity-75">
+                                <?php echo $exact_count; ?> exact, 
+                                <?php echo $shortage_count; ?> shortage, 
+                                <?php echo $excess_count; ?> excess
+                            </small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Open Tills Summary Cards -->
+                <?php if ($open_tills_count > 0): ?>
+                <div class="row mb-4">
+                    <div class="col-xl-4 col-md-6 mb-3">
+                        <div class="cashflow-card open-tills-count">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Open Tills Not Closed</h6>
+                                <i class="bi bi-exclamation-triangle fs-4"></i>
+                            </div>
+                            <h3 class="mb-0"><?php echo $open_tills_count; ?></h3>
+                            <small class="opacity-75">Requires attention</small>
+                        </div>
+                    </div>
+                    
+                    <div class="col-xl-4 col-md-6 mb-3">
+                        <div class="cashflow-card open-tills-sales">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Open Tills Sales</h6>
+                                <i class="bi bi-cash-stack fs-4"></i>
+                            </div>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($open_tills_total_sales, 2); ?></h3>
+                            <small class="opacity-75">Unreconciled sales</small>
+                        </div>
+                    </div>
+                    
+                    <div class="col-xl-4 col-md-6 mb-3">
+                        <div class="cashflow-card open-tills-cash">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="mb-0">Open Tills Cash</h6>
+                                <i class="bi bi-coin fs-4"></i>
+                            </div>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($open_tills_total_cash, 2); ?></h3>
+                            <small class="opacity-75">Cash in open tills</small>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
                 </div>
 
                 <!-- Charts Section -->
@@ -1012,6 +1691,218 @@ $cash_flow_statement = categorizeCashFlow($inflows, $outflows);
             }
         });
 
+        // Refresh session data
+        function refreshSessionData() {
+            // Reload the page to get fresh session data
+            window.location.reload();
+        }
+        
+        // Filter session table
+        function filterSessionTable() {
+            const searchTerm = document.getElementById('sessionSearch').value.toLowerCase();
+            const statusFilter = document.getElementById('sessionFilter').value;
+            const table = document.getElementById('sessionTable');
+            const rows = table.getElementsByTagName('tr');
+            
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const tillName = row.cells[0].textContent.toLowerCase();
+                const cashier = row.cells[1].textContent.toLowerCase();
+                const status = row.getAttribute('data-status') || '';
+                
+                const matchesSearch = tillName.includes(searchTerm) || cashier.includes(searchTerm);
+                const matchesStatus = !statusFilter || status === statusFilter;
+                
+                if (matchesSearch && matchesStatus) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            }
+        }
+        
+        // Filter till table
+        function filterTillTable() {
+            const searchTerm = document.getElementById('tillSearch').value.toLowerCase();
+            const differenceFilter = document.getElementById('tillFilter').value;
+            const table = document.getElementById('tillTable');
+            const rows = table.getElementsByTagName('tr');
+            
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const tillName = row.cells[1].textContent.toLowerCase();
+                const cashier = row.cells[2].textContent.toLowerCase();
+                const difference = row.getAttribute('data-difference') || '';
+                
+                const matchesSearch = tillName.includes(searchTerm) || cashier.includes(searchTerm);
+                const matchesDifference = !differenceFilter || difference === differenceFilter;
+                
+                if (matchesSearch && matchesDifference) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            }
+        }
+        
+        // Export current session data
+        function exportCurrentSession() {
+            const table = document.getElementById('sessionTable');
+            let csv = 'Till,Location,Cashier,Status,Transactions,Avg Transaction,Cash Sales,Cash %,Total Sales,Customers\n';
+            
+            const rows = table.getElementsByTagName('tr');
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.style.display !== 'none') {
+                    const cells = row.getElementsByTagName('td');
+                    if (cells.length >= 6) {
+                        const tillName = cells[0].textContent.replace(/\n/g, ' ').trim();
+                        const cashier = cells[1].textContent.replace(/\n/g, ' ').trim();
+                        const status = cells[2].textContent.replace(/\n/g, ' ').trim();
+                        const transactions = cells[3].textContent.replace(/\n/g, ' ').trim();
+                        const cashSales = cells[4].textContent.replace(/\n/g, ' ').trim();
+                        const totalSales = cells[5].textContent.replace(/\n/g, ' ').trim();
+                        
+                        csv += `"${tillName}","","${cashier}","${status}","${transactions}","","${cashSales}","","${totalSales}",""\n`;
+                    }
+                }
+            }
+            
+            downloadCSV(csv, 'current_session_sales_' + new Date().toISOString().split('T')[0] + '.csv');
+        }
+        
+        // Export till cash report
+        function exportTillCashReport() {
+            const table = document.getElementById('tillTable');
+            let csv = 'Date,Close Time,Till,Location,Closed By,Opening Amount,Transactions,Actual Sales,Cash Sales,Total Deposit,Difference,Shortage Type\n';
+            
+            const rows = table.getElementsByTagName('tr');
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.style.display !== 'none') {
+                    const cells = row.getElementsByTagName('td');
+                    if (cells.length >= 8) {
+                        const dateTime = cells[0].textContent.replace(/\n/g, ' ').trim();
+                        const tillName = cells[1].textContent.replace(/\n/g, ' ').trim();
+                        const cashier = cells[2].textContent.replace(/\n/g, ' ').trim();
+                        const opening = cells[3].textContent.replace(/\n/g, ' ').trim();
+                        const transactions = cells[4].textContent.replace(/\n/g, ' ').trim();
+                        const cashSales = cells[5].textContent.replace(/\n/g, ' ').trim();
+                        const totalDeposit = cells[6].textContent.replace(/\n/g, ' ').trim();
+                        const difference = cells[7].textContent.replace(/\n/g, ' ').trim();
+
+                        csv += `"${dateTime}","${tillName}","","${cashier}","${opening}","${transactions}","","${cashSales}","${totalDeposit}","${difference}",""\n`;
+                    }
+                }
+            }
+            
+            downloadCSV(csv, 'till_cash_report_' + new Date().toISOString().split('T')[0] + '.csv');
+        }
+        
+        // Download CSV file
+        function downloadCSV(csv, filename) {
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+        
+        // View session details
+        function viewSessionDetails(tillId) {
+            // Open a modal or redirect to detailed view
+            window.open(`../pos/till_details.php?till_id=${tillId}&date=${new Date().toISOString().split('T')[0]}`, '_blank');
+        }
+        
+        // View till details
+        function viewTillDetails(closingId) {
+            // Open a modal or redirect to detailed view
+            window.open(`../pos/till_closing_details.php?closing_id=${closingId}`, '_blank');
+        }
+        
+        // View detailed report
+        function viewDetailedReport() {
+            // Open detailed report in new window
+            const startDate = '<?php echo $start_date; ?>';
+            const endDate = '<?php echo $end_date; ?>';
+            window.open(`../reports/till_cash_detailed.php?start_date=${startDate}&end_date=${endDate}`, '_blank');
+        }
+        
+        // Filter open tills table
+        function filterOpenTillsTable() {
+            const searchTerm = document.getElementById('openTillsSearch').value.toLowerCase();
+            const daysFilter = document.getElementById('openTillsFilter').value;
+            const table = document.getElementById('openTillsTable');
+            const rows = table.getElementsByTagName('tr');
+            
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const tillName = row.cells[0].textContent.toLowerCase();
+                const cashier = row.cells[1].textContent.toLowerCase();
+                const daysOpen = parseInt(row.getAttribute('data-days-open')) || 0;
+                
+                const matchesSearch = tillName.includes(searchTerm) || cashier.includes(searchTerm);
+                const matchesDays = !daysFilter || daysOpen >= parseInt(daysFilter);
+                
+                if (matchesSearch && matchesDays) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            }
+        }
+        
+        // Export open tills data
+        function exportOpenTills() {
+            const table = document.getElementById('openTillsTable');
+            let csv = 'Till,Location,Cashier,Opened Date,Opened Time,Days Open,Hours Open,Current Balance,Transactions,Cash Sales,Total Sales,Last Sale\n';
+            
+            const rows = table.getElementsByTagName('tr');
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                if (row.style.display !== 'none') {
+                    const cells = row.getElementsByTagName('td');
+                    if (cells.length >= 9) {
+                        const tillName = cells[0].textContent.replace(/\n/g, ' ').trim();
+                        const cashier = cells[1].textContent.replace(/\n/g, ' ').trim();
+                        const opened = cells[2].textContent.replace(/\n/g, ' ').trim();
+                        const daysOpen = cells[3].textContent.replace(/\n/g, ' ').trim();
+                        const balance = cells[4].textContent.replace(/\n/g, ' ').trim();
+                        const transactions = cells[5].textContent.replace(/\n/g, ' ').trim();
+                        const cashSales = cells[6].textContent.replace(/\n/g, ' ').trim();
+                        const totalSales = cells[7].textContent.replace(/\n/g, ' ').trim();
+                        const lastSale = cells[8].textContent.replace(/\n/g, ' ').trim();
+                        
+                        csv += `"${tillName}","","${cashier}","${opened}","","${daysOpen}","","${balance}","${transactions}","${cashSales}","${totalSales}","${lastSale}"\n`;
+                    }
+                }
+            }
+            
+            downloadCSV(csv, 'open_tills_not_closed_' + new Date().toISOString().split('T')[0] + '.csv');
+        }
+        
+        // Refresh open tills data
+        function refreshOpenTills() {
+            window.location.reload();
+        }
+        
+        // Force close till
+        function forceCloseTill(tillId) {
+            if (confirm('Are you sure you want to force close this till? This action cannot be undone.')) {
+                // Redirect to force close page
+                window.open(`../pos/force_close_till.php?till_id=${tillId}`, '_blank');
+            }
+        }
+        
+        // View open till details
+        function viewOpenTillDetails(tillId) {
+            window.open(`../pos/open_till_details.php?till_id=${tillId}`, '_blank');
+        }
+        
         // Export and Print Functions
         function exportCashFlow() {
             // Create a simple CSV export

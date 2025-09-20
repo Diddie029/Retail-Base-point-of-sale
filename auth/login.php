@@ -5,6 +5,7 @@ session_start();
 // pos_guard_redirect_if_not_installed();
 
 require_once '../include/db.php';
+require_once '../include/functions.php';
 
 if(isset($_SESSION['user_id'])) {
     // Get user's role redirect URL

@@ -438,27 +438,6 @@ if (hasPermission('manage_sales', $permissions) || hasPermission('process_sales'
                         </div>
                     </div>
 
-                    <!-- Account Reconciliation -->
-                    <div class="col-xl-3 col-lg-4 col-md-6 mb-4">
-                        <div class="card module-card h-100" onclick="location.href='reconciliation.php'" style="cursor: pointer;">
-                            <div class="card-body text-center p-4">
-                                <div class="module-icon mb-3">
-                                    <i class="bi bi-check2-square fs-1 text-success"></i>
-                                </div>
-                                <h5 class="card-title">Account Reconciliation</h5>
-                                <p class="card-text text-muted">Bank reconciliation, account matching and balance verification</p>
-                                <div class="module-stats">
-                                    <small class="text-success"><i class="bi bi-bank"></i> Balance Verification</small>
-                                </div>
-                            </div>
-                            <div class="card-footer bg-transparent border-0">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <small class="text-muted">Reconcile Accounts</small>
-                                    <i class="bi bi-arrow-right text-success"></i>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Quick Actions Row -->
