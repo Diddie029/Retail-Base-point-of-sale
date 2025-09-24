@@ -42,6 +42,10 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
     $settings[$row['setting_key']] = $row['setting_value'];
 }
 
+// Set default values from settings
+$default_minimum_stock = $settings['default_minimum_stock_level'] ?? '5';
+$default_reorder_point = $settings['default_reorder_point'] ?? '10';
+
 // Ensure tax_category_id column exists in products table
 try {
     $stmt = $conn->query("DESCRIBE products");
@@ -95,17 +99,79 @@ $categories = $categories_stmt->fetchAll(PDO::FETCH_ASSOC);
 $brands_stmt = $conn->query("SELECT * FROM brands WHERE is_active = 1 ORDER BY name");
 $brands = $brands_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get tax categories
-$tax_categories_stmt = $conn->query("SELECT * FROM tax_categories WHERE is_active = 1 ORDER BY name");
-$tax_categories = $tax_categories_stmt->fetchAll(PDO::FETCH_ASSOC);
+// Get tax categories with their rates
+$tax_categories_stmt = $conn->prepare("
+    SELECT tc.*, tr.name as rate_name, tr.rate_percentage, tr.is_active as rate_active
+    FROM tax_categories tc
+    LEFT JOIN tax_rates tr ON tc.id = tr.tax_category_id AND tr.is_active = 1
+    WHERE tc.is_active = 1
+    ORDER BY tc.name, tr.rate_percentage
+");
+$tax_categories_stmt->execute();
+$tax_data = $tax_categories_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Group tax rates by category
+$tax_categories = [];
+$tax_rates_by_category = [];
+foreach ($tax_data as $row) {
+    $category_id = $row['id'];
+    if (!isset($tax_categories[$category_id])) {
+        $tax_categories[$category_id] = $row;
+        $tax_categories[$category_id]['rates'] = [];
+    }
+    if (!empty($row['rate_name'])) {
+        $tax_categories[$category_id]['rates'][] = $row;
+    }
+}
 
 // Get suppliers
 $suppliers_stmt = $conn->query("SELECT * FROM suppliers WHERE is_active = 1 ORDER BY name");
 $suppliers = $suppliers_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get product families
-$families_stmt = $conn->query("SELECT * FROM product_families WHERE status = 'active' ORDER BY name");
+// Check if status column exists in product_families table
+$has_families_status = false;
+try {
+    $result = $conn->query("SHOW COLUMNS FROM product_families LIKE 'status'");
+    $has_families_status = $result->rowCount() > 0;
+} catch (PDOException $e) {
+    $has_families_status = false;
+}
+
+// Check what columns exist in product_families table for ordering
+$families_order_column = 'id'; // Default fallback
+try {
+    $result = $conn->query("SHOW COLUMNS FROM product_families");
+    $columns = $result->fetchAll(PDO::FETCH_COLUMN);
+    
+    // Try to find a suitable column for ordering
+    if (in_array('name', $columns)) {
+        $families_order_column = 'name';
+    } elseif (in_array('family_name', $columns)) {
+        $families_order_column = 'family_name';
+    } elseif (in_array('title', $columns)) {
+        $families_order_column = 'title';
+    } else {
+        $families_order_column = 'id'; // Fallback to ID
+    }
+} catch (PDOException $e) {
+    $families_order_column = 'id'; // Fallback to ID
+}
+
+// Get product families with safe column handling
+if ($has_families_status) {
+    $families_stmt = $conn->query("SELECT * FROM product_families WHERE status = 'active' ORDER BY $families_order_column");
+} else {
+    $families_stmt = $conn->query("SELECT * FROM product_families ORDER BY $families_order_column");
+}
 $families = $families_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Ensure base_unit exists in family data for display purposes
+foreach ($families as &$family) {
+    if (!isset($family['base_unit'])) {
+        $family['base_unit'] = 'each'; // Default value if column doesn't exist
+    }
+}
 
 $errors = [];
 $success = '';
@@ -388,12 +454,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            // Auto-generate Product Number if not provided
-            if (empty($product_number)) {
-                // Check if auto-generate Product Number is enabled in system settings
-                if (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1') {
+            // Auto-generate Product Number if not provided and auto-generation is enabled
+            if (empty($product_number) && isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1') {
                     $product_number = generateProductNumber($conn);
-                }
             }
 
             // Determine actual status based on publication status
@@ -579,6 +642,79 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
     <style>
         :root {
             --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
+            --sidebar-width: 280px;
+        }
+
+        /* Ensure sidebar is properly positioned */
+        .sidebar {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            height: 100vh !important;
+            width: var(--sidebar-width) !important;
+            z-index: 1000 !important;
+            overflow-y: auto !important;
+            transition: all 0.3s ease !important;
+        }
+
+        /* Ensure main content is not hidden by sidebar */
+        .main-content {
+            margin-left: var(--sidebar-width) !important;
+            min-height: 100vh !important;
+            position: relative !important;
+            z-index: 1 !important;
+            transition: all 0.3s ease !important;
+        }
+
+        /* Fix navigation overlap issue */
+        .main-content {
+            margin-left: 280px !important;
+            padding-left: 0 !important;
+            width: calc(100% - 280px) !important;
+        }
+
+        .content {
+            padding: 2rem !important;
+            max-width: 100% !important;
+        }
+
+        .container-fluid {
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+        }
+
+        /* Ensure form sections are properly spaced */
+        .row {
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+        }
+
+        .col-md-8, .col-md-4 {
+            padding-left: 15px !important;
+            padding-right: 15px !important;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .main-content {
+                margin-left: 0 !important;
+                width: 100% !important;
+            }
+
+            .content {
+                padding: 1rem !important;
+            }
+        }
+
+        /* Fix for header and content positioning */
+        body {
+            overflow-x: hidden !important;
+        }
+
+        /* Ensure all sections are visible */
+        .product-form, .form-section, .section-title {
+            position: relative !important;
+            z-index: 2 !important;
         }
 
         #publicationSection {
@@ -715,24 +851,30 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
                             </div>
 
                             <div class="form-group">
-                                <label for="product_number" class="form-label">Product Number</label>
+                                <label for="product_number" class="form-label">
+                                    Product Number
+                                    <?php if (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1'): ?>
+                                    <span class="badge bg-success ms-2"><i class="bi bi-gear-fill"></i> Auto-Generated</span>
+                                    <?php endif; ?>
+                                </label>
                                 <div class="input-group">
                                     <input type="text" class="form-control <?php echo isset($errors['product_number']) ? 'is-invalid' : ''; ?>"
                                            id="product_number" name="product_number" value="<?php echo htmlspecialchars($_POST['product_number'] ?? ''); ?>"
-                                           placeholder="Leave empty for auto-generation" 
+                                           placeholder="<?php echo (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1') ? 'Will be auto-generated...' : 'Leave empty for auto-generation'; ?>" 
                                            <?php echo (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1') ? 'readonly' : ''; ?>>
                                     <button type="button" class="btn btn-outline-secondary" id="generateProductNumber">
                                         <i class="bi bi-magic"></i>
-                                        Generate
+                                        <?php echo (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1') ? 'Regenerate' : 'Generate'; ?>
                                     </button>
                                 </div>
                                 <?php if (isset($errors['product_number'])): ?>
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['product_number']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Internal product number for tracking. Leave empty to auto-generate.
                                     <?php if (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1'): ?>
-                                    <span class="text-info"><i class="bi bi-info-circle"></i> Auto-generation is enabled in settings.</span>
+                                    <span class="text-success"><i class="bi bi-check-circle"></i> Product numbers are automatically generated based on your <a href="../admin/settings/adminsetting.php?tab=inventory" target="_blank">admin settings</a>.</span>
+                                    <?php else: ?>
+                                    Internal product number for tracking. Leave empty to auto-generate or click "Generate" button.
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -791,24 +933,47 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
 
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="tax_category_id" class="form-label">Tax Category</label>
+                                <label for="tax_category_id" class="form-label">Tax Rate Selection</label>
                                 <select class="form-control" id="tax_category_id" name="tax_category_id">
-                                    <option value="">Select Tax Category (Optional)</option>
-                                    <?php foreach ($tax_categories as $category): ?>
+                                    <option value="">Use System Default Tax Rate</option>
+                                    <?php foreach ($tax_categories as $category_id => $category): ?>
+                                    <optgroup label="<?php echo htmlspecialchars($category['name']); ?>">
+                                        <?php if (empty($category['rates'])): ?>
                                     <option value="<?php echo $category['id']; ?>" 
                                             <?php echo (isset($_POST['tax_category_id']) && $_POST['tax_category_id'] == $category['id']) ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($category['name']); ?>
-                                        <?php if (!empty($category['description'])): ?>
-                                        - <?php echo htmlspecialchars($category['description']); ?>
-                                        <?php endif; ?>
+                                            No active rates available
+                                        </option>
+                                        <?php else: ?>
+                                        <?php foreach ($category['rates'] as $rate): ?>
+                                        <option value="<?php echo $rate['tax_category_id']; ?>"
+                                                data-rate="<?php echo $rate['rate_percentage']; ?>%"
+                                                <?php echo (isset($_POST['tax_category_id']) && $_POST['tax_category_id'] == $rate['tax_category_id']) ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($rate['rate_name']); ?> (<?php echo number_format($rate['rate_percentage'], 2); ?>%)
                                     </option>
+                                        <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </optgroup>
                                     <?php endforeach; ?>
                                 </select>
                                 <div class="form-text">
-                                    Select a tax category for automatic tax calculation
+                                    Choose a tax category with specific rates, or use the system default. Product-specific rate below will override this selection.
                                 </div>
                             </div>
                         </div>
+
+                        <script>
+                        document.getElementById('tax_category_id').addEventListener('change', function() {
+                            const selectedOption = this.options[this.selectedIndex];
+                            const taxRateField = document.getElementById('tax_rate');
+                            const rate = selectedOption.getAttribute('data-rate');
+
+                            if (rate && rate !== '%') {
+                                // Extract the numeric value from "16.00%" format
+                                const numericRate = rate.replace('%', '');
+                                taxRateField.value = numericRate;
+                            }
+                        });
+                        </script>
 
                         <div class="form-row">
                             <div class="form-group">
@@ -915,13 +1080,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
                             <div class="form-group">
                                 <label for="minimum_stock" class="form-label">Minimum Stock Level</label>
                                 <input type="number" class="form-control <?php echo isset($errors['minimum_stock']) ? 'is-invalid' : ''; ?>"
-                                       id="minimum_stock" name="minimum_stock" value="<?php echo htmlspecialchars($_POST['minimum_stock'] ?? ''); ?>"
-                                       min="0" placeholder="0">
+                                       id="minimum_stock" name="minimum_stock" value="<?php echo htmlspecialchars($_POST['minimum_stock'] ?? $default_minimum_stock); ?>"
+                                       min="0" placeholder="<?php echo $default_minimum_stock; ?>">
                                 <?php if (isset($errors['minimum_stock'])): ?>
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['minimum_stock']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Alert when stock falls below this level
+                                    Alert when stock falls below this level. Default: <?php echo $default_minimum_stock; ?> (from system settings)
                                 </div>
                             </div>
                         </div>
@@ -943,13 +1108,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
                             <div class="form-group">
                                 <label for="reorder_point" class="form-label">Reorder Point</label>
                                 <input type="number" class="form-control <?php echo isset($errors['reorder_point']) ? 'is-invalid' : ''; ?>"
-                                       id="reorder_point" name="reorder_point" value="<?php echo htmlspecialchars($_POST['reorder_point'] ?? ''); ?>"
-                                       min="0" placeholder="0">
+                                       id="reorder_point" name="reorder_point" value="<?php echo htmlspecialchars($_POST['reorder_point'] ?? $default_reorder_point); ?>"
+                                       min="0" placeholder="<?php echo $default_reorder_point; ?>">
                                 <?php if (isset($errors['reorder_point'])): ?>
                                 <div class="invalid-feedback"><?php echo htmlspecialchars($errors['reorder_point']); ?></div>
                                 <?php endif; ?>
                                 <div class="form-text">
-                                    Point at which you should reorder this product
+                                    Point at which you should reorder this product. Default: <?php echo $default_reorder_point; ?> (from system settings)
                                 </div>
                             </div>
                         </div>
@@ -1282,6 +1447,22 @@ if (isset($_GET['action']) && $_GET['action'] === 'generate_barcode') {
 
             // Product Number Generation
             const generateProductNumberBtn = document.getElementById('generateProductNumber');
+            const productNumberInput = document.getElementById('product_number');
+            
+            // Auto-populate product number if auto-generation is enabled and field is empty
+            <?php if (isset($settings['auto_generate_product_number']) && $settings['auto_generate_product_number'] == '1'): ?>
+            if (productNumberInput && !productNumberInput.value.trim()) {
+                fetch('?action=generate_product_number')
+                    .then(response => response.json())
+                    .then(data => {
+                        productNumberInput.value = data.product_number;
+                    })
+                    .catch(error => {
+                        console.error('Error auto-generating product number:', error);
+                    });
+            }
+            <?php endif; ?>
+            
             if (generateProductNumberBtn) {
                 generateProductNumberBtn.addEventListener('click', function() {
                     fetch('?action=generate_product_number')

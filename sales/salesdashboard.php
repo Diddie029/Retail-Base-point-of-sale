@@ -375,7 +375,7 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <div class="d-flex align-items-center gap-3">
                     <span class="badge bg-primary fs-6"><?php echo date('M d, Y'); ?></span>
-                    <a href="../auth/logout.php" class="btn btn-outline-danger" title="Logout">
+                    <a href="/pointofsale/auth/logout.php" class="btn btn-outline-danger" title="Logout">
                         <i class="bi bi-box-arrow-right"></i> Logout
                     </a>
                 </div>

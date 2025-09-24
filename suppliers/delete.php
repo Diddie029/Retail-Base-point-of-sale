@@ -207,7 +207,7 @@ if (isset($_POST['confirm_delete'])) {
             <?php endif; ?>
 
             <div class="nav-item">
-                <a href="../auth/logout.php" class="nav-link">
+                <a href="/pointofsale/auth/logout.php" class="nav-link">
                     <i class="bi bi-box-arrow-right"></i>
                     Logout
                 </a>

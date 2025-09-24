@@ -57,15 +57,25 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 // Default settings if not set
 $defaults = [
     'company_name' => 'POS System',
+    'business_type' => '',
+    'registration_number' => '',
+    'tax_id_number' => '',
     'company_address' => '',
+    'city' => '',
+    'state_province' => '',
+    'postal_code' => '',
+    'country' => 'Kenya',
     'company_phone' => '',
+    'company_mobile' => '',
+    'company_email' => '',
     'company_website' => '',
+    'business_hours' => '',
     'company_logo' => '',
     'currency_symbol' => 'KES',
     'currency_position' => 'before',
     'currency_decimal_places' => '2',
-    'tax_rate' => '0',
-    'tax_name' => 'VAT',
+    'tax_rate' => '16',
+    'tax_name' => '16',
     'tax_registration_number' => '',
     'theme_color' => '#6366f1',
     'sidebar_color' => '#1e293b',
@@ -73,6 +83,8 @@ $defaults = [
     'date_format' => 'Y-m-d',
     'time_format' => 'H:i:s',
     'low_stock_threshold' => '10',
+    'default_minimum_stock_level' => '5',
+    'default_reorder_point' => '10',
     'backup_frequency' => 'daily',
     'backup_retention_count' => '10',
     'enable_sound' => '1',
@@ -456,6 +468,48 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Validation
     if (isset($_POST['company_name']) && empty(trim($_POST['company_name']))) {
         $errors[] = "Company name is required.";
+    }
+    
+    // Company email validation
+    if (isset($_POST['company_email']) && !empty($_POST['company_email'])) {
+        if (!filter_var($_POST['company_email'], FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Invalid company email format.";
+        }
+    }
+    
+    // Company website validation
+    if (isset($_POST['company_website']) && !empty($_POST['company_website'])) {
+        if (!filter_var($_POST['company_website'], FILTER_VALIDATE_URL)) {
+            $errors[] = "Invalid website URL format.";
+        }
+    }
+    
+    // Phone number validation
+    if (isset($_POST['company_phone']) && !empty($_POST['company_phone'])) {
+        if (!preg_match('/^[+]?[0-9\s\-\(\)]{10,15}$/', $_POST['company_phone'])) {
+            $errors[] = "Invalid phone number format.";
+        }
+    }
+    
+    // Mobile number validation
+    if (isset($_POST['company_mobile']) && !empty($_POST['company_mobile'])) {
+        if (!preg_match('/^[+]?[0-9\s\-\(\)]{10,15}$/', $_POST['company_mobile'])) {
+            $errors[] = "Invalid mobile number format.";
+        }
+    }
+    
+    // Postal code validation
+    if (isset($_POST['postal_code']) && !empty($_POST['postal_code'])) {
+        if (!preg_match('/^[0-9A-Za-z\s\-]{3,12}$/', $_POST['postal_code'])) {
+            $errors[] = "Invalid postal code format.";
+        }
+    }
+    
+    // Tax ID validation
+    if (isset($_POST['tax_id_number']) && !empty($_POST['tax_id_number'])) {
+        if (!preg_match('/^[A-Za-z0-9\-\/]{5,20}$/', $_POST['tax_id_number'])) {
+            $errors[] = "Tax ID must be 5-20 characters (letters, numbers, hyphens, slashes only).";
+        }
     }
     
     
@@ -1251,39 +1305,227 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                     
                     <form method="POST" action="" class="settings-form" id="companyForm" enctype="multipart/form-data">
-                        <div class="form-group">
-                            <label for="company_name" class="form-label">Company Name *</label>
-                            <input type="text" class="form-control" id="company_name" name="company_name" 
-                                   value="<?php echo htmlspecialchars($settings['company_name']); ?>" required>
-                            <div class="form-text">This name will appear on receipts.</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="company_address" class="form-label">Company Address</label>
-                            <textarea class="form-control" id="company_address" name="company_address" 
-                                      rows="3" placeholder="Enter your company address"><?php echo htmlspecialchars($settings['company_address']); ?></textarea>
-                            <div class="form-text">Full address including street, city, and postal code.</div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6">
-                                <div class="form-group">
-                                    <label for="company_phone" class="form-label">Phone Number</label>
-                                    <input type="text" class="form-control" id="company_phone" name="company_phone" 
-                                           value="<?php echo htmlspecialchars($settings['company_phone']); ?>" 
-                                           placeholder="+254 700 000 000">
-                                    <div class="form-text">Primary contact phone number.</div>
+                        <!-- Basic Information Section -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5><i class="bi bi-building me-2"></i>Basic Information</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="company_name" class="form-label">Company Name *</label>
+                                            <input type="text" class="form-control" id="company_name" name="company_name" 
+                                                   value="<?php echo htmlspecialchars($settings['company_name']); ?>" required>
+                                            <div class="form-text">This name will appear on receipts.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="business_type" class="form-label">Business Type</label>
+                                            <select class="form-control" id="business_type" name="business_type">
+                                                <option value="">Select Business Type</option>
+                                                <?php
+                                                $businessTypes = ['Retail Store', 'Restaurant', 'Grocery Store', 'Pharmacy', 'Electronics Store', 'Clothing Store', 'Service Provider', 'Other'];
+                                                foreach ($businessTypes as $type) {
+                                                    $selected = (($settings['business_type'] ?? '') === $type) ? 'selected' : '';
+                                                    echo "<option value='$type' $selected>$type</option>";
+                                                }
+                                                ?>
+                                            </select>
+                                            <div class="form-text">Type of business for categorization.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="registration_number" class="form-label">Registration Number</label>
+                                            <input type="text" class="form-control" id="registration_number" name="registration_number" 
+                                                   value="<?php echo htmlspecialchars($settings['registration_number'] ?? ''); ?>">
+                                            <div class="form-text">Business registration number.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="tax_id_number" class="form-label">Tax ID Number</label>
+                                            <input type="text" class="form-control" id="tax_id_number" name="tax_id_number" 
+                                                   value="<?php echo htmlspecialchars($settings['tax_id_number'] ?? ''); ?>">
+                                            <div class="form-text">Tax identification number.</div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            
                         </div>
                         
-                        <div class="form-group">
-                            <label for="company_website" class="form-label">Website URL</label>
-                            <input type="url" class="form-control" id="company_website" name="company_website" 
-                                   value="<?php echo htmlspecialchars($settings['company_website']); ?>" 
-                                   placeholder="https://www.company.com">
-                            <div class="form-text">Company website URL.</div>
+                        <!-- Contact Information Section -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5><i class="bi bi-telephone me-2"></i>Contact Information</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="company_email" class="form-label">Company Email</label>
+                                            <input type="email" class="form-control" id="company_email" name="company_email" 
+                                                   value="<?php echo htmlspecialchars($settings['company_email'] ?? ''); ?>">
+                                            <div class="form-text">Primary contact email.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="company_website" class="form-label">Website URL</label>
+                                            <input type="url" class="form-control" id="company_website" name="company_website" 
+                                                   value="<?php echo htmlspecialchars($settings['company_website']); ?>" 
+                                                   placeholder="https://www.company.com">
+                                            <div class="form-text">Company website URL.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="company_phone" class="form-label">Phone Number</label>
+                                            <input type="text" class="form-control" id="company_phone" name="company_phone" 
+                                                   value="<?php echo htmlspecialchars($settings['company_phone']); ?>" 
+                                                   placeholder="+254 700 000 000">
+                                            <div class="form-text">Primary contact phone number.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="company_mobile" class="form-label">Mobile Number</label>
+                                            <input type="text" class="form-control" id="company_mobile" name="company_mobile" 
+                                                   value="<?php echo htmlspecialchars($settings['company_mobile'] ?? ''); ?>" 
+                                                   placeholder="0700 000 000">
+                                            <div class="form-text">Mobile contact number.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Address Information Section -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5><i class="bi bi-geo-alt me-2"></i>Address Information</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-group">
+                                    <label for="company_address" class="form-label">Street Address</label>
+                                    <textarea class="form-control" id="company_address" name="company_address" 
+                                              rows="2" placeholder="Enter street address"><?php echo htmlspecialchars($settings['company_address']); ?></textarea>
+                                    <div class="form-text">Street address of the business.</div>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-4">
+                                        <div class="form-group">
+                                            <label for="city" class="form-label">City</label>
+                                            <input type="text" class="form-control" id="city" name="city" 
+                                                   value="<?php echo htmlspecialchars($settings['city'] ?? ''); ?>">
+                                            <div class="form-text">City or town.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-group">
+                                            <label for="state_province" class="form-label">State/Province</label>
+                                            <input type="text" class="form-control" id="state_province" name="state_province" 
+                                                   value="<?php echo htmlspecialchars($settings['state_province'] ?? ''); ?>">
+                                            <div class="form-text">State or province.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="form-group">
+                                            <label for="postal_code" class="form-label">Postal Code</label>
+                                            <input type="text" class="form-control" id="postal_code" name="postal_code" 
+                                                   value="<?php echo htmlspecialchars($settings['postal_code'] ?? ''); ?>">
+                                            <div class="form-text">ZIP or postal code.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="country" class="form-label">Country</label>
+                                    <select class="form-control" id="country" name="country">
+                                        <?php
+                                        $countries = ['Kenya', 'Nigeria', 'South Africa', 'Ghana', 'Uganda', 'Tanzania', 'Ethiopia', 'United States', 'United Kingdom', 'Canada', 'Australia', 'Other'];
+                                        foreach ($countries as $country) {
+                                            $selected = (($settings['country'] ?? 'Kenya') === $country) ? 'selected' : '';
+                                            echo "<option value='$country' $selected>$country</option>";
+                                        }
+                                        ?>
+                                    </select>
+                                    <div class="form-text">Country of business operation.</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Business Configuration Section -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5><i class="bi bi-clock me-2"></i>Business Configuration</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="business_hours" class="form-label">Business Hours</label>
+                                            <input type="text" class="form-control" id="business_hours" name="business_hours" 
+                                                   value="<?php echo htmlspecialchars($settings['business_hours'] ?? ''); ?>" 
+                                                   placeholder="e.g., Mon-Fri 8AM-6PM">
+                                            <div class="form-text">Operating hours for customer reference.</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group">
+                                            <label for="timezone" class="form-label">Timezone</label>
+                                            <select class="form-control" id="timezone" name="timezone">
+                                                <?php
+                                                $timezones = [
+                                                    'Africa/Nairobi' => 'Africa/Nairobi (EAT)',
+                                                    'Africa/Lagos' => 'Africa/Lagos (WAT)',
+                                                    'Africa/Johannesburg' => 'Africa/Johannesburg (SAST)',
+                                                    'UTC' => 'UTC',
+                                                    'America/New_York' => 'America/New_York (EST)',
+                                                    'Europe/London' => 'Europe/London (GMT)'
+                                                ];
+                                                foreach ($timezones as $tz => $name) {
+                                                    $selected = (($settings['timezone'] ?? 'Africa/Nairobi') === $tz) ? 'selected' : '';
+                                                    echo "<option value='$tz' $selected>$name</option>";
+                                                }
+                                                ?>
+                                            </select>
+                                            <div class="form-text">System timezone for reports and logs.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Logo Section -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5><i class="bi bi-image me-2"></i>Company Logo</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-group">
+                                    <label for="company_logo" class="form-label">Company Logo</label>
+                                    <?php if (!empty($settings['company_logo'])): ?>
+                                        <div class="current-logo mb-3">
+                                            <img src="../../<?php echo htmlspecialchars($settings['company_logo']); ?>" 
+                                                 alt="Current Logo" class="img-thumbnail" style="max-height: 100px;">
+                                            <div class="form-text">Current logo</div>
+                                        </div>
+                                    <?php endif; ?>
+                                    <input type="file" class="form-control" id="company_logo" name="company_logo" 
+                                           accept="image/jpeg,image/jpg,image/png,image/gif">
+                                    <div class="form-text">Upload company logo (JPG, PNG, GIF - Max 2MB). Will appear on receipts and throughout the system.</div>
+                                </div>
+                            </div>
                         </div>
                         
                         <div class="form-group">
@@ -1635,6 +1877,27 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                    value="<?php echo htmlspecialchars($settings['low_stock_threshold'] ?? '10'); ?>" 
                                    placeholder="10">
                             <div class="form-text">Alert when product quantity falls below this number.</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="default_minimum_stock_level" class="form-label">Default Minimum Stock Level</label>
+                                    <input type="number" min="0" class="form-control" id="default_minimum_stock_level" name="default_minimum_stock_level"
+                                           value="<?php echo htmlspecialchars($settings['default_minimum_stock_level'] ?? '5'); ?>"
+                                           placeholder="5">
+                                    <div class="form-text">Default minimum stock level for new products.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label for="default_reorder_point" class="form-label">Default Reorder Point</label>
+                                    <input type="number" min="0" class="form-control" id="default_reorder_point" name="default_reorder_point"
+                                           value="<?php echo htmlspecialchars($settings['default_reorder_point'] ?? '10'); ?>"
+                                           placeholder="10">
+                                    <div class="form-text">Default reorder point for new products.</div>
+                                </div>
+                            </div>
                         </div>
                         
                         <div class="form-group">

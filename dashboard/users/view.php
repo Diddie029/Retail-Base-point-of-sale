@@ -296,7 +296,10 @@ if (isset($_GET['updated']) && $_GET['updated'] == '1') {
                                     <div class="info-label">Email Address</div>
                                     <div class="info-value">
                                         <?php echo htmlspecialchars($view_user['email']); ?>
-                                        <?php if ($view_user['email_verified']): ?>
+                                        <?php 
+                                        // Check if email_verified column exists, default to false if not
+                                        $email_verified = isset($view_user['email_verified']) ? $view_user['email_verified'] : false;
+                                        if ($email_verified): ?>
                                             <i class="bi bi-check-circle text-success" title="Email Verified"></i>
                                         <?php else: ?>
                                             <i class="bi bi-exclamation-triangle text-warning" title="Email Not Verified"></i>

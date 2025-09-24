@@ -104,11 +104,41 @@ $count_stmt->execute();
 $total_products = $count_stmt->fetch(PDO::FETCH_ASSOC)['total'];
 $total_pages = ceil($total_products / $per_page);
 
+// Check if auto BOM columns exist in products table
+$has_auto_bom_enabled = false;
+$has_auto_bom_type = false;
+
+try {
+    $result = $conn->query("SHOW COLUMNS FROM products LIKE 'is_auto_bom_enabled'");
+    $has_auto_bom_enabled = $result->rowCount() > 0;
+} catch (PDOException $e) {
+    $has_auto_bom_enabled = false;
+}
+
+try {
+    $result = $conn->query("SHOW COLUMNS FROM products LIKE 'auto_bom_type'");
+    $has_auto_bom_type = $result->rowCount() > 0;
+} catch (PDOException $e) {
+    $has_auto_bom_type = false;
+}
+
+// Build SQL query based on available columns
+$auto_bom_columns = '';
+if ($has_auto_bom_enabled && $has_auto_bom_type) {
+    $auto_bom_columns = 'p.is_auto_bom_enabled, p.auto_bom_type';
+} elseif ($has_auto_bom_enabled) {
+    $auto_bom_columns = 'p.is_auto_bom_enabled, NULL as auto_bom_type';
+} elseif ($has_auto_bom_type) {
+    $auto_bom_columns = 'NULL as is_auto_bom_enabled, p.auto_bom_type';
+} else {
+    $auto_bom_columns = 'NULL as is_auto_bom_enabled, NULL as auto_bom_type';
+}
+
 // Get products
 $sql = "
     SELECT p.*, c.name as category_name, b.name as brand_name, s.name as supplier_name,
            s.is_active as supplier_active, s.supplier_block_note,
-           p.is_auto_bom_enabled, p.auto_bom_type
+           $auto_bom_columns
     FROM products p
     LEFT JOIN categories c ON p.category_id = c.id
     LEFT JOIN brands b ON p.brand_id = b.id
@@ -209,15 +239,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['bulk_action'])) {
                 break;
 
             case 'bulk_auto_bom':
-                $auto_bom_type = isset($_POST['auto_bom_type']) ? $_POST['auto_bom_type'] : 'unit_conversion';
+                // Check if auto BOM columns exist before attempting bulk operation
+                if ($has_auto_bom_enabled && $has_auto_bom_type) {
+                    $auto_bom_type = isset($_POST['auto_bom_type']) ? $_POST['auto_bom_type'] : 'unit_conversion';
 
-                $stmt = $conn->prepare("UPDATE products SET is_auto_bom_enabled = 1, auto_bom_type = ?, updated_at = NOW() WHERE id = ?");
-                foreach ($product_ids as $product_id) {
-                    $stmt->execute([$auto_bom_type, $product_id]);
-                    $affected_count += $stmt->rowCount();
+                    $stmt = $conn->prepare("UPDATE products SET is_auto_bom_enabled = 1, auto_bom_type = ?, updated_at = NOW() WHERE id = ?");
+                    foreach ($product_ids as $product_id) {
+                        $stmt->execute([$auto_bom_type, $product_id]);
+                        $affected_count += $stmt->rowCount();
+                    }
+                    $_SESSION['success'] = "Enabled Auto BOM for $affected_count products successfully.";
+                    logActivity($conn, $user_id, 'bulk_enable_auto_bom', "Enabled Auto BOM for $affected_count products");
+                } else {
+                    $_SESSION['error'] = "Auto BOM features are not available in your database. Please contact your administrator.";
                 }
-                $_SESSION['success'] = "Enabled Auto BOM for $affected_count products successfully.";
-                logActivity($conn, $user_id, 'bulk_enable_auto_bom', "Enabled Auto BOM for $affected_count products");
                 break;
 
             case 'export_selected':
@@ -1042,7 +1077,7 @@ unset($_SESSION['success'], $_SESSION['error']);
                                 <code><?php echo htmlspecialchars($product['barcode'] ?? 'Not set'); ?></code>
                             </td>
                             <td class="col-auto-bom">
-                                <?php if ($product['is_auto_bom_enabled']): ?>
+                                <?php if (isset($product['is_auto_bom_enabled']) && $product['is_auto_bom_enabled']): ?>
                                     <div class="auto-bom-indicator">
                                         <span class="badge badge-info" title="Auto BOM Enabled">
                                             <i class="fas fa-cogs"></i> <?php echo ucfirst(str_replace('_', ' ', $product['auto_bom_type'] ?? 'unit_conversion')); ?>

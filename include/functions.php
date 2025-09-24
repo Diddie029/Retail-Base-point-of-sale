@@ -4,6 +4,87 @@
  */
 
 /**
+ * Get the base URL for the application
+ * Automatically detects the correct path based on the current environment
+ * 
+ * @return string The base URL (e.g., '/pointofsale' or '' for root)
+ */
+function getBaseUrl() {
+    // For development environments like Laragon, XAMPP, etc.
+    // Check if we're in a subdirectory by examining the current working directory
+    $currentDir = getcwd();
+    
+    // Check if current directory contains 'pointofsale'
+    if (strpos($currentDir, 'pointofsale') !== false) {
+        return '/pointofsale';
+    }
+    
+    // Get the script directory from server variables
+    $scriptDir = dirname($_SERVER['SCRIPT_NAME'] ?? '');
+    
+    // Check if we're in the pointofsale directory via script path
+    if (strpos($scriptDir, '/pointofsale') !== false) {
+        return '/pointofsale';
+    }
+    
+    // Check the document root to detect if we're in a subdirectory
+    $documentRoot = $_SERVER['DOCUMENT_ROOT'] ?? '';
+    $scriptPath = $_SERVER['SCRIPT_FILENAME'] ?? '';
+    
+    if ($documentRoot && $scriptPath) {
+        $relativePath = str_replace($documentRoot, '', dirname($scriptPath));
+        $pathParts = explode('/', trim($relativePath, '/'));
+        
+        // Find the project root directory
+        foreach ($pathParts as $part) {
+            if ($part === 'pointofsale' || $part === 'pos') {
+                return '/' . $part;
+            }
+        }
+    }
+    
+    // Fallback: if we can't detect, return empty (assumes root)
+    return '';
+}
+
+/**
+ * Generate a URL for the application
+ * 
+ * @param string $path The path relative to the base URL
+ * @return string The complete URL
+ */
+function url($path = '') {
+    $baseUrl = getBaseUrl();
+    $path = ltrim($path, '/');
+    
+    if (empty($path)) {
+        return $baseUrl;
+    }
+    
+    return $baseUrl . '/' . $path;
+}
+
+/**
+ * Generate a URL for assets (CSS, JS, images)
+ * 
+ * @param string $path The path to the asset
+ * @return string The complete asset URL
+ */
+function asset($path) {
+    return url('assets/' . ltrim($path, '/'));
+}
+
+/**
+ * Generate a URL for API endpoints
+ * 
+ * @param string $path The API endpoint path
+ * @return string The complete API URL
+ */
+function api($path) {
+    return url('api/' . ltrim($path, '/'));
+}
+
+/**
  * Check if user has a specific permission
  * 
  * @param string $permission The permission to check
@@ -2776,6 +2857,14 @@ function getBOMStatistics($conn) {
         $stmt = $conn->query("SELECT COALESCE(SUM(total_production_cost), 0) as total FROM bom_production_orders WHERE status = 'completed' AND MONTH(created_at) = MONTH(CURRENT_DATE()) AND YEAR(created_at) = YEAR(CURRENT_DATE())");
         $stats['production_value_this_month'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
 
+        // Auto BOMs count
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM bom_headers WHERE is_auto_bom = 1");
+        $stats['auto_boms'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+        // Total completed orders (all time)
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM bom_production_orders WHERE status = 'completed'");
+        $stats['total_completed_orders'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
         return $stats;
     } catch (PDOException $e) {
         return [
@@ -2784,7 +2873,9 @@ function getBOMStatistics($conn) {
             'total_production_orders' => 0,
             'active_production_orders' => 0,
             'completed_this_month' => 0,
-            'production_value_this_month' => 0
+            'production_value_this_month' => 0,
+            'auto_boms' => 0,
+            'total_completed_orders' => 0
         ];
     }
 }

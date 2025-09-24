@@ -77,8 +77,8 @@ $logs_per_page = 10;
 // Get sales history for this product with pagination
 $sales_offset = ($sales_page - 1) * $sales_per_page;
 $sales_stmt = $conn->prepare("
-    SELECT s.id, s.sale_date, s.customer_name, si.quantity, si.price, 
-           (si.quantity * si.price) as total, u.username as cashier
+    SELECT s.id, s.sale_date, s.customer_name, si.quantity, si.unit_price, 
+           (si.quantity * si.unit_price) as total, u.username as cashier
     FROM sale_items si
     JOIN sales s ON si.sale_id = s.id
     LEFT JOIN users u ON s.user_id = u.id
@@ -109,10 +109,10 @@ $stats_stmt = $conn->prepare("
     SELECT 
         COUNT(si.id) as total_sales,
         SUM(si.quantity) as total_quantity_sold,
-        SUM(si.quantity * si.price) as total_revenue,
-        AVG(si.price) as avg_selling_price,
-        MIN(si.price) as min_price,
-        MAX(si.price) as max_price
+        SUM(si.quantity * si.unit_price) as total_revenue,
+        AVG(si.unit_price) as avg_selling_price,
+        MIN(si.unit_price) as min_price,
+        MAX(si.unit_price) as max_price
     FROM sale_items si
     JOIN sales s ON si.sale_id = s.id
     WHERE si.product_id = :product_id
@@ -131,8 +131,8 @@ try {
             'sale' as activity_type,
             'Product Sold' as activity_name,
             CONCAT('Sold ', si.quantity, ' units for ', 
-                CONCAT('$', FORMAT(si.price, 2)), 
-                ' each (Total: $', FORMAT(si.quantity * si.price, 2), ')'
+                CONCAT('$', FORMAT(si.unit_price, 2)), 
+                ' each (Total: $', FORMAT(si.quantity * si.unit_price, 2), ')'
             ) as description,
             s.sale_date as activity_date,
             COALESCE(u.username, 'Unknown') as performed_by,
@@ -292,6 +292,79 @@ unset($_SESSION['success']);
     <style>
         :root {
             --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
+            --sidebar-width: 280px;
+        }
+
+        /* Ensure sidebar is properly positioned */
+        .sidebar {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            height: 100vh !important;
+            width: var(--sidebar-width) !important;
+            z-index: 1000 !important;
+            overflow-y: auto !important;
+            transition: all 0.3s ease !important;
+        }
+
+        /* Ensure main content is not hidden by sidebar */
+        .main-content {
+            margin-left: var(--sidebar-width) !important;
+            min-height: 100vh !important;
+            position: relative !important;
+            z-index: 1 !important;
+            transition: all 0.3s ease !important;
+        }
+
+        /* Fix navigation overlap issue */
+        .main-content {
+            margin-left: 280px !important;
+            padding-left: 0 !important;
+            width: calc(100% - 280px) !important;
+        }
+
+        .content {
+            padding: 2rem !important;
+            max-width: 100% !important;
+        }
+
+        .container-fluid {
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+        }
+
+        /* Ensure form sections are properly spaced */
+        .row {
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+        }
+
+        .col-md-8, .col-md-4 {
+            padding-left: 15px !important;
+            padding-right: 15px !important;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .main-content {
+                margin-left: 0 !important;
+                width: 100% !important;
+            }
+
+            .content {
+                padding: 1rem !important;
+            }
+        }
+
+        /* Fix for header and content positioning */
+        body {
+            overflow-x: hidden !important;
+        }
+
+        /* Ensure all sections are visible */
+        .product-form, .form-section, .section-title {
+            position: relative !important;
+            z-index: 2 !important;
         }
         
         /* Product Log Styles */
@@ -1055,7 +1128,7 @@ unset($_SESSION['success']);
                                 </td>
                                 <td><?php echo htmlspecialchars($sale['customer_name']); ?></td>
                                 <td><?php echo number_format($sale['quantity']); ?></td>
-                                <td class="currency"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($sale['price'], 2); ?></td>
+                                <td class="currency"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($sale['unit_price'], 2); ?></td>
                                 <td class="currency font-weight-bold"><?php echo $settings['currency_symbol']; ?> <?php echo number_format($sale['total'], 2); ?></td>
                                 <td><?php echo htmlspecialchars($sale['cashier'] ?? 'Unknown'); ?></td>
                                 <td>

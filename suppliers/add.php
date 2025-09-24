@@ -51,13 +51,15 @@ function sanitizeSupplierInput($input, $type = 'string') {
 
     switch ($type) {
         case 'text':
-            $input = filter_var($input, FILTER_SANITIZE_STRING, FILTER_FLAG_NO_ENCODE_QUOTES);
+            // FILTER_SANITIZE_STRING is deprecated, use htmlspecialchars instead
+            $input = htmlspecialchars($input, ENT_QUOTES, 'UTF-8');
             break;
         case 'email':
             $input = filter_var($input, FILTER_SANITIZE_EMAIL);
             break;
         case 'phone':
-            $input = filter_var($input, FILTER_SANITIZE_STRING);
+            // FILTER_SANITIZE_STRING is deprecated, use htmlspecialchars + regex instead
+            $input = htmlspecialchars($input, ENT_QUOTES, 'UTF-8');
             $input = preg_replace('/[^0-9+\-\s\(\)\.]/', '', $input); // Allow only phone characters
             break;
         default:
@@ -169,33 +171,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             error_log("Creating supplier: '$name'");
             error_log("POST data: " . print_r($_POST, true));
             
-            $insert_stmt = $conn->prepare("
-                INSERT INTO suppliers (
-                    name, contact_person, email, phone, address, payment_terms, notes, is_active,
-                    pickup_available, pickup_address, pickup_hours, pickup_instructions,
-                    pickup_contact_person, pickup_contact_phone, created_at, updated_at
-                ) VALUES (
-                    :name, :contact_person, :email, :phone, :address, :payment_terms, :notes, :is_active,
-                    :pickup_available, :pickup_address, :pickup_hours, :pickup_instructions,
-                    :pickup_contact_person, :pickup_contact_phone, NOW(), NOW()
-                )
-            ");
+            // Check which columns exist in the suppliers table
+            $columns_result = $conn->query("SHOW COLUMNS FROM suppliers");
+            $existing_columns = $columns_result->fetchAll(PDO::FETCH_COLUMN);
+            
+            // Build dynamic INSERT statement based on existing columns
+            $insert_columns = [];
+            $insert_values = [];
+            $bind_params = [];
+            
+            // Core required fields
+            $core_fields = [
+                'name' => $name,
+                'contact_person' => $contact_person,
+                'email' => $email,
+                'phone' => $phone,
+                'address' => $address,
+                'payment_terms' => $payment_terms,
+                'notes' => $notes,
+                'is_active' => $is_active
+            ];
+            
+            // Optional pickup fields
+            $pickup_fields = [
+                'pickup_available' => $pickup_available,
+                'pickup_address' => $pickup_address,
+                'pickup_hours' => $pickup_hours,
+                'pickup_instructions' => $pickup_instructions,
+                'pickup_contact_person' => $pickup_contact_person,
+                'pickup_contact_phone' => $pickup_contact_phone
+            ];
+            
+            // Add core fields that exist in the table
+            foreach ($core_fields as $column => $value) {
+                if (in_array($column, $existing_columns)) {
+                    $insert_columns[] = $column;
+                    $insert_values[] = ":$column";
+                    $bind_params[$column] = $value;
+                }
+            }
+            
+            // Add pickup fields that exist in the table
+            foreach ($pickup_fields as $column => $value) {
+                if (in_array($column, $existing_columns)) {
+                    $insert_columns[] = $column;
+                    $insert_values[] = ":$column";
+                    $bind_params[$column] = $value;
+                }
+            }
+            
+            // Add timestamp fields if they exist
+            if (in_array('created_at', $existing_columns)) {
+                $insert_columns[] = 'created_at';
+                $insert_values[] = 'NOW()';
+            }
+            if (in_array('updated_at', $existing_columns)) {
+                $insert_columns[] = 'updated_at';
+                $insert_values[] = 'NOW()';
+            }
+            
+            $sql = "INSERT INTO suppliers (" . implode(', ', $insert_columns) . ") VALUES (" . implode(', ', $insert_values) . ")";
+            error_log("Generated SQL: $sql");
+            
+            $insert_stmt = $conn->prepare($sql);
 
-            // Bind parameters with explicit types
-            $insert_stmt->bindParam(':name', $name, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':contact_person', $contact_person, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':email', $email, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':phone', $phone, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':address', $address, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':payment_terms', $payment_terms, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':notes', $notes, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':is_active', $is_active, PDO::PARAM_INT);
-            $insert_stmt->bindParam(':pickup_available', $pickup_available, PDO::PARAM_INT);
-            $insert_stmt->bindParam(':pickup_address', $pickup_address, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':pickup_hours', $pickup_hours, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':pickup_instructions', $pickup_instructions, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':pickup_contact_person', $pickup_contact_person, PDO::PARAM_STR);
-            $insert_stmt->bindParam(':pickup_contact_phone', $pickup_contact_phone, PDO::PARAM_STR);
+            // Bind parameters dynamically
+            foreach ($bind_params as $param => $value) {
+                if (in_array($param, ['is_active', 'pickup_available'])) {
+                    $insert_stmt->bindParam(":$param", $value, PDO::PARAM_INT);
+                } else {
+                    $insert_stmt->bindParam(":$param", $value, PDO::PARAM_STR);
+                }
+            }
 
             if ($insert_stmt->execute()) {
                 $supplier_id = $conn->lastInsertId();

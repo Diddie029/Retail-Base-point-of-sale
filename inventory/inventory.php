@@ -289,6 +289,89 @@ if (hasPermission('manage_inventory', $permissions)) {
             margin-bottom: 0.5rem;
         }
 
+        /* BOM specific styling */
+        .action-btn[href*="auto_bom"],
+        .action-btn[onclick*="auto_bom_index"] {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #667eea;
+        }
+
+        .action-btn[href*="auto_bom"]:hover,
+        .action-btn[onclick*="auto_bom_index"]:hover {
+            background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        /* Auto BOM Products specific styling */
+        .action-btn[href*="auto_bom_products"] {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border-color: #10b981;
+        }
+
+        .action-btn[href*="auto_bom_products"]:hover {
+            background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(16, 185, 129, 0.4);
+        }
+
+        .action-btn[href*="bom/index"],
+        .action-btn[onclick*="bom/index"] {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            border-color: #4f46e5;
+        }
+
+        .action-btn[href*="bom/index"]:hover,
+        .action-btn[onclick*="bom/index"]:hover {
+            background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(79, 70, 229, 0.4);
+        }
+
+        .action-btn[onclick*="production=active"] {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: white;
+            border-color: #6366f1;
+        }
+
+        .action-btn[onclick*="production=active"]:hover {
+            background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(99, 102, 241, 0.4);
+        }
+
+        .action-btn[onclick*="production=completed"] {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border-color: #10b981;
+        }
+
+        .action-btn[onclick*="production=completed"]:hover {
+            background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(16, 185, 129, 0.4);
+        }
+
+        /* Enhanced action button styling for statistics cards */
+        .action-btn .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 0.25rem 0;
+        }
+
+        .action-btn small {
+            font-size: 0.75rem;
+            opacity: 0.9;
+        }
+
         @media (max-width: 768px) {
             .stats-grid {
                 grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -308,7 +391,17 @@ if (hasPermission('manage_inventory', $permissions)) {
                 font-size: 1.5rem;
                 margin-bottom: 0.25rem;
             }
+
+            /* BOM cards responsive styling */
+            .stat-card[onclick] {
+                cursor: pointer;
+            }
+
+            .stat-card[onclick]:hover {
+                transform: none; /* Disable hover effect on mobile */
+            }
         }
+
     </style>
 </head>
 <body>
@@ -425,18 +518,29 @@ if (hasPermission('manage_inventory', $permissions)) {
                     </div>
 
                     <!-- Quick Actions Row 3: BOM Management -->
-                    <?php if ($can_manage_boms || $can_view_boms): ?>
                     <div class="quick-actions">
                         <?php if ($can_manage_boms): ?>
-                        <a href="../bom/add.php" class="action-btn">
-                            <i class="bi bi-file-earmark-plus"></i>
-                            Create BOM
+                        <a href="../bom/auto_bom_index.php" class="action-btn">
+                            <i class="bi bi-magic"></i>
+                            Add Auto BOM
+                        </a>
+                        <?php endif; ?>
+                        <?php if ($can_manage_boms || $can_view_boms): ?>
+                        <a href="../bom/auto_bom_products.php" class="action-btn">
+                            <i class="bi bi-boxes"></i>
+                            View Auto BOM Products
                         </a>
                         <?php endif; ?>
                         <a href="../bom/index.php" class="action-btn">
                             <i class="bi bi-list-ul"></i>
                             View BOMs
                         </a>
+                        <?php if ($can_manage_boms): ?>
+                        <a href="../bom/add.php" class="action-btn">
+                            <i class="bi bi-file-earmark-plus"></i>
+                            Create BOM
+                        </a>
+                        <?php endif; ?>
                         <?php if ($can_manage_boms): ?>
                         <a href="../bom/production.php" class="action-btn">
                             <i class="bi bi-gear"></i>
@@ -447,6 +551,38 @@ if (hasPermission('manage_inventory', $permissions)) {
                             <i class="bi bi-graph-up"></i>
                             BOM Reports
                         </a>
+                    </div>
+
+                    <!-- Quick Actions Row 4: BOM Statistics Cards -->
+                    <?php if (($can_manage_boms || $can_view_boms) && !empty($bom_stats)): ?>
+                    <div class="quick-actions">
+                        <div class="action-btn" onclick="window.location.href='../bom/auto_bom_index.php'" style="cursor: pointer; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                            <i class="bi bi-magic"></i>
+                            <div class="stat-value"><?php echo number_format($bom_stats['auto_boms'] ?? 0); ?></div>
+                            <div>Auto BOMs</div>
+                            <small>⚡ Automated recipes</small>
+                        </div>
+
+                        <div class="action-btn" onclick="window.location.href='../bom/index.php'" style="cursor: pointer; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: white;">
+                            <i class="bi bi-diagram-3"></i>
+                            <div class="stat-value"><?php echo number_format(($bom_stats['total_active_boms'] ?? 0) + ($bom_stats['draft_boms'] ?? 0)); ?></div>
+                            <div>Total BOM Recipes</div>
+                            <small>📋 Manufacturing specs</small>
+                        </div>
+
+                        <div class="action-btn" onclick="window.location.href='../bom/index.php?production=active'" style="cursor: pointer; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white;">
+                            <i class="bi bi-gear"></i>
+                            <div class="stat-value"><?php echo number_format($bom_stats['active_production_orders'] ?? 0); ?></div>
+                            <div>Active Production</div>
+                            <small>🔄 In progress</small>
+                        </div>
+
+                        <div class="action-btn" onclick="window.location.href='../bom/index.php?production=completed'" style="cursor: pointer; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white;">
+                            <i class="bi bi-check2-all"></i>
+                            <div class="stat-value"><?php echo number_format($bom_stats['total_completed_orders'] ?? 0); ?></div>
+                            <div>Completed Orders</div>
+                            <small>✅ Production success</small>
+                        </div>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -646,8 +782,7 @@ if (hasPermission('manage_inventory', $permissions)) {
                     </div>
                 </div>
 
-                <!-- BOM Statistics -->
-                <?php if (($can_manage_boms || $can_view_boms) && !empty($bom_stats)): ?>
+
                 <div class="stat-card" onclick="window.location.href='../bom/index.php'" style="cursor: pointer;">
                     <div class="stat-header">
                         <div class="stat-icon stat-info">
@@ -700,13 +835,13 @@ if (hasPermission('manage_inventory', $permissions)) {
                         <i class="bi bi-check-circle"></i> This month
                     </div>
                 </div>
-                <?php endif; ?>
 
-                    </div>
                 </div>
             </div>
+        </div>
+    </div>
 
-            <!-- Bulk Operations Section -->
+    <!-- Bulk Operations Section -->
             <?php if (hasPermission('manage_products', $permissions) || hasPermission('manage_inventory', $permissions)): ?>
             <div class="row mt-4">
                 <div class="col-12">

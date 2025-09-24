@@ -5,80 +5,80 @@
 // Define section content mappings for each section key
 $sectionContentMappings = [
     'dashboard' => [
-        ['/dashboard/dashboard.php', 'bi-speedometer2', 'Dashboard']
+        [url('dashboard/dashboard.php'), 'bi-speedometer2', 'Dashboard']
     ],
     'pos' => [
-        ['/pos/sale.php', 'bi-cart-plus', 'Point of Sale'],
-        ['/pos/void_reports.php', 'bi-x-circle', 'Void Reports']
+        [url('pos/sale.php'), 'bi-cart-plus', 'Point of Sale'],
+        [url('pos/void_reports.php'), 'bi-x-circle', 'Void Reports']
     ],
     'quotations' => [
-        ['/quotations/quotations.php', 'bi-file-earmark-text', 'All Quotations'],
-        ['/quotations/quotation.php?action=create', 'bi-plus-circle', 'Create Quotation'],
-        ['/quotations/invoices.php', 'bi-receipt', 'All Invoices']
+        [url('quotations/quotations.php'), 'bi-file-earmark-text', 'All Quotations'],
+        [url('quotations/quotation.php?action=create'), 'bi-plus-circle', 'Create Quotation'],
+        [url('quotations/invoices.php'), 'bi-receipt', 'All Invoices']
     ],
     'customer_crm' => [
-        ['/customers/crm_dashboard.php', 'bi-speedometer2', 'CRM Dashboard']
+        [url('customers/crm_dashboard.php'), 'bi-speedometer2', 'CRM Dashboard']
     ],
     'inventory' => [
-        ['/inventory/inventory.php', 'bi-boxes', 'Inventory Dashboard'],
-        ['/products/products.php', 'bi-list', 'All Products'],
-        ['/categories/categories.php', 'bi-tags', 'Categories'],
-        ['/product_families/families.php', 'bi-diagram-3', 'Product Families'],
-        ['/brands/brands.php', 'bi-star', 'Brands'],
-        ['/suppliers/suppliers.php', 'bi-truck', 'Suppliers'],
-        ['/products/bulk_operations.php', 'bi-lightning-charge', 'Bulk Operations'],
+        [url('inventory/inventory.php'), 'bi-boxes', 'Inventory Dashboard'],
+        [url('products/products.php'), 'bi-list', 'All Products'],
+        [url('categories/categories.php'), 'bi-tags', 'Categories'],
+        [url('product_families/families.php'), 'bi-diagram-3', 'Product Families'],
+        [url('brands/brands.php'), 'bi-star', 'Brands'],
+        [url('suppliers/suppliers.php'), 'bi-truck', 'Suppliers'],
+        [url('products/bulk_operations.php'), 'bi-lightning-charge', 'Bulk Operations'],
     ],
     'expiry' => [
-        ['/expiry_tracker/expiry_tracker.php', 'bi-clock-history', 'Expiry Tracker'],
-        ['/expiry_tracker/add_expiry_date.php', 'bi-plus-circle', 'Add Expiry Date']
+        [url('expiry_tracker/expiry_tracker.php'), 'bi-clock-history', 'Expiry Tracker'],
+        [url('expiry_tracker/add_expiry_date.php'), 'bi-plus-circle', 'Add Expiry Date']
     ],
     'bom' => [
-        ['/bom/index.php', 'bi-list-ul', 'BOM Management'],
-        ['/bom/auto_bom_index.php', 'bi-gear-fill', 'Auto BOM'],
-        ['/bom/auto_bom_products.php', 'bi-list-ul', 'Auto BOM Products'],
-        ['/bom/add.php', 'bi-plus-circle', 'Create BOM'],
-        ['/bom/production.php', 'bi-gear', 'Production Orders'],
-        ['/bom/reports.php', 'bi-graph-up', 'BOM Reports'],
-        ['/bom/demo_multilevel.php', 'bi-diagram-3', 'Multi-Level Demo']
+        [url('bom/index.php'), 'bi-list-ul', 'BOM Management'],
+        [url('bom/auto_bom_index.php'), 'bi-gear-fill', 'Auto BOM'],
+        [url('bom/auto_bom_products.php'), 'bi-list-ul', 'Auto BOM Products'],
+        [url('bom/add.php'), 'bi-plus-circle', 'Create BOM'],
+        [url('bom/production.php'), 'bi-gear', 'Production Orders'],
+        [url('bom/reports.php'), 'bi-graph-up', 'BOM Reports'],
+        [url('bom/demo_multilevel.php'), 'bi-diagram-3', 'Multi-Level Demo']
     ],
     'finance' => [
-        ['/finance/index.php', 'bi-speedometer2', 'Finance Dashboard']
+        [url('finance/index.php'), 'bi-speedometer2', 'Finance Dashboard']
     ],
     'expenses' => [
-        ['/expenses/index.php', 'bi-list-ul', 'All Expenses'],
-        ['/expenses/add.php', 'bi-plus-circle', 'Add Expense'],
-        ['/expenses/categories.php', 'bi-tags', 'Categories'],
-        ['/expenses/departments.php', 'bi-building', 'Departments'],
-        ['/expenses/vendors.php', 'bi-shop', 'Vendors'],
-        ['/expenses/reports.php', 'bi-graph-up', 'Reports']
+        [url('expenses/index.php'), 'bi-list-ul', 'All Expenses'],
+        [url('expenses/add.php'), 'bi-plus-circle', 'Add Expense'],
+        [url('expenses/categories.php'), 'bi-tags', 'Categories'],
+        [url('expenses/departments.php'), 'bi-building', 'Departments'],
+        [url('expenses/vendors.php'), 'bi-shop', 'Vendors'],
+        [url('expenses/reports.php'), 'bi-graph-up', 'Reports']
     ],
     'admin' => [
-        ['/dashboard/users/index.php', 'bi-person-gear', 'User Management'],
-        ['/dashboard/roles/index.php', 'bi-shield-check', 'Role Management'],
-        ['/admin/security_logs.php', 'bi-shield-exclamation', 'Security Logs'],
-        ['/admin/backup/manage_backups.php', 'bi-server', 'Backup & Security'],
-        ['/admin/settings/adminsetting.php', 'bi-gear', 'Settings']
+        [url('dashboard/users/index.php'), 'bi-person-gear', 'User Management'],
+        [url('dashboard/roles/index.php'), 'bi-shield-check', 'Role Management'],
+        [url('admin/security_logs.php'), 'bi-shield-exclamation', 'Security Logs'],
+        [url('admin/backup/manage_backups.php'), 'bi-server', 'Backup & Security'],
+        [url('admin/settings/adminsetting.php'), 'bi-gear', 'Settings']
     ],
     'analytics' => [
-        ['/analytics/index.php', 'bi-graph-up', 'Analytics Dashboard']
+        [url('analytics/index.php'), 'bi-graph-up', 'Analytics Dashboard']
     ],
     'pos_management' => [
-        ['/sales/salesdashboard.php', 'bi-cash-register', 'POS Management Dashboard'],
+        [url('sales/salesdashboard.php'), 'bi-cash-register', 'POS Management Dashboard'],
     ],
     'sales' => [
-        ['/sales/index.php', 'bi-graph-up', 'Sales Dashboard'],
-        ['/sales/salesdashboard.php', 'bi-speedometer2', 'Sales Overview'],
-        ['/sales/export_sales.php', 'bi-download', 'Export Sales']
+        [url('sales/index.php'), 'bi-graph-up', 'Sales Dashboard'],
+        [url('sales/salesdashboard.php'), 'bi-speedometer2', 'Sales Overview'],
+        [url('sales/export_sales.php'), 'bi-download', 'Export Sales']
     ],
     'shelf_labels' => [
-        ['/shelf_label/index.php', 'bi-tags', 'Shelf Labels'],
-        ['/shelf_label/shelf_labels.php', 'bi-tags', 'Manage Labels'],
-        ['/shelf_label/generate_labels.php', 'bi-plus-circle', 'Generate Labels'],
-        ['/shelf_label/print_labels.php', 'bi-printer', 'Print Labels'],
-        ['/shelf_label/export_labels.php', 'bi-download', 'Export Labels']
+        [url('shelf_label/index.php'), 'bi-tags', 'Shelf Labels'],
+        [url('shelf_label/shelf_labels.php'), 'bi-tags', 'Manage Labels'],
+        [url('shelf_label/generate_labels.php'), 'bi-plus-circle', 'Generate Labels'],
+        [url('shelf_label/print_labels.php'), 'bi-printer', 'Print Labels'],
+        [url('shelf_label/export_labels.php'), 'bi-download', 'Export Labels']
     ],
     'reports' => [
-        ['/reports/index.php', 'bi-file-earmark-bar-graph', 'Reports Dashboard']
+        [url('reports/index.php'), 'bi-file-earmark-bar-graph', 'Reports Dashboard']
     ]
 ];
 

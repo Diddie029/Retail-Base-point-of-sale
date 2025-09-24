@@ -262,7 +262,7 @@ if ($totalVisibleSections == 0 && (
         <!-- Dashboard - Always visible for admin -->
         <?php if (isset($showSections['dashboard']) && $showSections['dashboard']): ?>
         <div class="nav-item">
-            <a href="/dashboard/dashboard.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/dashboard.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/dashboard.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="<?php echo url('dashboard/dashboard.php'); ?>" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/dashboard.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/dashboard.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-speedometer2"></i>
                 Dashboard
             </a>
@@ -272,7 +272,7 @@ if ($totalVisibleSections == 0 && (
         <!-- POS - Always visible for admin -->
         <?php if (isset($showSections['pos']) && $showSections['pos']): ?>
         <div class="nav-item">
-            <a href="/pos/sale.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="<?php echo url('pos/sale.php'); ?>" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-cart-plus"></i>
                 POS
             </a>
@@ -285,7 +285,7 @@ if ($totalVisibleSections == 0 && (
 
         <!-- My Profile - Always visible -->
         <div class="nav-item">
-            <a href="/dashboard/users/profile.php" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
+            <a href="<?php echo url('dashboard/users/profile.php'); ?>" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/dashboard/users/profile.php') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
                 <i class="bi bi-person-gear"></i>
                 My Profile
             </a>
@@ -358,7 +358,7 @@ if ($totalVisibleSections == 0 && (
     position: fixed;
     top: 0;
     left: 0;
-    width: 250px;
+    width: var(--sidebar-width, 280px);
     height: 100vh;
     background-color: var(--sidebar-color);
     color: white;
@@ -369,7 +369,7 @@ if ($totalVisibleSections == 0 && (
 
 /* Main Content Area */
 .main-content {
-    margin-left: 250px;
+    margin-left: var(--sidebar-width, 280px);
     min-height: 100vh;
     background-color: #f8f9fa;
     transition: margin-left 0.3s ease;

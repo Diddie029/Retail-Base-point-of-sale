@@ -112,7 +112,7 @@ if (in_array($sort_by, $valid_sort_columns)) {
     } elseif ($sort_by === 'product_count') {
         $query .= " ORDER BY product_count " . ($sort_order === 'DESC' ? 'DESC' : 'ASC') . ", s.name ASC";
     }
-} else {
+}
     $query .= " ORDER BY s.name ASC";
 }
 
@@ -1264,7 +1264,7 @@ unset($_SESSION['success'], $_SESSION['error']);
                                         </td>
                                         <td><?php echo htmlspecialchars($supplier['contact_person'] ?? 'Not specified'); ?></td>
                                         <td>
-                                            <?php if ($supplier['email']): ?>
+                                            <?php if (!empty($supplier['email'])): ?>
                                                 <a href="mailto:<?php echo htmlspecialchars($supplier['email']); ?>" class="text-decoration-none">
                                                     <?php echo htmlspecialchars($supplier['email']); ?>
                                                 </a>

@@ -149,6 +149,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $success_message = "Tax rate deleted successfully!";
             
+        } elseif ($action === 'update_default_tax_settings') {
+            $default_tax_rate = (float)$_POST['default_tax_rate'];
+            $default_tax_name = sanitizeInput($_POST['default_tax_name']);
+
+            if ($default_tax_rate < 0 || $default_tax_rate > 100) {
+                throw new Exception('Tax rate must be between 0 and 100');
+            }
+
+            if (empty($default_tax_name)) {
+                throw new Exception('Tax name is required');
+            }
+
+            // Update settings
+            $stmt = $conn->prepare("
+                INSERT INTO settings (setting_key, setting_value, updated_at)
+                VALUES ('tax_rate', ?, NOW())
+                ON DUPLICATE KEY UPDATE setting_value = ?, updated_at = NOW()
+            ");
+            $stmt->execute([$default_tax_rate, $default_tax_rate]);
+
+            $stmt = $conn->prepare("
+                INSERT INTO settings (setting_key, setting_value, updated_at)
+                VALUES ('tax_name', ?, NOW())
+                ON DUPLICATE KEY UPDATE setting_value = ?, updated_at = NOW()
+            ");
+            $stmt->execute([$default_tax_name, $default_tax_name]);
+
+            $success_message = "Default tax settings updated successfully! Default rate: {$default_tax_rate}% ({$default_tax_name})";
+
         } elseif ($action === 'create_default_setup') {
             // Create default tax category and rate based on admin settings
             $default_tax_name = $settings['tax_name'] ?? 'VAT';
@@ -503,6 +532,56 @@ $current_date = date('Y-m-d');
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Default Tax Settings Section -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-gear-fill me-2"></i>Default Tax Settings
+                        <button class="btn btn-sm btn-outline-primary float-end" data-bs-toggle="modal" data-bs-target="#editDefaultTaxModal">
+                            <i class="bi bi-pencil me-1"></i>Edit Defaults
+                        </button>
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center">
+                                <div class="me-3">
+                                    <i class="bi bi-percent-circle text-success" style="font-size: 2rem;"></i>
+                                </div>
+                                <div>
+                                    <h6 class="mb-1">Default Tax Rate</h6>
+                                    <p class="mb-0">
+                                        <span class="badge bg-success fs-6 px-3 py-2"><?php echo number_format($settings['tax_rate'] ?? 0, 2); ?>%</span>
+                                        <small class="text-muted d-block">Applied to new products</small>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center">
+                                <div class="me-3">
+                                    <i class="bi bi-tag text-info" style="font-size: 2rem;"></i>
+                                </div>
+                                <div>
+                                    <h6 class="mb-1">Default Tax Name</h6>
+                                    <p class="mb-0">
+                                        <span class="badge bg-info fs-6 px-3 py-2"><?php echo htmlspecialchars($settings['tax_name'] ?? 'VAT'); ?></span>
+                                        <small class="text-muted d-block">Tax label displayed in receipts</small>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>
+                            These settings are used when creating new products and for the quick setup feature.
+                        </small>
                     </div>
                 </div>
             </div>
@@ -932,6 +1011,50 @@ $current_date = date('Y-m-d');
                         <button type="submit" class="btn btn-danger">Delete</button>
                     </form>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Default Tax Settings Modal -->
+    <div class="modal fade" id="editDefaultTaxModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit Default Tax Settings</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST">
+                    <div class="modal-body">
+                        <input type="hidden" name="action" value="update_default_tax_settings">
+                        <div class="mb-3">
+                            <label for="default_tax_name" class="form-label">Default Tax Name *</label>
+                            <input type="text" class="form-control" id="default_tax_name" name="default_tax_name"
+                                   value="<?php echo htmlspecialchars($settings['tax_name'] ?? 'VAT'); ?>" required>
+                            <div class="form-text">This will be the default name for tax categories (e.g., VAT, GST, Sales Tax)</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="default_tax_rate" class="form-label">Default Tax Rate (%) *</label>
+                            <input type="number" class="form-control" id="default_tax_rate" name="default_tax_rate"
+                                   min="0" max="100" step="0.01" value="<?php echo $settings['tax_rate'] ?? 0; ?>" required>
+                            <div class="form-text">Default tax rate percentage (0-100%). This will be applied to new products automatically.</div>
+                        </div>
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <strong>Note:</strong> Changing these settings will affect:
+                            <ul class="mb-0 mt-2">
+                                <li>New products created without a specific tax category</li>
+                                <li>The "Quick Setup" feature in tax management</li>
+                                <li>Default tax calculations in the POS system</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-circle me-2"></i>Update Default Settings
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>

@@ -83,7 +83,7 @@ if (hasPermission('manage_sales', $permissions) || hasPermission('process_sales'
 $top_products = [];
 if (hasPermission('manage_products', $permissions)) {
     $stmt = $conn->prepare("
-        SELECT p.name, SUM(si.quantity) as total_sold, SUM(si.quantity * si.price) as total_revenue
+        SELECT p.name, SUM(si.quantity) as total_sold, SUM(si.quantity * si.unit_price) as total_revenue
         FROM products p
         JOIN sale_items si ON p.id = si.product_id
         JOIN sales s ON si.sale_id = s.id
@@ -219,17 +219,17 @@ if (hasPermission('manage_products', $permissions)) {
             <!-- Quick Actions -->
             <?php if (hasPermission('process_sales', $permissions)): ?>
             <div class="quick-actions">
-                <a href="../pos/index.php" class="action-btn">
+                <a href="<?php echo url('pos/index.php'); ?>" class="action-btn">
                     <i class="bi bi-cart-plus"></i>
                     New Sale
                 </a>
                 <?php if (hasPermission('manage_products', $permissions)): ?>
-                <a href="../products/add.php" class="action-btn">
+                <a href="<?php echo url('products/add.php'); ?>" class="action-btn">
                     <i class="bi bi-plus-circle"></i>
                     Add Product
                 </a>
                 <?php endif; ?>
-                <a href="../customers/add.php" class="action-btn">
+                <a href="<?php echo url('customers/add.php'); ?>" class="action-btn">
                     <i class="bi bi-person-plus"></i>
                     Add Customer
                 </a>
@@ -242,7 +242,7 @@ if (hasPermission('manage_products', $permissions)) {
             <div class="data-section">
                 <div class="section-header">
                     <h3 class="section-title">Recent Sales</h3>
-                    <a href="../sales/index.php" class="btn btn-outline-primary btn-sm">View All</a>
+                    <a href="<?php echo url('sales/index.php'); ?>" class="btn btn-outline-primary btn-sm">View All</a>
                 </div>
                 <div class="table-responsive">
                     <table class="table">

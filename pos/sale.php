@@ -260,229 +260,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// Security check: Prevent unauthorized access to till closing functionality
+// Till closing functionality has been moved to a dedicated file
 if (isset($_GET['action']) && $_GET['action'] === 'close_till') {
-    if (!isset($_SESSION['till_close_authenticated']) || !$_SESSION['till_close_authenticated']) {
-        $_SESSION['error_message'] = "You must authenticate before accessing till closing operations.";
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit();
-    }
-}
-
-// Handle till closing
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'close_till') {
-    // Check if user is authenticated for till close operations
-    if (!isset($_SESSION['till_close_authenticated']) || !$_SESSION['till_close_authenticated']) {
-        $_SESSION['error_message'] = "You must authenticate before performing till close operations.";
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit();
-    }
-    
-    // Additional security: Verify the authenticated user has permission
-    if (!isset($_SESSION['till_close_user_id']) || !isset($_SESSION['till_close_username'])) {
-        $_SESSION['error_message'] = "Authentication session is invalid. Please authenticate again.";
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit();
-    }
-
-    // Check if cart has active products
-    if (!empty($cart)) {
-        $_SESSION['error_message'] = "Cannot close till with active products in cart. Please complete the current transaction or clear the cart first.";
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit();
-    }
-
-    // Check for held transactions
-    if (hasHeldTransactions($conn, $user_id)) {
-        $_SESSION['error_message'] = "Cannot close till with held transactions. Please continue or void all held transactions first.";
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit();
-    }
-
-    // Validate confirmation step
-    $confirm_close_till = $_POST['confirm_close_till'] ?? '';
-    $confirm_balance_checked = isset($_POST['confirm_balance_checked']);
-    
-    if (strtoupper(trim($confirm_close_till)) !== 'CLOSE TILL') {
-        $_SESSION['error_message'] = "Please type 'CLOSE TILL' exactly to confirm the action.";
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit();
-    }
-    
-    if (!$confirm_balance_checked) {
-        $_SESSION['error_message'] = "Please confirm that you have physically counted the cash in the till.";
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit();
-    }
-
-    $cash_amount = floatval($_POST['cash_amount'] ?? 0);
-    $voucher_amount = floatval($_POST['voucher_amount'] ?? 0);
-    $loyalty_points = floatval($_POST['loyalty_points'] ?? 0);
-    $other_amount = floatval($_POST['other_amount'] ?? 0);
-    $other_description = $_POST['other_description'] ?? '';
-    $closing_notes = $_POST['closing_notes'] ?? '';
-    $allow_exceed = 1; // Always allow by default
-
-    if ($selected_till) {
-        // Additional security check: Verify user has access to this specific till
-        $stmt = $conn->prepare("
-            SELECT rt.*, u.username as assigned_user_name 
-            FROM register_tills rt 
-            LEFT JOIN users u ON rt.assigned_user_id = u.id 
-            WHERE rt.id = ? AND (rt.assigned_user_id = ? OR rt.assigned_user_id IS NULL OR ? = 1)
-        ");
-        $stmt->execute([$selected_till['id'], $user_id, $is_admin_user ? 1 : 0]);
-        $till_access = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$till_access) {
-            $_SESSION['error_message'] = "You do not have access to close this till. Please contact your administrator.";
-            header('Location: ' . $_SERVER['PHP_SELF']);
-            exit();
-        }
-        
-        // Check if till is currently open and assigned to this user (or admin can close any till)
-        if ($till_access['till_status'] === 'closed' && !$is_admin_user) {
-            $_SESSION['error_message'] = "This till is already closed or not assigned to you.";
-            header('Location: ' . $_SERVER['PHP_SELF']);
-            exit();
-        }
-        
-        // Get opening amount from session
-        $opening_amount = floatval($_SESSION['till_opening_amount'] ?? 0);
-        
-        // Get total sales for today for this cashier
-        $today = date('Y-m-d');
-        
-        // Get total sales for the current till (all cashiers) for today using the new function
-        $total_sales = getTillSalesTotal($conn, $selected_till['id'], $today);
-        
-        // Get total cash drops for today for this till (all cashiers) using the new function
-        $total_drops = getTotalCashDrops($conn, $selected_till['id'], null, $today);
-        
-        // Calculate expected balance: opening + sales - drops
-        $expected_balance = $opening_amount + $total_sales - $total_drops;
-        
-        // Calculate total closing amount
-        $total_closing = $cash_amount + $voucher_amount + $loyalty_points + $other_amount;
-
-        // Calculate difference between expected and actual
-        $difference = $total_closing - $expected_balance;
-
-        // Always allow closing regardless of amount difference
-        // Determine shortage type
-        $shortage_type = 'exact';
-        if ($difference < -0.01) {
-            $shortage_type = 'shortage'; // Less money than expected
-        } elseif ($difference > 0.01) {
-            $shortage_type = 'excess'; // More money than expected
-        }
-
-        // Log the till closing action for audit trail
-        error_log("Till Closing - User: $username (ID: $user_id) closing Till: {$selected_till['till_name']} (ID: {$selected_till['id']})");
-        error_log("Till Closing - Opening: $opening_amount, Sales: $total_sales, Drops: $total_drops, Expected: $expected_balance, Actual: $total_closing, Difference: $difference");
-
-        // Create till closing record with additional calculation details
-        $stmt = $conn->prepare("
-            INSERT INTO till_closings (till_id, user_id, opening_amount, total_sales, total_drops, expected_balance, cash_amount, voucher_amount, loyalty_points, other_amount, other_description, actual_counted_amount, total_amount, difference, shortage_type, closing_notes, allow_exceed, closed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        ");
-        $stmt->execute([
-            $selected_till['id'],
-            $user_id,
-            $opening_amount,
-            $total_sales,
-            $total_drops,
-            $expected_balance,
-            $cash_amount,
-            $voucher_amount,
-            $loyalty_points,
-            $other_amount,
-            $other_description,
-            $cash_amount, // actual_counted_amount (focusing on cash for now)
-            $total_closing,
-            $difference,
-            $shortage_type,
-            $closing_notes,
-            $allow_exceed
-        ]);
-
-        // Reset till balance to 0, set status to closed, and release user assignment
-        $stmt = $conn->prepare("UPDATE register_tills SET current_balance = 0, till_status = 'closed', current_user_id = NULL WHERE id = ?");
-        $stmt->execute([$selected_till['id']]);
-
-        // Clear till selection
-        unset($_SESSION['selected_till_id']);
-        unset($_SESSION['selected_till_name']);
-        unset($_SESSION['selected_till_code']);
-        unset($_SESSION['till_opening_amount']);
-        $selected_till = null;
-
-        $success_message = "Till closed successfully. ";
-        $success_message .= "Opening: " . formatCurrency($opening_amount, $settings) . ", ";
-        $success_message .= "Sales: " . formatCurrency($total_sales, $settings) . ", ";
-        $success_message .= "Drops: " . formatCurrency($total_drops, $settings) . ", ";
-        $success_message .= "Expected: " . formatCurrency($expected_balance, $settings) . ", ";
-        $success_message .= "Actual: " . formatCurrency($total_closing, $settings);
-        if (abs($difference) > 0.01) {
-            $success_message .= ", Difference: " . formatCurrency($difference, $settings);
-        }
-        $success_message .= " <a href='#' onclick='showTillClosingSlipModal(); return false;' class='text-decoration-none'><i class='bi bi-printer'></i> Print slips manually if needed</a>";
-        $_SESSION['success_message'] = $success_message;
-
-        // Generate till closing slip
-        $till_closing_slip_data = [
-            'till_id' => $selected_till['id'],
-            'till_name' => $selected_till['till_name'],
-            'till_code' => $selected_till['till_code'],
-            'cashier_name' => $username,
-            'closing_user_name' => $_SESSION['till_close_username'] ?? $username,
-            'closing_date' => date('Y-m-d H:i:s'),
-            'opening_amount' => $opening_amount,
-            'total_sales' => $total_sales,
-            'total_drops' => $total_drops,
-            'expected_balance' => $expected_balance,
-            'actual_cash' => $cash_amount,
-            'voucher_amount' => $voucher_amount,
-            'loyalty_points' => $loyalty_points,
-            'other_amount' => $other_amount,
-            'other_description' => $other_description,
-            'total_closing' => $total_closing,
-            'difference' => $difference,
-            'closing_notes' => $closing_notes,
-            'company_name' => $settings['company_name'] ?? 'Point of Sale System',
-            'company_address' => $settings['company_address'] ?? '',
-            'company_phone' => $settings['company_phone'] ?? '',
-            'currency_symbol' => $settings['currency_symbol'] ?? 'KES'
-        ];
-
-        // Generate till closing slip HTML
-        $till_closing_slip_html = generateTillClosingSlipHTML($till_closing_slip_data);
-        
-        // Store for printing
-        $_SESSION['till_closing_slip_html'] = $till_closing_slip_html;
-        $_SESSION['auto_print_till_closing'] = true;
-
-        // Invalidate cashier session for security - require re-authentication on sale page
-        if (!$is_admin_user) {
-            // Set flag to require re-authentication on sale page
-            $_SESSION['till_closure_occurred'] = true;
-            $_SESSION['till_closure_timestamp'] = time();
-            $_SESSION['till_closure_till_id'] = $selected_till['id'];
-
-            // Log the session invalidation
-            error_log("Till closure session invalidation triggered for user: $username (ID: $user_id) on Till: {$selected_till['till_name']}");
-
-            // Optional: Clear sensitive session data
-            unset($_SESSION['till_close_authenticated']);
-            unset($_SESSION['till_close_user_id']);
-            unset($_SESSION['till_close_username']);
-        }
-    }
-
-    // Redirect to prevent form resubmission
-    header('Location: ' . $_SERVER['PHP_SELF']);
+    header('Location: close_till.php');
     exit();
 }
+
+// Till closing functionality has been moved to close_till.php
 
 // Handle cash drop authentication
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cash_drop_auth') {
@@ -651,64 +435,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// Handle till close authentication
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'till_close_auth') {
-    $auth_user_id = $_POST['user_id'] ?? '';
-    $auth_password = $_POST['password'] ?? '';
-
-    if ($auth_user_id && $auth_password) {
-        try {
-            // Validate input
-            $auth_user_id = trim($auth_user_id);
-            $auth_password = trim($auth_password);
-            
-            if (empty($auth_user_id) || empty($auth_password)) {
-                throw new Exception("Please enter both User ID/Username and password.");
-            }
-
-            // Verify user credentials - check multiple possible identifiers
-            $stmt = $conn->prepare("
-                SELECT id, username, password, role, employment_id, user_id, employee_id
-                FROM users
-                WHERE (id = ? OR employment_id = ? OR user_id = ? OR username = ? OR employee_id = ?)
-                AND status = 'active'
-            ");
-            $stmt->execute([$auth_user_id, $auth_user_id, $auth_user_id, $auth_user_id, $auth_user_id]);
-            $auth_user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$auth_user || !password_verify($auth_password, $auth_user['password'])) {
-                throw new Exception("Invalid password. Please check your password and try again.");
-            }
-
-            // Check if user has till close permission (case insensitive for admin)
-            if (strtolower($auth_user['role']) === 'admin' || hasPermission('close_till', $permissions)) {
-                $_SESSION['till_close_authenticated'] = true;
-                $_SESSION['till_close_user_id'] = $auth_user['id'];
-                $_SESSION['till_close_username'] = $auth_user['username'];
-                
-                $intended_action = $_POST['intended_action'] ?? 'close_till';
-                $_SESSION['intended_action'] = $intended_action;
-                
-                $_SESSION['success_message'] = "Authentication successful. You can now proceed with till closing.";
-                
-                // Log successful authentication
-                error_log("Till close authentication successful: User ID {$auth_user['id']} ({$auth_user['username']})");
-            } else {
-                throw new Exception("You don't have permission to close tills. Please contact your administrator.");
-            }
-        } catch (Exception $e) {
-            // Log failed authentication attempts
-            error_log("Till close authentication failed: " . $e->getMessage() . " | Attempted ID: " . $auth_user_id);
-            $_SESSION['error_message'] = $e->getMessage();
-        }
-    } else {
-        $_SESSION['error_message'] = "Please enter both User ID/Employment ID and password.";
-    }
-
-    // Redirect to prevent form resubmission
-    header('Location: ' . $_SERVER['PHP_SELF']);
-    exit();
-}
+// Till close authentication functionality moved to close_till.php
 
 // Handle cash drop logout
 if (isset($_GET['action']) && $_GET['action'] === 'logout_cash_drop') {
@@ -720,15 +447,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'logout_cash_drop') {
     exit();
 }
 
-// Handle till close logout
-if (isset($_GET['action']) && $_GET['action'] === 'logout_till_close') {
-    unset($_SESSION['till_close_authenticated']);
-    unset($_SESSION['till_close_user_id']);
-    unset($_SESSION['till_close_username']);
-    $_SESSION['success_message'] = "Logged out from till close operations.";
-    header('Location: ' . $_SERVER['PHP_SELF']);
-    exit();
-}
+// Till close logout functionality moved to close_till.php
 
 // Handle till release on logout
 if (isset($_GET['action']) && $_GET['action'] === 'release_till') {
@@ -756,24 +475,87 @@ if (isset($_GET['action']) && $_GET['action'] === 'release_till') {
 }
 
 // Get products for the POS interface (including Auto BOM products)
-$stmt = $conn->query("
-    SELECT 
-        p.*, 
-        c.name as category_name,
-        abc.config_name as auto_bom_config_name,
-        abc.base_product_id,
-        bp.name as base_product_name,
-        CASE 
-            WHEN p.auto_bom_type IS NOT NULL THEN 'Auto BOM'
-            ELSE 'Regular'
-        END as product_type
-    FROM products p
-    LEFT JOIN categories c ON p.category_id = c.id
-    LEFT JOIN auto_bom_configs abc ON p.id = abc.product_id
-    LEFT JOIN products bp ON abc.base_product_id = bp.id
-    WHERE p.status = 'active'
-    ORDER BY p.name
-");
+// Check if auto_bom_configs table exists and has the required columns
+$table_exists = false;
+$has_config_name = false;
+$has_auto_bom_type = false;
+
+try {
+    $conn->query("SELECT 1 FROM auto_bom_configs LIMIT 1");
+    $table_exists = true;
+    
+    // Check if config_name column exists
+    $result = $conn->query("SHOW COLUMNS FROM auto_bom_configs LIKE 'config_name'");
+    $has_config_name = $result->rowCount() > 0;
+} catch (PDOException $e) {
+    $table_exists = false;
+    $has_config_name = false;
+}
+
+// Check if products table has auto_bom_type column
+try {
+    $result = $conn->query("SHOW COLUMNS FROM products LIKE 'auto_bom_type'");
+    $has_auto_bom_type = $result->rowCount() > 0;
+} catch (PDOException $e) {
+    $has_auto_bom_type = false;
+}
+
+if ($table_exists && $has_config_name && $has_auto_bom_type) {
+    // Full query with all Auto BOM features
+    $stmt = $conn->query("
+        SELECT 
+            p.*, 
+            c.name as category_name,
+            COALESCE(abc.config_name, '') as auto_bom_config_name,
+            COALESCE(abc.base_product_id, 0) as base_product_id,
+            COALESCE(bp.name, '') as base_product_name,
+            CASE 
+                WHEN p.auto_bom_type IS NOT NULL THEN 'Auto BOM'
+                ELSE 'Regular'
+            END as product_type
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        LEFT JOIN auto_bom_configs abc ON p.id = abc.product_id
+        LEFT JOIN products bp ON abc.base_product_id = bp.id
+        WHERE p.status = 'active'
+        ORDER BY p.name
+    ");
+} elseif ($table_exists && $has_auto_bom_type) {
+    // Table exists but missing config_name column
+    $stmt = $conn->query("
+        SELECT 
+            p.*, 
+            c.name as category_name,
+            '' as auto_bom_config_name,
+            COALESCE(abc.base_product_id, 0) as base_product_id,
+            COALESCE(bp.name, '') as base_product_name,
+            CASE 
+                WHEN p.auto_bom_type IS NOT NULL THEN 'Auto BOM'
+                ELSE 'Regular'
+            END as product_type
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        LEFT JOIN auto_bom_configs abc ON p.id = abc.product_id
+        LEFT JOIN products bp ON abc.base_product_id = bp.id
+        WHERE p.status = 'active'
+        ORDER BY p.name
+    ");
+} else {
+    // Table doesn't exist or missing columns - use basic query
+    $stmt = $conn->query("
+        SELECT 
+            p.*, 
+            c.name as category_name,
+            '' as auto_bom_config_name,
+            0 as base_product_id,
+            '' as base_product_name,
+            'Regular' as product_type
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.status = 'active'
+        ORDER BY p.name
+    ");
+}
 $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get categories
@@ -1702,9 +1484,9 @@ try {
                         <?php endif; ?>
                     </div>
                     <div class="col-4">
-                        <button type="button" class="btn btn-xs btn-danger till-action-btn w-100" onclick="showCloseTill()" title="Close Till">
+                        <a href="close_till.php" class="btn btn-xs btn-danger till-action-btn w-100" title="Close Till">
                             <i class="bi bi-x-circle"></i> Close Till
-                        </button>
+                        </a>
                     </div>
                     <div class="col-4">
                         <button type="button" class="btn btn-xs btn-dark till-action-btn w-100" id="signOutBtn" onclick="signOutFromPOS()" title="Sign out from POS">
@@ -5360,11 +5142,74 @@ try {
                                             <span><i class="bi bi-person"></i> Cashier:</span>
                                             <strong class="text-primary"><?php echo htmlspecialchars($username); ?></strong>
                                         </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-calendar"></i> Date:</span>
+                                            <strong><?php echo date('M d, Y'); ?></strong>
+                                        </div>
                                     </div>
                                     <div class="col-md-6">
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-cash-register"></i> Till:</span>
+                                            <strong class="text-info"><?php echo htmlspecialchars($selected_till['till_name']); ?></strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-2">
+                                            <span><i class="bi bi-clock"></i> Time:</span>
+                                            <strong><?php echo date('H:i:s'); ?></strong>
+                                        </div>
                                     </div>
                                 </div>
                                 <hr>
+                                
+                                <!-- Cash Flow Breakdown -->
+                                <div class="row">
+                                    <div class="col-md-12">
+                                        <h6 class="text-muted mb-3">Cash Flow Breakdown</h6>
+                                        
+                                        <!-- Opening Amount -->
+                                        <div class="d-flex justify-content-between align-items-center mb-2 p-2 bg-light rounded">
+                                            <div class="d-flex align-items-center">
+                                                <i class="bi bi-arrow-up-circle text-success me-2"></i>
+                                                <span class="fw-medium">Opening Amount</span>
+                                            </div>
+                                            <span class="fw-bold text-success"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($opening_amount, 2); ?></span>
+                                        </div>
+                                        
+                                        <!-- Sales Total -->
+                                        <div class="d-flex justify-content-between align-items-center mb-2 p-2 bg-light rounded">
+                                            <div class="d-flex align-items-center">
+                                                <i class="bi bi-plus-circle text-primary me-2"></i>
+                                                <span class="fw-medium">Total Sales</span>
+                                            </div>
+                                            <span class="fw-bold text-primary"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($total_sales, 2); ?></span>
+                                        </div>
+                                        
+                                        <!-- Cash Drops (Subtracted) -->
+                                        <div class="d-flex justify-content-between align-items-center mb-2 p-2 bg-light rounded">
+                                            <div class="d-flex align-items-center">
+                                                <i class="bi bi-dash-circle text-warning me-2"></i>
+                                                <span class="fw-medium">Cash Drops</span>
+                                            </div>
+                                            <span class="fw-bold text-warning">-<?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($total_drops, 2); ?></span>
+                                        </div>
+                                        
+                                        <hr class="my-3">
+                                        
+                                        <!-- Expected Total -->
+                                        <div class="d-flex justify-content-between align-items-center mb-3 p-3 bg-primary text-white rounded">
+                                            <div class="d-flex align-items-center">
+                                                <i class="bi bi-calculator me-2"></i>
+                                                <span class="fw-bold fs-6">Expected Total to Collect</span>
+                                            </div>
+                                            <span class="fw-bold fs-5"><?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($expected_balance, 2); ?></span>
+                                        </div>
+                                        
+                                        <!-- Formula Display -->
+                                        <div class="text-center text-muted small">
+                                            <i class="bi bi-info-circle me-1"></i>
+                                            Formula: Opening + Sales - Drops = <?php echo $settings['currency_symbol'] ?? 'KES'; ?> <?php echo number_format($opening_amount, 2); ?> + <?php echo number_format($total_sales, 2); ?> - <?php echo number_format($total_drops, 2); ?> = <?php echo number_format($expected_balance, 2); ?>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <?php endif; ?>

@@ -87,6 +87,10 @@ body {
 .main-content {
     margin-left: var(--sidebar-width);
     min-height: 100vh;
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    overflow-x: hidden;
 }
 
 /* Header */
@@ -124,6 +128,8 @@ body {
 /* Content Area */
 .content {
     padding: 2rem;
+    position: relative;
+    z-index: 2;
 }
 
 /* Product Management Specific Styles */
@@ -354,6 +360,12 @@ body {
     border: 1px solid #e2e8f0;
     border-radius: 8px;
     background: #f8fafc;
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    display: block;
+    visibility: visible;
+    opacity: 1;
 }
 
 .form-section:last-child {
@@ -641,6 +653,30 @@ body {
     border-color: #bfdbfe;
 }
 
+/* Data Sections */
+.data-section {
+    width: 100%;
+    display: block;
+    visibility: visible;
+    opacity: 1;
+    margin-bottom: 1rem;
+    position: relative;
+    z-index: 1;
+}
+
+.data-section .section-header {
+    margin-bottom: 1rem;
+}
+
+.data-section .section-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #1e293b;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+}
+
 /* Stats Cards */
 .stats-grid {
     display: grid;
@@ -688,6 +724,12 @@ body {
 
     .main-content {
         margin-left: 0;
+    }
+
+    .sticky-top {
+        position: relative !important;
+        top: 0 !important;
+        z-index: 1000;
     }
 
     .header {

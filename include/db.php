@@ -8,8 +8,17 @@ $password = '';
 $GLOBALS['db_connected'] = false;
 $GLOBALS['db_error'] = '';
 
-$conn = new PDO("mysql:host=$host", $username, $password);
+try {
+    // Check if we're accessing from starter.php to avoid redirect loop
+    $currentScript = basename($_SERVER['SCRIPT_NAME'] ?? '');
+    $requestUri = $_SERVER['REQUEST_URI'] ?? '';
+    $isStarterPage = ($currentScript === 'starter.php' || strpos($requestUri, 'starter.php') !== false);
+    
+    $conn = new PDO("mysql:host=$host", $username, $password);
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    
+    // Store connection in global scope for accessibility
+    $GLOBALS['conn'] = $conn;
 
     // Store connection status for login page
     $GLOBALS['db_connected'] = true;
@@ -17,6 +26,27 @@ $conn = new PDO("mysql:host=$host", $username, $password);
     // Create database if not exists
     $conn->exec("CREATE DATABASE IF NOT EXISTS `$dbname`");
     $conn->exec("USE `$dbname`");
+    
+    // Disable foreign key checks temporarily to avoid dependency issues
+    $conn->exec("SET FOREIGN_KEY_CHECKS = 0");
+    
+    // Check if system is properly installed by checking for admin users
+    try {
+        $stmt = $conn->query("SELECT COUNT(*) as count FROM users WHERE role = 'Admin'");
+        $result = $stmt->fetch();
+        
+        if ($result['count'] == 0 && !$isStarterPage) {
+            // No admin users found, show friendly installer message
+            showInstallerMessage();
+            exit();
+        }
+    } catch (PDOException $tableError) {
+        // Users table doesn't exist - this is a fresh installation
+        if (!$isStarterPage) {
+            showInstallerMessage();
+            exit();
+        }
+    }
 
     // Create users table
     $conn->exec("
@@ -57,13 +87,63 @@ $conn = new PDO("mysql:host=$host", $username, $password);
     }
 
 
-    // Create categories table
+    // Create categories table first
     $conn->exec("
         CREATE TABLE IF NOT EXISTS categories (
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(100) NOT NULL,
             description TEXT,
             status ENUM('active', 'inactive') DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+    ");
+    
+    // Create brands table early (referenced by products)
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS brands (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL UNIQUE,
+            description TEXT,
+            logo_url VARCHAR(500),
+            website VARCHAR(255),
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_is_active (is_active)
+        )
+    ");
+    
+    // Create suppliers table early (referenced by products)
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS suppliers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            contact_person VARCHAR(100),
+            phone VARCHAR(20),
+            address TEXT,
+            payment_terms VARCHAR(100),
+            notes TEXT,
+            supplier_block_note TEXT COMMENT 'Required note when supplier is blocked/deactivated',
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_name (name),
+            INDEX idx_is_active (is_active)
+        )
+    ");
+    
+    // Create register_tills table early (referenced by sales)
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS register_tills (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            till_name VARCHAR(100) NOT NULL,
+            till_code VARCHAR(20) UNIQUE,
+            location VARCHAR(255),
+            status ENUM('active', 'inactive') DEFAULT 'active',
+            is_active TINYINT(1) DEFAULT 1,
+            till_status ENUM('closed', 'opened') DEFAULT 'closed',
+            current_user_id INT DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
@@ -152,7 +232,11 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         CREATE TABLE IF NOT EXISTS auto_bom_configs (
             id INT AUTO_INCREMENT PRIMARY KEY,
             product_family_id INT NOT NULL,
+            product_id INT DEFAULT NULL COMMENT 'Direct product reference for auto BOM configurations',
+            config_name VARCHAR(255) DEFAULT NULL COMMENT 'Configuration name for display purposes',
             base_product_id INT NOT NULL,
+            base_unit VARCHAR(50) DEFAULT 'each' COMMENT 'Base unit for Auto BOM calculations',
+            base_quantity DECIMAL(10,3) DEFAULT 1 COMMENT 'Base quantity for Auto BOM calculations',
             conversion_ratio DECIMAL(10,3) NOT NULL DEFAULT 1 COMMENT 'How many base units make one selling unit',
             min_stock_level INT DEFAULT 0,
             auto_reorder TINYINT(1) DEFAULT 0,
@@ -160,8 +244,11 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (product_family_id) REFERENCES product_families(id) ON DELETE CASCADE,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
             FOREIGN KEY (base_product_id) REFERENCES products(id) ON DELETE CASCADE,
             INDEX idx_product_family_id (product_family_id),
+            INDEX idx_product_id (product_id),
+            INDEX idx_config_name (config_name),
             INDEX idx_base_product_id (base_product_id),
             INDEX idx_is_active (is_active)
         )
@@ -172,19 +259,31 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         CREATE TABLE IF NOT EXISTS auto_bom_selling_units (
             id INT AUTO_INCREMENT PRIMARY KEY,
             config_id INT NOT NULL,
+            auto_bom_config_id INT DEFAULT NULL COMMENT 'Alias for config_id for compatibility',
             unit_name VARCHAR(100) NOT NULL,
             unit_description TEXT,
             quantity_per_base DECIMAL(10,3) NOT NULL COMMENT 'How many of this unit per base unit',
+            unit_quantity DECIMAL(10,3) DEFAULT 1 COMMENT 'Unit quantity for display purposes',
             selling_price DECIMAL(10,2) NOT NULL,
             cost_price DECIMAL(10,2) DEFAULT 0,
             sku_suffix VARCHAR(20) COMMENT 'Suffix for generating SKU',
+            unit_sku VARCHAR(100) UNIQUE COMMENT 'Individual SKU for this selling unit',
+            unit_barcode VARCHAR(50) UNIQUE COMMENT 'Individual barcode for this selling unit',
+            pricing_strategy ENUM('fixed', 'cost_based', 'market_based', 'dynamic', 'hybrid') DEFAULT 'fixed' COMMENT 'Pricing strategy for this unit',
             is_active TINYINT(1) DEFAULT 1,
+            status ENUM('active', 'inactive') DEFAULT 'active' COMMENT 'Status of this selling unit',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (config_id) REFERENCES auto_bom_configs(id) ON DELETE CASCADE,
+            FOREIGN KEY (auto_bom_config_id) REFERENCES auto_bom_configs(id) ON DELETE SET NULL,
             INDEX idx_config_id (config_id),
+            INDEX idx_auto_bom_config_id (auto_bom_config_id),
             INDEX idx_unit_name (unit_name),
-            INDEX idx_is_active (is_active)
+            INDEX idx_unit_sku (unit_sku),
+            INDEX idx_unit_barcode (unit_barcode),
+            INDEX idx_pricing_strategy (pricing_strategy),
+            INDEX idx_is_active (is_active),
+            INDEX idx_status (status)
         )
     ");
 
@@ -285,6 +384,20 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         )
     ");
 
+    // Add email field to suppliers table if it doesn't exist
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM suppliers LIKE 'email'");
+        $stmt->execute();
+        $result = $stmt->fetch();
+
+        if (!$result) {
+            $conn->exec("ALTER TABLE suppliers ADD COLUMN email VARCHAR(255) AFTER contact_person");
+            error_log("Added email field to suppliers table");
+        }
+    } catch (PDOException $e) {
+        error_log("Warning: Could not add email field to suppliers table: " . $e->getMessage());
+    }
+
     // Add in-store pickup fields to suppliers table
     try {
         $stmt = $conn->prepare("SHOW COLUMNS FROM suppliers LIKE 'pickup_available'");
@@ -324,20 +437,35 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             id INT AUTO_INCREMENT PRIMARY KEY,
             user_id INT NOT NULL,
             till_id INT DEFAULT NULL,
+            customer_id INT DEFAULT NULL,
             customer_name VARCHAR(255) DEFAULT 'Walking Customer',
             customer_phone VARCHAR(20) DEFAULT '',
+            customer_email VARCHAR(255) DEFAULT '',
             customer_address TEXT,
             customer_id_number VARCHAR(50) DEFAULT '',
             total_amount DECIMAL(10, 2) NOT NULL,
+            subtotal DECIMAL(10, 2) DEFAULT 0,
             discount DECIMAL(10, 2) DEFAULT 0,
+            discount_amount DECIMAL(10, 2) DEFAULT 0,
+            tax_rate DECIMAL(5, 2) DEFAULT 0,
             tax_amount DECIMAL(10, 2) DEFAULT 0,
             final_amount DECIMAL(10, 2) NOT NULL,
+            total_paid DECIMAL(10, 2) DEFAULT 0,
+            change_due DECIMAL(10, 2) DEFAULT 0,
             payment_method VARCHAR(50) DEFAULT 'cash',
-            notes TEXT,
+            split_payment TINYINT(1) DEFAULT 0,
+            customer_notes TEXT,
+            notes TEXT DEFAULT NULL COMMENT 'General notes for the sale transaction',
             sale_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id),
-            FOREIGN KEY (till_id) REFERENCES register_tills(id)
+            FOREIGN KEY (till_id) REFERENCES register_tills(id),
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+            INDEX idx_user_id (user_id),
+            INDEX idx_till_id (till_id),
+            INDEX idx_customer_id (customer_id),
+            INDEX idx_sale_date (sale_date),
+            INDEX idx_payment_method (payment_method)
         )
     ");
 
@@ -640,6 +768,33 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             $conn->exec("ALTER TABLE register_tills ADD FOREIGN KEY (current_user_id) REFERENCES users(id) ON DELETE SET NULL");
             $conn->exec("ALTER TABLE register_tills ADD INDEX idx_current_user_id (current_user_id)");
         }
+        
+        // Add opening_balance column to register_tills table if it doesn't exist
+        if (!in_array('opening_balance', $till_columns)) {
+            $conn->exec("ALTER TABLE register_tills ADD COLUMN opening_balance DECIMAL(15,2) DEFAULT 0.00 AFTER location");
+        }
+        
+        // Add current_balance column to register_tills table if it doesn't exist
+        if (!in_array('current_balance', $till_columns)) {
+            $conn->exec("ALTER TABLE register_tills ADD COLUMN current_balance DECIMAL(15,2) DEFAULT 0.00 AFTER opening_balance");
+        }
+        
+        // Add assigned_user_id column to register_tills table if it doesn't exist
+        if (!in_array('assigned_user_id', $till_columns)) {
+            $conn->exec("ALTER TABLE register_tills ADD COLUMN assigned_user_id INT DEFAULT NULL AFTER current_balance");
+            $conn->exec("ALTER TABLE register_tills ADD FOREIGN KEY (assigned_user_id) REFERENCES users(id) ON DELETE SET NULL");
+            $conn->exec("ALTER TABLE register_tills ADD INDEX idx_assigned_user_id (assigned_user_id)");
+        }
+        
+        // Add created_at column to register_tills table if it doesn't exist
+        if (!in_array('created_at', $till_columns)) {
+            $conn->exec("ALTER TABLE register_tills ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP AFTER is_active");
+        }
+        
+        // Add updated_at column to register_tills table if it doesn't exist
+        if (!in_array('updated_at', $till_columns)) {
+            $conn->exec("ALTER TABLE register_tills ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at");
+        }
     } catch (PDOException $e) {
         error_log("Could not add tax management columns: " . $e->getMessage());
     }
@@ -902,6 +1057,13 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY setting_key (setting_key)
     )");
+
+    // Ensure support email default exists
+    try {
+        $conn->exec("INSERT IGNORE INTO settings (setting_key, setting_value) VALUES ('support_email', 'support@thiarara.co.ke')");
+    } catch (PDOException $e) {
+        // ignore if table not ready yet in some flows
+    }
 
     // Create tax_categories table
     $conn->exec("
@@ -1590,6 +1752,16 @@ $conn = new PDO("mysql:host=$host", $username, $password);
                                SELECT 2, id FROM permissions WHERE name IN ('view_expiry_alerts')");
         $stmt->execute();
 
+        // Assign till permissions to Admin role
+        $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
+                               SELECT 1, id FROM permissions WHERE name IN ('open_till', 'close_till', 'drop_cash', 'view_till_reports', 'view_till_amounts')");
+        $stmt->execute();
+
+        // Assign limited till permissions to Cashier role (no view amounts)
+        $stmt = $conn->prepare("INSERT IGNORE INTO role_permissions (role_id, permission_id)
+                               SELECT 2, id FROM permissions WHERE name IN ('open_till', 'close_till', 'drop_cash', 'view_till_reports')");
+        $stmt->execute();
+
     } catch (PDOException $e) {
         // Log expiry tracker setup error but don't fail the entire database initialization
         error_log("Warning: Expiry tracker setup failed: " . $e->getMessage());
@@ -1976,6 +2148,13 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         ['integrate_payment_gateways', 'Integrate with external payment gateways', 'Sales & Transactions'],
         ['manage_sales_api', 'Manage sales-related API access', 'Sales & Transactions'],
         ['automate_sales_processes', 'Automate repetitive sales processes', 'Sales & Transactions'],
+
+        // Till Management Permissions
+        ['open_till', 'Open till at start of shift', 'Till Management'],
+        ['close_till', 'Close till at end of shift', 'Till Management'],
+        ['drop_cash', 'Perform cash drops from till', 'Till Management'],
+        ['view_till_reports', 'View till reports and reconciliation', 'Till Management'],
+        ['view_till_amounts', 'View monetary amounts in till operations', 'Till Management'],
 
         // Customer Management - Comprehensive Permissions
         ['view_customers', 'View customer accounts and profiles', 'Customer Management'],
@@ -2827,11 +3006,40 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         $conn->exec("ALTER TABLE suppliers ADD COLUMN supplier_block_note TEXT COMMENT 'Required note when supplier is blocked/deactivated'");
     }
 
+    // Standardize product_families table structure
+    try {
+        // Check if product_families table exists and what columns it has
+        $stmt = $conn->query("SHOW COLUMNS FROM product_families");
+        $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        
+        // If table has is_active but not status, add status column
+        if (in_array('is_active', $columns) && !in_array('status', $columns)) {
+            $conn->exec("ALTER TABLE product_families ADD COLUMN status ENUM('active', 'inactive') DEFAULT 'active' AFTER description");
+            // Copy is_active values to status
+            $conn->exec("UPDATE product_families SET status = CASE WHEN is_active = 1 THEN 'active' ELSE 'inactive' END");
+            // Add index for status
+            $conn->exec("CREATE INDEX idx_families_status ON product_families (status)");
+        }
+        
+        // If table has family_name but not name, add name column
+        if (in_array('family_name', $columns) && !in_array('name', $columns)) {
+            $conn->exec("ALTER TABLE product_families ADD COLUMN name VARCHAR(255) NOT NULL AFTER id");
+            // Copy family_name values to name
+            $conn->exec("UPDATE product_families SET name = family_name");
+            // Add index for name
+            $conn->exec("CREATE INDEX idx_families_name ON product_families (name)");
+        }
+    } catch (PDOException $e) {
+        // Table might not exist or other issues, continue silently
+    }
+
     // Add new product fields to existing products table
     $productFields = [
         'description' => "ALTER TABLE products ADD COLUMN description TEXT AFTER name",
         'sku' => "ALTER TABLE products ADD COLUMN sku VARCHAR(100) UNIQUE AFTER category_id",
-        'product_type' => "ALTER TABLE products ADD COLUMN product_type ENUM('physical', 'digital', 'service', 'subscription') DEFAULT 'physical' AFTER sku",
+        'product_number' => "ALTER TABLE products ADD COLUMN product_number VARCHAR(100) UNIQUE COMMENT 'Internal product number for tracking' AFTER sku",
+        'product_type' => "ALTER TABLE products ADD COLUMN product_type ENUM('physical', 'digital', 'service', 'subscription') DEFAULT 'physical' AFTER product_number",
+        'barcode' => "ALTER TABLE products ADD COLUMN barcode VARCHAR(50) UNIQUE DEFAULT NULL AFTER reorder_point",
         'cost_price' => "ALTER TABLE products ADD COLUMN cost_price DECIMAL(10, 2) DEFAULT 0 AFTER price",
         'minimum_stock' => "ALTER TABLE products ADD COLUMN minimum_stock INT DEFAULT 0 AFTER quantity",
         'maximum_stock' => "ALTER TABLE products ADD COLUMN maximum_stock INT DEFAULT NULL AFTER minimum_stock",
@@ -2888,6 +3096,21 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         } catch (PDOException $e) {
             // Index might already exist, continue
             continue;
+        }
+    }
+
+    // Add indexes for new product fields
+    $productIndexes = [
+        "ALTER TABLE products ADD INDEX idx_product_number (product_number)",
+        "ALTER TABLE products ADD INDEX idx_product_type (product_type)",
+        "ALTER TABLE products ADD INDEX idx_barcode (barcode)"
+    ];
+
+    foreach ($productIndexes as $indexSql) {
+        try {
+            $conn->exec($indexSql);
+        } catch (PDOException $e) {
+            // Index might already exist, continue silently
         }
     }
 
@@ -3006,155 +3229,7 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         // Default categories created silently
     }
 
-    // Populate supplier performance data if suppliers exist
-    $supplier_count = $conn->query("SELECT COUNT(*) as count FROM suppliers")->fetch(PDO::FETCH_ASSOC)['count'];
-    if ($supplier_count > 0) {
-        try {
-            // Get existing suppliers
-            $stmt = $conn->query("SELECT id, name FROM suppliers ORDER BY id");
-            $suppliers = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            // Silent population - no console output
-            foreach ($suppliers as $supplier) {
-                // Generate sample performance data for different periods
-                $periods = ['30days', '90days', '1year'];
-                $baseDate = date('Y-m-d');
-
-                foreach ($periods as $period) {
-                    // Calculate date range and realistic metrics
-                    switch ($period) {
-                        case '30days':
-                            $orders = rand(3, 8);
-                            $onTimeRate = rand(85, 98);
-                            $qualityScore = rand(88, 97);
-                            break;
-                        case '90days':
-                            $orders = rand(8, 15);
-                            $onTimeRate = rand(82, 95);
-                            $qualityScore = rand(85, 94);
-                            break;
-                        case '1year':
-                            $orders = rand(25, 50);
-                            $onTimeRate = rand(78, 92);
-                            $qualityScore = rand(80, 91);
-                            break;
-                    }
-
-                    $onTimeDeliveries = round($orders * $onTimeRate / 100);
-                    $lateDeliveries = $orders - $onTimeDeliveries;
-                    $avgDeliveryDays = rand(5, 12) + (rand(0, 9) / 10);
-                    $returns = rand(0, max(1, round($orders * 0.05)));
-                    $totalOrderValue = $orders * rand(5000, 15000);
-                    $totalReturnValue = $returns * rand(1000, 5000);
-                    $returnRate = $orders > 0 ? ($returns / $orders) * 100 : 0;
-
-                    // Insert performance metrics
-                    $stmt = $conn->prepare("
-                        INSERT INTO supplier_performance_metrics
-                        (supplier_id, metric_date, total_orders, on_time_deliveries, late_deliveries,
-                         average_delivery_days, total_returns, quality_score, total_order_value,
-                         average_cost_per_unit, total_return_value, return_rate)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ON DUPLICATE KEY UPDATE
-                            total_orders = VALUES(total_orders),
-                            on_time_deliveries = VALUES(on_time_deliveries),
-                            late_deliveries = VALUES(late_deliveries),
-                            average_delivery_days = VALUES(average_delivery_days),
-                            total_returns = VALUES(total_returns),
-                            quality_score = VALUES(quality_score),
-                            total_order_value = VALUES(total_order_value),
-                            average_cost_per_unit = VALUES(average_cost_per_unit),
-                            total_return_value = VALUES(total_return_value),
-                            return_rate = VALUES(return_rate)
-                    ");
-
-                    $stmt->execute([
-                        $supplier['id'],
-                        $baseDate,
-                        $orders,
-                        $onTimeDeliveries,
-                        $lateDeliveries,
-                        $avgDeliveryDays,
-                        $returns,
-                        $qualityScore,
-                        $totalOrderValue,
-                        rand(50, 200) + (rand(0, 99) / 100),
-                        $totalReturnValue,
-                        $returnRate
-                    ]);
-                }
-
-                // Generate historical data (last 6 months)
-                for ($i = 1; $i <= 6; $i++) {
-                    $historicalDate = date('Y-m-d', strtotime("-{$i} months"));
-
-                    $historicalOrders = rand(5, 12);
-                    $historicalOnTimeRate = rand(80, 95);
-                    $historicalQualityScore = rand(82, 95);
-
-                    $historicalOnTimeDeliveries = round($historicalOrders * $historicalOnTimeRate / 100);
-                    $historicalLateDeliveries = $historicalOrders - $historicalOnTimeDeliveries;
-
-                    $stmt->execute([
-                        $supplier['id'],
-                        $historicalDate,
-                        $historicalOrders,
-                        $historicalOnTimeDeliveries,
-                        $historicalLateDeliveries,
-                        rand(5, 12) + (rand(0, 9) / 10),
-                        rand(0, max(1, round($historicalOrders * 0.03))),
-                        $historicalQualityScore,
-                        $historicalOrders * rand(4000, 12000),
-                        rand(45, 180) + (rand(0, 99) / 100),
-                        rand(0, 2000),
-                        rand(0, 3) + (rand(0, 9) / 10)
-                    ]);
-                }
-
-                // Add some quality issues
-                $issueTypes = ['defective', 'wrong_item', 'damaged', 'expired', 'quality'];
-                $severities = ['low', 'medium', 'high'];
-
-                for ($i = 0; $i < rand(0, 3); $i++) {
-                    $issueStmt = $conn->prepare("
-                        INSERT INTO supplier_quality_issues
-                        (supplier_id, issue_type, severity, description, reported_date, resolved, resolution_notes)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ");
-
-                    $issueType = $issueTypes[array_rand($issueTypes)];
-                    $severity = $severities[array_rand($severities)];
-                    $resolved = rand(0, 1);
-                    $reportedDate = date('Y-m-d', strtotime('-' . rand(1, 90) . ' days'));
-                    $resolvedDate = $resolved ? date('Y-m-d', strtotime($reportedDate . ' +' . rand(1, 14) . ' days')) : null;
-
-                    $descriptions = [
-                        'defective' => 'Product received with manufacturing defects',
-                        'wrong_item' => 'Wrong product variant received',
-                        'damaged' => 'Product damaged during shipping',
-                        'expired' => 'Product received past expiry date',
-                        'quality' => 'Product does not meet quality standards'
-                    ];
-
-                    $issueStmt->execute([
-                        $supplier['id'],
-                        $issueType,
-                        $severity,
-                        $descriptions[$issueType] . ' - Batch #' . rand(1000, 9999),
-                        $reportedDate,
-                        $resolved,
-                        $resolved ? 'Issue resolved and replacement sent' : null
-                    ]);
-                }
-            }
-
-            // Silent success - data populated without console output
-
-        } catch (PDOException $e) {
-            // Silent error handling - log to PHP error log if needed
-            error_log("Warning: Could not populate supplier performance data: " . $e->getMessage());
-        }
-    }
+    // Note: Automatic demo data generation removed to prevent fake performance metrics
 
     // Create expense management tables
     $conn->exec("
@@ -4315,6 +4390,7 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             'selling_unit_id' => 'INT DEFAULT NULL COMMENT "Auto BOM selling unit ID"',
             'product_name' => 'VARCHAR(255) NOT NULL DEFAULT "" COMMENT "Product name at time of sale"',
             'unit_price' => 'DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT "Unit price at time of sale"',
+            'price' => 'DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT "Price per unit at time of sale"',
             'total_price' => 'DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT "Total price for this line item"',
             'is_auto_bom' => 'TINYINT(1) DEFAULT 0 COMMENT "Whether this is an Auto BOM item"',
             'base_quantity_deducted' => 'DECIMAL(10,3) DEFAULT 0 COMMENT "Base quantity deducted from inventory"'
@@ -4377,6 +4453,80 @@ $conn = new PDO("mysql:host=$host", $username, $password);
                 $conn->exec("ALTER TABLE sales ADD COLUMN $column_name $column_def");
                 error_log("Added missing column: sales.$column_name");
             }
+        }
+
+        // Ensure customer_phone column exists in sales table
+        if (!in_array('customer_phone', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN customer_phone VARCHAR(20) DEFAULT '' AFTER customer_name");
+            error_log("Added missing column: sales.customer_phone");
+        }
+
+        // Ensure customer_email column exists in sales table
+        if (!in_array('customer_email', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN customer_email VARCHAR(255) DEFAULT '' AFTER customer_phone");
+            error_log("Added missing column: sales.customer_email");
+        }
+
+        // Ensure customer_id column exists in sales table
+        if (!in_array('customer_id', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN customer_id INT DEFAULT NULL AFTER till_id");
+            $conn->exec("ALTER TABLE sales ADD FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL");
+            $conn->exec("ALTER TABLE sales ADD INDEX idx_customer_id (customer_id)");
+            error_log("Added missing column: sales.customer_id");
+        }
+
+        // Ensure discount column exists in sales table
+        if (!in_array('discount', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN discount DECIMAL(10,2) DEFAULT 0 AFTER total_amount");
+            error_log("Added missing column: sales.discount");
+        }
+
+        // Ensure discount_amount column exists in sales table (for backward compatibility)
+        if (!in_array('discount_amount', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN discount_amount DECIMAL(10,2) DEFAULT 0 AFTER discount");
+            error_log("Added missing column: sales.discount_amount");
+        }
+
+        // Ensure subtotal column exists in sales table
+        if (!in_array('subtotal', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN subtotal DECIMAL(10,2) DEFAULT 0 AFTER total_amount");
+            error_log("Added missing column: sales.subtotal");
+        }
+
+        // Ensure tax_rate column exists in sales table
+        if (!in_array('tax_rate', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN tax_rate DECIMAL(5,2) DEFAULT 0 AFTER subtotal");
+            error_log("Added missing column: sales.tax_rate");
+        }
+
+        // Ensure split_payment column exists in sales table
+        if (!in_array('split_payment', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN split_payment TINYINT(1) DEFAULT 0 AFTER payment_method");
+            error_log("Added missing column: sales.split_payment");
+        }
+
+        // Ensure customer_notes column exists in sales table
+        if (!in_array('customer_notes', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN customer_notes TEXT AFTER split_payment");
+            error_log("Added missing column: sales.customer_notes");
+        }
+
+        // Ensure total_paid column exists in sales table
+        if (!in_array('total_paid', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN total_paid DECIMAL(10,2) DEFAULT 0 AFTER final_amount");
+            error_log("Added missing column: sales.total_paid");
+        }
+
+        // Ensure change_due column exists in sales table
+        if (!in_array('change_due', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN change_due DECIMAL(10,2) DEFAULT 0 AFTER total_paid");
+            error_log("Added missing column: sales.change_due");
+        }
+
+        // Ensure notes column exists in sales table
+        if (!in_array('notes', $sales_columns)) {
+            $conn->exec("ALTER TABLE sales ADD COLUMN notes TEXT DEFAULT NULL COMMENT 'General notes for the sale transaction' AFTER customer_notes");
+            error_log("Added missing column: sales.notes");
         }
 
         // Add performance indexes for sales table
@@ -4615,6 +4765,137 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         }
     } catch (PDOException $e) {
         // Column might already exist
+        error_log("Warning: Could not add user_id field to users table: " . $e->getMessage());
+    }
+
+    // Check if product_id column exists in auto_bom_configs
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_configs LIKE 'product_id'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_configs ADD COLUMN product_id INT DEFAULT NULL AFTER product_family_id");
+            $conn->exec("ALTER TABLE auto_bom_configs ADD INDEX idx_product_id (product_id)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add product_id field to auto_bom_configs table: " . $e->getMessage());
+    }
+
+    // Check if config_name column exists in auto_bom_configs
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_configs LIKE 'config_name'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_configs ADD COLUMN config_name VARCHAR(255) DEFAULT NULL AFTER product_id");
+            $conn->exec("ALTER TABLE auto_bom_configs ADD INDEX idx_config_name (config_name)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add config_name field to auto_bom_configs table: " . $e->getMessage());
+    }
+
+    // Check if base_unit column exists in auto_bom_configs
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_configs LIKE 'base_unit'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_configs ADD COLUMN base_unit VARCHAR(50) DEFAULT 'each' AFTER base_product_id");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add base_unit field to auto_bom_configs table: " . $e->getMessage());
+    }
+
+    // Check if base_quantity column exists in auto_bom_configs
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_configs LIKE 'base_quantity'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_configs ADD COLUMN base_quantity DECIMAL(10,3) DEFAULT 1 AFTER base_unit");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add base_quantity field to auto_bom_configs table: " . $e->getMessage());
+    }
+
+    // Check if auto_bom_config_id column exists in auto_bom_selling_units
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_selling_units LIKE 'auto_bom_config_id'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD COLUMN auto_bom_config_id INT DEFAULT NULL AFTER config_id");
+            $conn->exec("UPDATE auto_bom_selling_units SET auto_bom_config_id = config_id WHERE auto_bom_config_id IS NULL");
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD INDEX idx_auto_bom_config_id (auto_bom_config_id)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add auto_bom_config_id field to auto_bom_selling_units table: " . $e->getMessage());
+    }
+
+    // Check if pricing_strategy column exists in auto_bom_selling_units
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_selling_units LIKE 'pricing_strategy'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD COLUMN pricing_strategy ENUM('fixed', 'cost_based', 'market_based', 'dynamic', 'hybrid') DEFAULT 'fixed' AFTER sku_suffix");
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD INDEX idx_pricing_strategy (pricing_strategy)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add pricing_strategy field to auto_bom_selling_units table: " . $e->getMessage());
+    }
+
+    // Check if status column exists in auto_bom_selling_units
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_selling_units LIKE 'status'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD COLUMN status ENUM('active', 'inactive') DEFAULT 'active' AFTER is_active");
+            $conn->exec("UPDATE auto_bom_selling_units SET status = CASE WHEN is_active = 1 THEN 'active' ELSE 'inactive' END WHERE status = 'active'");
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD INDEX idx_status (status)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add status field to auto_bom_selling_units table: " . $e->getMessage());
+    }
+
+    // Check if unit_quantity column exists in auto_bom_selling_units
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_selling_units LIKE 'unit_quantity'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD COLUMN unit_quantity DECIMAL(10,3) DEFAULT 1 AFTER quantity_per_base");
+            $conn->exec("UPDATE auto_bom_selling_units SET unit_quantity = quantity_per_base WHERE unit_quantity = 1");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add unit_quantity field to auto_bom_selling_units table: " . $e->getMessage());
+    }
+
+    // Check if unit_sku column exists in auto_bom_selling_units
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_selling_units LIKE 'unit_sku'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD COLUMN unit_sku VARCHAR(100) UNIQUE AFTER unit_quantity");
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD INDEX idx_unit_sku (unit_sku)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add unit_sku field to auto_bom_selling_units table: " . $e->getMessage());
+    }
+
+    // Check if unit_barcode column exists in auto_bom_selling_units
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_selling_units LIKE 'unit_barcode'");
+        $stmt->execute();
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD COLUMN unit_barcode VARCHAR(50) UNIQUE AFTER unit_sku");
+            $conn->exec("ALTER TABLE auto_bom_selling_units ADD INDEX idx_unit_barcode (unit_barcode)");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist
+        error_log("Warning: Could not add unit_barcode field to auto_bom_selling_units table: " . $e->getMessage());
     }
 
 
@@ -4808,7 +5089,9 @@ $conn = new PDO("mysql:host=$host", $username, $password);
         ('auto_sync_expenses', 'true', 'boolean', 'Automatically sync actual expenses with budget tracking'),
         ('budget_approval_required', 'false', 'boolean', 'Require approval for budget activation'),
         ('default_currency', 'KES', 'string', 'Default currency for budgets'),
-        ('fiscal_year_start_month', '1', 'integer', 'Fiscal year start month (1-12)')
+        ('fiscal_year_start_month', '1', 'integer', 'Fiscal year start month (1-12)'),
+        ('hide_till_amounts', '1', 'boolean', 'Hide monetary amounts in till closing to prevent theft'),
+        ('require_amount_view_permission', '1', 'boolean', 'Require specific permission to view till amounts')
     ");
 
     // Create indexes for better performance
@@ -5189,6 +5472,7 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             total_sales DECIMAL(15,2) DEFAULT 0.00,
             total_drops DECIMAL(15,2) DEFAULT 0.00,
             expected_balance DECIMAL(15,2) DEFAULT 0.00,
+            expected_cash_balance DECIMAL(15,2) DEFAULT 0.00,
             cash_amount DECIMAL(15,2) DEFAULT 0.00,
             voucher_amount DECIMAL(15,2) DEFAULT 0.00,
             loyalty_points DECIMAL(15,2) DEFAULT 0.00,
@@ -5197,7 +5481,10 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             actual_counted_amount DECIMAL(15,2) DEFAULT 0.00,
             total_amount DECIMAL(15,2) NOT NULL,
             difference DECIMAL(15,2) DEFAULT 0.00,
-            shortage_type ENUM('shortage', 'excess', 'exact') DEFAULT 'exact',
+            cash_shortage DECIMAL(15,2) DEFAULT 0.00,
+            voucher_shortage DECIMAL(15,2) DEFAULT 0.00,
+            other_shortage DECIMAL(15,2) DEFAULT 0.00,
+            shortage_type ENUM('exact', 'shortage', 'excess', 'cash_shortage', 'voucher_shortage', 'other_shortage') DEFAULT 'exact',
             closing_notes TEXT,
             allow_exceed TINYINT(1) DEFAULT 0,
             closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -5221,9 +5508,13 @@ $conn = new PDO("mysql:host=$host", $username, $password);
             'total_sales' => "ALTER TABLE till_closings ADD COLUMN total_sales DECIMAL(15,2) DEFAULT 0.00 AFTER opening_amount",
             'total_drops' => "ALTER TABLE till_closings ADD COLUMN total_drops DECIMAL(15,2) DEFAULT 0.00 AFTER total_sales",
             'expected_balance' => "ALTER TABLE till_closings ADD COLUMN expected_balance DECIMAL(15,2) DEFAULT 0.00 AFTER total_drops",
+            'expected_cash_balance' => "ALTER TABLE till_closings ADD COLUMN expected_cash_balance DECIMAL(15,2) DEFAULT 0.00 AFTER expected_balance",
             'actual_counted_amount' => "ALTER TABLE till_closings ADD COLUMN actual_counted_amount DECIMAL(15,2) DEFAULT 0.00 AFTER other_description",
             'difference' => "ALTER TABLE till_closings ADD COLUMN difference DECIMAL(15,2) DEFAULT 0.00 AFTER actual_counted_amount",
-            'shortage_type' => "ALTER TABLE till_closings ADD COLUMN shortage_type ENUM('shortage', 'excess', 'exact') DEFAULT 'exact' AFTER difference",
+            'cash_shortage' => "ALTER TABLE till_closings ADD COLUMN cash_shortage DECIMAL(15,2) DEFAULT 0.00 AFTER difference",
+            'voucher_shortage' => "ALTER TABLE till_closings ADD COLUMN voucher_shortage DECIMAL(15,2) DEFAULT 0.00 AFTER cash_shortage",
+            'other_shortage' => "ALTER TABLE till_closings ADD COLUMN other_shortage DECIMAL(15,2) DEFAULT 0.00 AFTER voucher_shortage",
+            'shortage_type' => "ALTER TABLE till_closings ADD COLUMN shortage_type ENUM('exact', 'shortage', 'excess', 'cash_shortage', 'voucher_shortage', 'other_shortage') DEFAULT 'exact' AFTER other_shortage",
         ];
 
         foreach ($new_columns as $column => $alter_sql) {
@@ -5805,7 +6096,7 @@ if (!function_exists('getHeldTransactionsCount')) {
 
     function getTillSalesTotal($conn, $till_id, $date = null) {
         try {
-            $whereConditions = ["s.till_id = ?"];
+            $whereConditions = ["(s.till_id = ? OR s.till_id IS NULL)"];
             $params = [$till_id];
 
             if ($date) {
@@ -5818,7 +6109,7 @@ if (!function_exists('getHeldTransactionsCount')) {
             $stmt = $conn->prepare("
                 SELECT COALESCE(SUM(s.final_amount), 0) as total_sales
                 FROM sales s
-                $whereClause AND s.status != 'void'
+                $whereClause
             ");
             $stmt->execute($params);
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -5831,20 +6122,20 @@ if (!function_exists('getHeldTransactionsCount')) {
 
     function getCashierSalesTotal($conn, $till_id, $user_id, $date = null) {
         try {
-            $whereConditions = ["s.till_id = ?", "s.user_id = ?"];
+            $whereConditions = ["(s.till_id = ? OR s.till_id IS NULL)", "s.user_id = ?"];
             $params = [$till_id, $user_id];
-            
+
             if ($date) {
                 $whereConditions[] = "DATE(s.created_at) = ?";
                 $params[] = $date;
             }
-            
+
             $whereClause = "WHERE " . implode(" AND ", $whereConditions);
-            
+
             $stmt = $conn->prepare("
                 SELECT COALESCE(SUM(s.final_amount), 0) as total_sales
                 FROM sales s
-                $whereClause AND s.status != 'void'
+                $whereClause
             ");
             $stmt->execute($params);
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -6526,4 +6817,213 @@ if (!function_exists('getQuotations')) {
     }
 }
 }
+
+// Re-enable foreign key checks at the end
+try {
+    $conn->exec("SET FOREIGN_KEY_CHECKS = 1");
+} catch (Exception $e) {
+    // Ignore if connection doesn't exist
+}
+
+} catch (PDOException $e) {
+    // Database connection or table creation failed
+    $GLOBALS['db_error'] = $e->getMessage();
+    $GLOBALS['db_connected'] = false;
+    
+    // Check if we're accessing from starter.php to avoid redirect loop
+    $currentScript = basename($_SERVER['SCRIPT_NAME']);
+    $isStarterPage = ($currentScript === 'starter.php' || strpos($_SERVER['REQUEST_URI'], 'starter.php') !== false);
+    
+    if (!$isStarterPage) {
+        // Show database error message instead of installer (system already installed)
+        showDatabaseErrorMessage();
+    }
+}
+
+// Function to show database connection error message (for post-installation issues)
+if (!function_exists('showDatabaseErrorMessage')) {
+function showDatabaseErrorMessage() {
+    $errorMessage = $GLOBALS['db_error'] ?? 'Unknown database error';
+    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
+    $host = $_SERVER['HTTP_HOST'];
+    $currentScript = $_SERVER['SCRIPT_NAME'];
+
+    echo '<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database Connection Error - POS System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); min-height: 100vh; display: flex; align-items: center; }
+        .error-card { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); }
+        .btn-danger { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); border: none; }
+        .btn-danger:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(220, 53, 69, 0.3); }
+        .error-icon { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="error-card p-5 text-center">
+                    <div class="mb-4">
+                        <i class="bi bi-exclamation-triangle-fill text-danger error-icon" style="font-size: 4rem;"></i>
+                    </div>
+                    <h1 class="h2 mb-4 text-danger">Database Connection Error</h1>
+                    <p class="lead text-muted mb-4">The system encountered a database connection problem and cannot continue.</p>
+                    <div class="alert alert-danger" role="alert">
+                        <i class="bi bi-bug me-2"></i>
+                        <strong>Error Details:</strong><br>
+                        <code class="mt-2 d-block">' . htmlspecialchars($errorMessage) . '</code>
+                    </div>
+                    <div class="d-grid gap-2 mb-4">
+                        <button onclick="window.history.back()" class="btn btn-secondary btn-lg">
+                            <i class="bi bi-arrow-left me-2"></i>Go Back
+                        </button>
+                        <button onclick="window.location.reload()" class="btn btn-danger btn-lg">
+                            <i class="bi bi-arrow-clockwise me-2"></i>Try Again
+                        </button>
+                    </div>
+                    <div class="mt-4">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>
+                            If this problem persists, please contact your system administrator.
+                        </small>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            <i class="bi bi-gear me-1"></i>
+                            Need technical help? Contact: <a href="mailto:support@thiarara.co.ke" class="text-decoration-none">support@thiarara.co.ke</a>
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>';
+        exit();
+    }
+}
+
+// Function to show user-friendly installer message
+if (!function_exists('showInstallerMessage')) {
+function showInstallerMessage() {
+    // Get the base URL dynamically to work in any folder structure
+    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
+    $host = $_SERVER['HTTP_HOST'];
+    $currentScript = $_SERVER['SCRIPT_NAME'];
+    $documentRoot = $_SERVER['DOCUMENT_ROOT'];
+    $currentDir = dirname($currentScript);
+    
+    // Find the project root by looking for starter.php
+    $projectRoot = '';
+    $testPath = $currentDir;
+    
+    // Start from the current directory and go up until we find starter.php or reach the root
+    while ($testPath !== '/' && $testPath !== '') {
+        $fullPath = $documentRoot . $testPath . '/starter.php';
+        if (file_exists($fullPath)) {
+            $projectRoot = $testPath;
+            break;
+        }
+        // Go up one directory
+        $testPath = dirname($testPath);
+        if ($testPath === '.') $testPath = '';
+    }
+    
+    // Build the installer URL
+    if ($projectRoot !== '') {
+        // Found starter.php in a parent directory
+        $installerUrl = $projectRoot . '/starter.php';
+    } else {
+        // Fallback: check if starter.php exists in the document root
+        $rootStarterPath = $documentRoot . '/starter.php';
+        if (file_exists($rootStarterPath)) {
+            $installerUrl = '/starter.php';
+        } else {
+            // Last fallback: assume it's in the same directory as current script
+            $installerUrl = dirname($currentScript) . '/starter.php';
+        }
+    }
+    
+    // Ensure the URL starts with / for absolute path
+    if (substr($installerUrl, 0, 1) !== '/') {
+        $installerUrl = '/' . ltrim($installerUrl, '/');
+    }
+    
+    // Clean up any double slashes
+    $installerUrl = preg_replace('#/+#', '/', $installerUrl);
+    
+    // Create the full URL for display purposes
+    $fullInstallerUrl = $protocol . $host . $installerUrl;
+    
+    echo '<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POS System Setup Required</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <style>
+        body { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; }
+        .setup-card { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); }
+        .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-6">
+                <div class="setup-card p-5 text-center">
+                    <div class="mb-4">
+                        <i class="bi bi-gear-fill text-primary" style="font-size: 4rem;"></i>
+                    </div>
+                    <h1 class="h2 mb-4 text-dark">Setup Required</h1>
+                    <p class="lead text-muted mb-4">Welcome to the POS System! The system needs to be set up before you can use it.</p>
+                    <div class="alert alert-info" role="alert">
+                        <i class="bi bi-info-circle me-2"></i>
+                        This is a fresh installation and requires initial configuration.
+                    </div>
+                    <div class="d-grid gap-2">
+                        <a href="' . htmlspecialchars($installerUrl) . '" class="btn btn-primary btn-lg">
+                            <i class="bi bi-play-circle me-2"></i>Start Installation
+                        </a>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            Or visit: <a href="' . htmlspecialchars($installerUrl) . '" class="text-decoration-none">' . htmlspecialchars($fullInstallerUrl) . '</a>
+                        </small>
+                    </div>
+                    <div class="mt-4">
+                        <small class="text-muted">
+                            <i class="bi bi-shield-check me-1"></i>
+                            Secure setup process - takes just a few minutes
+                        </small>
+                    </div>
+                    <div class="mt-3">
+                        <small class="text-muted">
+                            Need help? Contact support: <a href="mailto:support@thiarara.co.ke" class="text-decoration-none">support@thiarara.co.ke</a>
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>';
+}
+}
+
 ?>
