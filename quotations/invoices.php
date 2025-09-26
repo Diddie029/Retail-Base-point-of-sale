@@ -425,9 +425,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             </div>
             
             <div class="mt-3">
-                <a href="../pos/sale.php" class="btn btn-outline-light me-2">
-                    <i class="bi bi-eye"></i> View All Sales
-                </a>
                 <a href="quotation.php?action=create" class="btn btn-outline-light">
                     <i class="bi bi-file-earmark-text"></i> Create Quotation
                 </a>
@@ -516,10 +513,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     <i class="bi bi-receipt text-muted" style="font-size: 3rem;"></i>
                                     <div class="mt-3">
                                         <h5>No Invoices Found</h5>
-                                        <p class="text-muted">Try adjusting your filters or create an invoice from a sale.</p>
-                                        <a href="../pos/sale.php" class="btn btn-primary">
-                                            <i class="bi bi-plus-circle"></i> View Sales
-                                        </a>
+                                        <p class="text-muted">Try adjusting your filters or search for transactions using the search box above.</p>
                                     </div>
                                 </td>
                             </tr>

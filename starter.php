@@ -1,6 +1,61 @@
 <?php
-// Fresh Installation Script for POS System
+// Complete POS System Installer
 session_start();
+
+// Handle fresh install request
+if (isset($_GET['fresh']) && $_GET['fresh'] == '1') {
+    // Clear all session data for fresh install
+    session_unset();
+    session_destroy();
+    session_start();
+    
+    // Remove installation marker if it exists
+    $storage_dir = __DIR__ . '/storage';
+    $marker_file = $storage_dir . '/installed';
+    if (file_exists($marker_file)) {
+        unlink($marker_file);
+    }
+    
+    // Clear any cached data
+    if (function_exists('opcache_reset')) {
+        opcache_reset();
+    }
+    
+    // Redirect to clean installer
+    header("Location: starter.php");
+    exit();
+}
+
+// Function to check database connectivity
+function checkDatabaseConnection() {
+    try {
+        $host = 'localhost';
+        $dbname = 'pos_system';
+        $username = 'root';
+        $password = '';
+        
+        $conn = new PDO("mysql:host=$host", $username, $password);
+        $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        
+        // Check if database exists
+        $db_check = $conn->query("SHOW DATABASES LIKE '$dbname'");
+        
+        return [
+            'success' => true,
+            'connection' => $conn,
+            'database_exists' => $db_check->rowCount() > 0,
+            'message' => 'Database connection successful'
+        ];
+        
+    } catch (PDOException $e) {
+        return [
+            'success' => false,
+            'connection' => null,
+            'database_exists' => false,
+            'message' => $e->getMessage()
+        ];
+    }
+}
 
 // Function to validate email
 function validateEmail($email) {
@@ -196,11 +251,14 @@ if ($currentStep === 'company' && isset($_SESSION['company_data'])) {
     $companyData = $_SESSION['company_data'];
 }
 
+// Check database connectivity before showing forms
+$dbCheck = checkDatabaseConnection();
+
 echo "<!DOCTYPE html>\n";
 echo "<html lang='en'><head>";
 echo "<meta charset='UTF-8'>";
 echo "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-echo "<title>Fresh Installation - POS System</title>";
+echo "<title>POS System Installer</title>";
 echo "<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css' rel='stylesheet'>";
 echo "<link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css'>";
 echo "<style>";
@@ -223,10 +281,29 @@ echo "<div class='row justify-content-center'>";
 echo "<div class='col-md-10'>";
 echo "<div class='install-container p-5'>";
 
+// Show database status at the top
+echo "<div class='alert " . ($dbCheck['success'] ? 'alert-success' : 'alert-danger') . " mb-4'>";
+echo "<h6><i class='bi bi-database me-2'></i>Database Status</h6>";
+if ($dbCheck['success']) {
+    echo "<p class='mb-1'>✅ Database connection: <strong>Connected</strong></p>";
+    echo "<p class='mb-0'>✅ Database 'pos_system': <strong>" . ($dbCheck['database_exists'] ? 'Exists' : 'Will be created') . "</strong></p>";
+} else {
+    echo "<p class='mb-1'>❌ Database connection: <strong>Failed</strong></p>";
+    echo "<p class='mb-0'>Error: " . htmlspecialchars($dbCheck['message']) . "</p>";
+    echo "<hr>";
+    echo "<h6>Common Solutions:</h6>";
+    echo "<ul class='mb-0'>";
+    echo "<li>Ensure MySQL/MariaDB is running</li>";
+    echo "<li>Check database credentials in include/db.php</li>";
+    echo "<li>Verify database server is accessible</li>";
+    echo "</ul>";
+}
+echo "</div>";
+
 if ($currentStep === 'legal') {
     // Show legal agreements form
-    echo "<h1><i class='bi bi-shield-check me-3'></i>Legal Agreements</h1>";
-    echo "<p class='lead text-center mb-4'>Please read and accept all agreements before proceeding with the installation.</p>";
+    echo "<h1><i class='bi bi-shield-check me-3'></i>POS System Installation</h1>";
+    echo "<p class='lead text-center mb-4'>Welcome to the POS System installer. Please read and accept all agreements before proceeding.</p>";
     
     // Progress indicator
     echo "<div class='row mb-4'>";
@@ -363,6 +440,19 @@ if ($currentStep === 'legal') {
     echo "</button>";
     echo "</div>";
     echo "</form>";
+    
+    // Fresh install option
+    echo "<div class='text-center mt-4'>";
+    echo "<div class='card bg-light'>";
+    echo "<div class='card-body'>";
+    echo "<h6><i class='bi bi-exclamation-triangle me-2'></i>Need a Fresh Installation?</h6>";
+    echo "<p class='mb-3'>If you're experiencing issues or want to completely reset the system:</p>";
+    echo "<a href='starter.php?fresh=1' class='btn btn-warning'>";
+    echo "<i class='bi bi-arrow-clockwise me-2'></i>Start Fresh Installation";
+    echo "</a>";
+    echo "</div>";
+    echo "</div>";
+    echo "</div>";
     
 } elseif ($currentStep === 'admin') {
     // Show admin account setup form
@@ -1255,11 +1345,11 @@ if (empty($errors)) {
     echo "</div>";
     
     echo "<div class='text-center mt-4'>";
-    echo "<a href='fresh_install.php' class='btn btn-warning btn-lg me-3'>";
-    echo "<i class='bi bi-arrow-clockwise me-2'></i>Retry Installation";
+    echo "<a href='starter.php?fresh=1' class='btn btn-warning btn-lg me-3'>";
+    echo "<i class='bi bi-arrow-clockwise me-2'></i>Retry Fresh Installation";
     echo "</a>";
-    echo "<a href='check_database.php' class='btn btn-info btn-lg'>";
-    echo "<i class='bi bi-clipboard-data me-2'></i>Check Database";
+    echo "<a href='starter.php' class='btn btn-info btn-lg'>";
+    echo "<i class='bi bi-arrow-left me-2'></i>Back to Installer";
     echo "</a>";
     echo "</div>";
 }

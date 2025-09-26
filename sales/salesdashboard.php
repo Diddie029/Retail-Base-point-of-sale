@@ -360,6 +360,123 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 font-size: 0.875rem;
             }
         }
+
+        /* Enhanced Dashboard Header Styling */
+        .dashboard-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2.5rem 0;
+            margin: -1rem -1rem 2rem -1rem;
+            border-radius: 0 0 20px 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .dashboard-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20"><defs><radialGradient id="a" cx="50%" cy="0%" r="100%"><stop offset="0%" stop-color="white" stop-opacity="0.1"/><stop offset="100%" stop-color="white" stop-opacity="0"/></radialGradient></defs><rect width="100" height="20" fill="url(%23a)"/></svg>');
+            opacity: 0.3;
+        }
+
+        .dashboard-header .container-fluid {
+            position: relative;
+            z-index: 2;
+        }
+
+        .dashboard-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin: 0;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            letter-spacing: -0.5px;
+        }
+
+        .dashboard-subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+            margin-top: 0.5rem;
+            font-weight: 400;
+        }
+
+        .header-stats {
+            margin-top: 1rem;
+        }
+
+        .date-badge, .time-badge {
+            background: rgba(255,255,255,0.15);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 0.75rem 1.25rem;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+
+        .date-badge:hover, .time-badge:hover {
+            background: rgba(255,255,255,0.25);
+            transform: translateY(-2px);
+        }
+
+        .time-badge {
+            background: rgba(255,255,255,0.2);
+        }
+
+        /* Responsive Header */
+        @media (max-width: 992px) {
+            .dashboard-title {
+                font-size: 2rem;
+            }
+            
+            .dashboard-subtitle {
+                font-size: 1rem;
+            }
+
+            .header-stats {
+                justify-content: center !important;
+                margin-top: 1.5rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-header {
+                padding: 2rem 0;
+            }
+
+            .dashboard-title {
+                font-size: 1.75rem;
+                text-align: center;
+            }
+            
+            .dashboard-subtitle {
+                font-size: 0.9rem;
+                text-align: center;
+            }
+
+            .date-badge, .time-badge {
+                padding: 0.5rem 1rem;
+                font-size: 0.85rem;
+            }
+        }
+
+        @media (max-width: 576px) {
+            .header-stats {
+                flex-direction: column;
+                gap: 0.75rem !important;
+            }
+
+            .date-badge, .time-badge {
+                width: 100%;
+                text-align: center;
+            }
+        }
     </style>
 </head>
 <body>
@@ -368,16 +485,33 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
     <div class="main-content">
         <div class="container-fluid">
             <!-- Header -->
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <div>
-                    <h2><i class="bi bi-cash-register"></i> POS Management Dashboard</h2>
-                    <p class="text-muted">Comprehensive point of sale management including sales, tills, cash drops, and payment methods</p>
-                </div>
-                <div class="d-flex align-items-center gap-3">
-                    <span class="badge bg-primary fs-6"><?php echo date('M d, Y'); ?></span>
-                    <a href="/pointofsale/auth/logout.php" class="btn btn-outline-danger" title="Logout">
-                        <i class="bi bi-box-arrow-right"></i> Logout
-                    </a>
+            <div class="dashboard-header mb-4">
+                <div class="container-fluid">
+                    <div class="row align-items-center">
+                        <div class="col-lg-8">
+                            <div class="header-content">
+                                <h1 class="dashboard-title">
+                                    <i class="bi bi-cash-register me-3"></i>
+                                    POS Management Dashboard
+                                </h1>
+                                <p class="dashboard-subtitle mb-0">
+                                    Comprehensive point of sale management including sales, tills, cash drops, and payment methods
+                                </p>
+                            </div>
+                        </div>
+                        <div class="col-lg-4">
+                            <div class="header-stats d-flex justify-content-end align-items-center gap-3">
+                                <div class="date-badge">
+                                    <i class="bi bi-calendar3 me-2"></i>
+                                    <?php echo date('F d, Y'); ?>
+                                </div>
+                                <div class="time-badge">
+                                    <i class="bi bi-clock me-2"></i>
+                                    <span id="currentTime"><?php echo date('H:i:s'); ?></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -2270,6 +2404,27 @@ $recent_customers = $stmt->fetchAll(PDO::FETCH_ASSOC);
         function loadDayReport(page = 1) {
             loadDayNotClosedReport(page);
         }
+
+        // Real-time clock update
+        function updateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('en-US', { 
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            const timeElement = document.getElementById('currentTime');
+            if (timeElement) {
+                timeElement.textContent = timeString;
+            }
+        }
+
+        // Update time every second
+        setInterval(updateTime, 1000);
+        
+        // Initialize time on page load
+        document.addEventListener('DOMContentLoaded', updateTime);
     </script>
     
     <style>
