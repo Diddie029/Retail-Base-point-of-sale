@@ -64,11 +64,16 @@ $sectionContentMappings = [
     ],
     'pos_management' => [
         [url('sales/salesdashboard.php'), 'bi-cash-register', 'POS Management Dashboard'],
+        [url('sales/tills.php'), 'bi-calculator', 'Till Management'],
+        [url('sales/cash-drop.php'), 'bi-cash-stack', 'Cash Drop Management'],
+        [url('pos/till_details.php'), 'bi-clipboard-data', 'Till Details & Reports']
     ],
     'sales' => [
         [url('sales/index.php'), 'bi-graph-up', 'Sales Dashboard'],
         [url('sales/salesdashboard.php'), 'bi-speedometer2', 'Sales Overview'],
-        [url('sales/export_sales.php'), 'bi-download', 'Export Sales']
+        [url('sales/export_sales.php'), 'bi-download', 'Export Sales'],
+        [url('sales/tills.php'), 'bi-calculator', 'Till Management'],
+        [url('sales/cash-drop.php'), 'bi-cash-stack', 'Cash Drop Management']
     ],
     'shelf_labels' => [
         [url('shelf_label/index.php'), 'bi-tags', 'Shelf Labels'],

@@ -93,6 +93,9 @@ if ($isAdmin) {
         'analytics' => function($perms){
             return hasPermission('view_analytics', $perms);
         },
+        'pos_management' => function($perms){
+            return hasPermission('manage_sales', $perms) || hasPermission('view_sales', $perms) || hasPermission('manage_tills', $perms) || hasPermission('cash_drop', $perms) || hasPermission('process_sales', $perms);
+        },
         'reports' => function($perms){
             return hasPermission('view_reports', $perms) || hasPermission('view_sales', $perms) || hasPermission('view_finance', $perms) || hasPermission('view_analytics', $perms) || hasPermission('manage_sales', $perms);
         },
@@ -183,6 +186,7 @@ if ($isAdmin) {
             'finance' => hasPermission('view_finance', $permissions),
             'expenses' => hasPermission('view_expense_reports', $permissions) || hasPermission('create_expenses', $permissions),
             'analytics' => hasPermission('view_analytics', $permissions),
+            'pos_management' => hasPermission('manage_sales', $permissions) || hasPermission('view_sales', $permissions) || hasPermission('manage_tills', $permissions) || hasPermission('cash_drop', $permissions) || hasPermission('process_sales', $permissions),
             'sales' => hasPermission('view_sales', $permissions) || hasPermission('manage_sales', $permissions),
             'reports' => hasPermission('view_reports', $permissions) || hasPermission('view_analytics', $permissions) || hasPermission('view_sales', $permissions) || hasPermission('manage_sales', $permissions) || hasPermission('view_finance', $permissions),
             'shelf_labels' => hasPermission('manage_shelf_labels', $permissions) || hasPermission('print_labels', $permissions),

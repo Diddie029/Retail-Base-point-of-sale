@@ -105,6 +105,11 @@ function hasPermission($permission, $userPermissions) {
  * @return bool True if user is POS authenticated, false otherwise
  */
 function isPOSAuthenticated() {
+    // Admin users are always considered POS authenticated
+    if (isAdminUser()) {
+        return true;
+    }
+
     // Check if user is logged in
     if (!isset($_SESSION['user_id'])) {
         return false;
@@ -128,11 +133,35 @@ function isPOSAuthenticated() {
 }
 
 /**
+ * Check if current user is an admin
+ *
+ * @return bool True if user is admin, false otherwise
+ */
+function isAdminUser() {
+    if (!isset($_SESSION['role_name'])) {
+        return false;
+    }
+
+    $role_name = $_SESSION['role_name'];
+    return (
+        $role_name === 'Admin' ||
+        $role_name === 'admin' ||
+        $role_name === 'Administrator' ||
+        $role_name === 'administrator'
+    );
+}
+
+/**
  * Require POS authentication - redirects if not authenticated
  * 
  * @param string $redirect_url Optional redirect URL (defaults to authenticate.php)
  */
 function requirePOSAuthentication($redirect_url = 'authenticate.php') {
+    // Admin users bypass POS authentication
+    if (isAdminUser()) {
+        return; // Admin users don't need POS authentication
+    }
+
     if (!isPOSAuthenticated()) {
         if (strpos($redirect_url, 'http') === 0) {
             // Full URL

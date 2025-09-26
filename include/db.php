@@ -978,17 +978,18 @@ try {
 
         // Ensure all required sections exist (for existing databases)
         $required_sections = [
-            ['quotations', 'Quotations', 'bi-file-earmark-text', 'Create and manage customer quotations', 2],
-            ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 3],
-            ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 4],
-            ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 5],
-            ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 6],
-            ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 7],
-            ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 8],
-            ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 9],
-            ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 10],
-            ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 11],
-            ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 12]
+            ['pos_management', 'POS Management', 'bi-cash-register', 'Till management, cash drops, and POS operations', 2],
+            ['quotations', 'Quotations', 'bi-file-earmark-text', 'Create and manage customer quotations', 3],
+            ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 4],
+            ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 5],
+            ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 6],
+            ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 7],
+            ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 8],
+            ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 9],
+            ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 10],
+            ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 11],
+            ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 12],
+            ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 13]
         ];
 
         $stmt = $conn->prepare("

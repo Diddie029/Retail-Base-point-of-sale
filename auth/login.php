@@ -76,7 +76,6 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
         // Sanitize and validate inputs
         $identifier = trim($_POST['identifier'] ?? '');
         $password = trim($_POST['password'] ?? '');
-        $remember_me = isset($_POST['remember_me']);
 
         // Enhanced input validation
         if(empty($identifier)) {
@@ -160,16 +159,6 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
                         $_SESSION['login_time'] = time();
                         $_SESSION['ip_address'] = $ip_address;
                         $_SESSION['user_agent'] = $user_agent;
-
-                        // Set remember me cookie if requested
-                        if($remember_me) {
-                            $token = bin2hex(random_bytes(32));
-                            setcookie('remember_token', $token, time() + (30 * 24 * 60 * 60), '/', '', true, true); // 30 days
-
-                            // Store token in database (you might want to create a remember_tokens table)
-                            // For now, we'll just extend the session
-                            $_SESSION['remember_me'] = true;
-                        }
 
                         // Update user login information
                         $stmt = $conn->prepare("
@@ -334,14 +323,6 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
                             <span class="password-toggle" onclick="togglePassword()">
                                 <i class="bi bi-eye" id="toggleIcon"></i>
                             </span>
-                        </div>
-                    </div>
-                    <div class="mb-3">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="remember_me" name="remember_me" value="1">
-                            <label class="form-check-label" for="remember_me">
-                                <small>Remember me for 30 days</small>
-                            </label>
                         </div>
                     </div>
                     <div class="d-grid mb-3">

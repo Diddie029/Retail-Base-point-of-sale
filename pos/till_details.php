@@ -53,10 +53,266 @@ if (!$hasAccess) {
 $till_id = intval($_GET['till_id'] ?? 0);
 $date = $_GET['date'] ?? date('Y-m-d');
 
-// Validate parameters
+// If no till_id is provided, show till selection page
 if ($till_id <= 0) {
-    echo '<div class="alert alert-danger">Invalid till ID</div>';
-    echo '<a href="../sales/salesdashboard.php" class="btn btn-primary">Back to Dashboard</a>';
+    // Get all active tills for selection
+    $stmt = $conn->query("
+        SELECT rt.*, 
+               CASE 
+                   WHEN rt.till_status = 'opened' THEN 'Open'
+                   WHEN rt.till_status = 'closed' THEN 'Closed'
+                   ELSE 'Unknown'
+               END as status_display,
+               u.username as current_user_name
+        FROM register_tills rt
+        LEFT JOIN users u ON rt.current_user_id = u.id
+        WHERE rt.is_active = 1 
+        ORDER BY rt.till_name
+    ");
+    $available_tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Show till selection page
+    include '../include/navmenu.php';
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Select Till - Till Details</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+        <link href="../assets/css/dashboard.css" rel="stylesheet">
+        <style>
+            .selection-header {
+                background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+                color: white;
+                padding: 3rem 0;
+                margin-bottom: 2rem;
+                border-radius: 15px;
+            }
+            .form-select:focus, .form-control:focus {
+                border-color: #0d6efd;
+                box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+            }
+            .card {
+                transition: all 0.3s ease;
+            }
+            .card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
+            }
+            #tillInfo {
+                animation: fadeIn 0.3s ease-in;
+            }
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(-10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="main-content">
+            <div class="container-fluid">
+                <!-- Header -->
+                <div class="selection-header">
+                    <div class="container text-center">
+                        <h1><i class="bi bi-calculator me-3"></i>Select Till for Details</h1>
+                        <p class="mb-0 fs-5">Choose a till to view transaction details and reports</p>
+                    </div>
+                </div>
+
+                <!-- Selection Form -->
+                <div class="row justify-content-center">
+                    <div class="col-lg-8 col-xl-6">
+                        <div class="card shadow-lg border-0">
+                            <div class="card-header bg-primary text-white text-center py-4">
+                                <h4 class="mb-0">
+                                    <i class="bi bi-calculator me-2"></i>Till Details Selection
+                                </h4>
+                                <p class="mb-0 opacity-75">Select till and date to view detailed reports</p>
+                            </div>
+                            <div class="card-body p-4">
+                                <?php if (empty($available_tills)): ?>
+                                <div class="alert alert-warning text-center">
+                                    <i class="bi bi-exclamation-triangle fs-1 mb-3"></i>
+                                    <h4>No Tills Available</h4>
+                                    <p>No active tills found in the system. Please contact your administrator.</p>
+                                    <a href="../sales/salesdashboard.php" class="btn btn-primary">
+                                        <i class="bi bi-arrow-left me-2"></i>Back to Dashboard
+                                    </a>
+                                </div>
+                                <?php else: ?>
+                                <form id="tillSelectionForm">
+                                    <!-- Date Selection -->
+                                    <div class="mb-4">
+                                        <label class="form-label fw-bold">
+                                            <i class="bi bi-calendar3 me-2 text-primary"></i>Select Date
+                                        </label>
+                                        <input type="date" class="form-control form-control-lg" id="selectedDate" value="<?php echo $date; ?>" required>
+                                        <div class="form-text">Choose the date for which you want to view till details</div>
+                                    </div>
+
+                                    <!-- Till Selection -->
+                                    <div class="mb-4">
+                                        <label class="form-label fw-bold">
+                                            <i class="bi bi-calculator me-2 text-primary"></i>Select Till
+                                        </label>
+                                        <select class="form-select form-select-lg" id="tillSelector" required>
+                                            <option value="">-- Choose a Till --</option>
+                                            <?php foreach ($available_tills as $till): ?>
+                                            <option value="<?php echo $till['id']; ?>" 
+                                                    data-status="<?php echo $till['till_status']; ?>"
+                                                    data-location="<?php echo htmlspecialchars($till['location'] ?? ''); ?>"
+                                                    data-user="<?php echo htmlspecialchars($till['current_user_name'] ?? ''); ?>"
+                                                    data-balance="<?php echo number_format($till['current_balance'] ?? 0, 2); ?>">
+                                                <?php echo htmlspecialchars($till['till_name']); ?>
+                                                <?php if ($till['till_code']): ?>
+                                                    (<?php echo htmlspecialchars($till['till_code']); ?>)
+                                                <?php endif; ?>
+                                                - <?php echo $till['status_display']; ?>
+                                            </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <div class="form-text">Select the till you want to view details for</div>
+                                    </div>
+
+                                    <!-- Till Information Display -->
+                                    <div id="tillInfo" class="mb-4" style="display: none;">
+                                        <div class="card bg-light">
+                                            <div class="card-body">
+                                                <h6 class="card-title">
+                                                    <i class="bi bi-info-circle me-2"></i>Till Information
+                                                </h6>
+                                                <div class="row g-3">
+                                                    <div class="col-md-6">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="bi bi-circle-fill me-2" id="statusIcon"></i>
+                                                            <span>Status: <strong id="tillStatus"></strong></span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6" id="locationInfo" style="display: none;">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="bi bi-geo-alt me-2 text-muted"></i>
+                                                            <span>Location: <strong id="tillLocation"></strong></span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6" id="userInfo" style="display: none;">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="bi bi-person me-2 text-info"></i>
+                                                            <span>Current User: <strong id="tillUser"></strong></span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <div class="d-flex align-items-center">
+                                                            <i class="bi bi-cash me-2 text-success"></i>
+                                                            <span>Balance: <strong id="tillBalance"></strong></span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Action Buttons -->
+                                    <div class="d-grid gap-2">
+                                        <button type="submit" class="btn btn-primary btn-lg" disabled>
+                                            <i class="bi bi-eye me-2"></i>View Till Details
+                                        </button>
+                                        <a href="../sales/salesdashboard.php" class="btn btn-outline-secondary">
+                                            <i class="bi bi-arrow-left me-2"></i>Back to Sales Dashboard
+                                        </a>
+                                    </div>
+                                </form>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script>
+            // Form submission handler
+            document.getElementById('tillSelectionForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const tillId = document.getElementById('tillSelector').value;
+                const selectedDate = document.getElementById('selectedDate').value;
+                
+                if (tillId && selectedDate) {
+                    window.location.href = `till_details.php?till_id=${tillId}&date=${selectedDate}`;
+                }
+            });
+
+            // Till selector change handler
+            document.getElementById('tillSelector').addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                const submitBtn = document.querySelector('button[type="submit"]');
+                const tillInfo = document.getElementById('tillInfo');
+                
+                if (this.value) {
+                    // Show till information
+                    const status = selectedOption.dataset.status;
+                    const location = selectedOption.dataset.location;
+                    const user = selectedOption.dataset.user;
+                    const balance = selectedOption.dataset.balance;
+                    
+                    // Update status with color
+                    const statusIcon = document.getElementById('statusIcon');
+                    const tillStatus = document.getElementById('tillStatus');
+                    if (status === 'opened') {
+                        statusIcon.className = 'bi bi-circle-fill me-2 text-success';
+                        tillStatus.textContent = 'Open';
+                        tillStatus.className = 'text-success';
+                    } else {
+                        statusIcon.className = 'bi bi-circle-fill me-2 text-secondary';
+                        tillStatus.textContent = 'Closed';
+                        tillStatus.className = 'text-secondary';
+                    }
+                    
+                    // Update location
+                    const locationInfo = document.getElementById('locationInfo');
+                    if (location) {
+                        document.getElementById('tillLocation').textContent = location;
+                        locationInfo.style.display = 'block';
+                    } else {
+                        locationInfo.style.display = 'none';
+                    }
+                    
+                    // Update current user
+                    const userInfo = document.getElementById('userInfo');
+                    if (user && status === 'opened') {
+                        document.getElementById('tillUser').textContent = user;
+                        userInfo.style.display = 'block';
+                    } else {
+                        userInfo.style.display = 'none';
+                    }
+                    
+                    // Update balance
+                    document.getElementById('tillBalance').textContent = 'KES ' + balance;
+                    
+                    // Show till info and enable submit button
+                    tillInfo.style.display = 'block';
+                    submitBtn.disabled = false;
+                } else {
+                    // Hide till info and disable submit button
+                    tillInfo.style.display = 'none';
+                    submitBtn.disabled = true;
+                }
+            });
+
+            // Date change handler
+            document.getElementById('selectedDate').addEventListener('change', function() {
+                // Update URL to maintain the selected date
+                const currentUrl = new URL(window.location);
+                currentUrl.searchParams.set('date', this.value);
+                window.history.replaceState(null, '', currentUrl);
+            });
+        </script>
+    </body>
+    </html>
+    <?php
     exit();
 }
 
