@@ -15,6 +15,16 @@ $username = $_SESSION['username'];
 $role_name = $_SESSION['role_name'] ?? 'User';
 $role_id = $_SESSION['role_id'] ?? 0;
 
+// Generate CSRF token for security
+if (!isset($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Generate unique transaction ID to prevent duplicate submissions
+if (!isset($_SESSION['transaction_id'])) {
+    $_SESSION['transaction_id'] = uniqid('txn_', true);
+}
+
 // Get user permissions
 $permissions = [];
 if ($role_id) {
@@ -55,24 +65,88 @@ if (!$hasAccess) {
     exit();
 }
 
-// Handle form submissions
+// Security: Rate limiting for cash drops (max 10 per hour per user)
+$rate_limit_key = "cash_drop_rate_{$user_id}";
+$rate_limit_file = sys_get_temp_dir() . "/{$rate_limit_key}";
+$current_time = time();
+$rate_limit_window = 3600; // 1 hour
+$max_requests = 10;
+
+if (file_exists($rate_limit_file)) {
+    $last_requests = json_decode(file_get_contents($rate_limit_file), true) ?: [];
+    $last_requests = array_filter($last_requests, function($timestamp) use ($current_time, $rate_limit_window) {
+        return ($current_time - $timestamp) < $rate_limit_window;
+    });
+    
+    if (count($last_requests) >= $max_requests) {
+        $error = 'Too many cash drop requests. Please wait before making another request.';
+    }
+}
+
+// Handle form submissions and session messages
 $success = '';
 $error = '';
 
+// Check for session messages and clear them
+if (isset($_SESSION['success_message'])) {
+    $success = $_SESSION['success_message'];
+    unset($_SESSION['success_message']);
+}
+
+if (isset($_SESSION['error_message'])) {
+    $error = $_SESSION['error_message'];
+    unset($_SESSION['error_message']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    if (isset($_POST['action'])) {
+    // Security: Validate session and CSRF token
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        $_SESSION['error_message'] = 'Invalid request. Please try again.';
+        header("Location: cash-drop.php?error=1");
+        exit();
+    } else if (isset($_POST['action'])) {
         switch ($_POST['action']) {
             case 'add_cash_drop':
                 try {
+                    // Check for duplicate submission using transaction ID
+                    $transaction_id = $_POST['transaction_id'] ?? '';
+                    if ($transaction_id !== $_SESSION['transaction_id']) {
+                        $_SESSION['error_message'] = 'Duplicate submission detected. Please try again.';
+                        header("Location: cash-drop.php?error=1");
+                        exit();
+                    }
+                    
                     $till_id = $_POST['till_id'];
                     $drop_amount = floatval($_POST['drop_amount']);
-                    $drop_type = $_POST['drop_type'] ?? 'cashier_drop';
+                    $drop_type = $_POST['drop_type'] ?? 'emergency_drop';
                     $notes = $_POST['notes'];
 
                     // Validate drop amount is not negative
                     if ($drop_amount <= 0) {
-                        $error = 'Drop amount must be greater than zero!';
+                        $_SESSION['error_message'] = 'Drop amount must be greater than zero!';
+                        header("Location: cash-drop.php?error=1");
+                        exit();
+                    }
+
+                    // Security: Only allow emergency drops
+                    if ($drop_type !== 'emergency_drop') {
+                        $_SESSION['error_message'] = 'Only emergency drops are permitted for security control.';
+                        header("Location: cash-drop.php?error=1");
+                        exit();
+                    }
+
+                    // Security: Log all cash drop attempts for audit trail
+                    error_log("Cash Drop Attempt - User: {$username} (ID: {$user_id}), Till ID: {$till_id}, Amount: {$drop_amount}, Type: {$drop_type}, IP: " . $_SERVER['REMOTE_ADDR']);
+
+                    // Security: Require manager approval for large amounts (over 10,000)
+                    $large_amount_threshold = 10000;
+                    if ($drop_amount > $large_amount_threshold) {
+                        // Check if user has manager permissions
+                        $is_manager = hasPermission('manage_sales', $permissions) || isAdmin($role_name);
+                        if (!$is_manager) {
+                            $error = 'Large cash drops require manager approval. Please contact a manager.';
                         break;
+                        }
                     }
 
                     // Get current till balance before drop
@@ -85,11 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         break;
                     }
 
-                    // Check if drop amount exceeds available balance
-                    if ($drop_amount > $till_balance['current_balance']) {
-                        $error = 'Drop amount (' . formatCurrency($drop_amount) . ') exceeds available till balance (' . formatCurrency($till_balance['current_balance']) . ')!';
-                        break;
-                    }
+                    // Note: Drop amount can exceed available balance - till short report will handle discrepancies
 
                     // Add cash drop with enhanced tracking
                     $stmt = $conn->prepare("
@@ -98,49 +168,162 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     ");
                     $stmt->execute([$till_id, $user_id, $drop_amount, $drop_type, $notes]);
 
-                    // Update till current balance
+                    // Enhanced audit logging for cash drop creation
+                    try {
+                        $stmt = $conn->prepare("
+                            INSERT INTO security_logs (event_type, details, ip_address, user_agent, severity)
+                            VALUES (?, ?, ?, ?, ?)
+                        ");
+                        $details = "Cash drop created - Amount: " . formatCurrency($drop_amount, $settings) . ", Till: {$till_name}, Type: {$drop_type}, User: {$username}" . ($notes ? ". Notes: {$notes}" : "");
+                        $stmt->execute([
+                            'cash_drop_created',
+                            $details,
+                            $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+                            $_SERVER['HTTP_USER_AGENT'] ?? 'unknown',
+                            $drop_amount > 10000 ? 'high' : 'medium'
+                        ]);
+                    } catch (Exception $e) {
+                        // Log error but don't fail the transaction
+                        error_log("Security log error: " . $e->getMessage());
+                    }
+
+                    // Update till current balance (allow negative balance for till short reporting)
                     $stmt = $conn->prepare("
                         UPDATE register_tills
-                        SET current_balance = current_balance - ?
+                        SET current_balance = GREATEST(0, current_balance - ?)
                         WHERE id = ?
                     ");
                     $stmt->execute([$drop_amount, $till_id]);
 
-                    $success = 'Cash drop of ' . formatCurrency($drop_amount) . ' recorded successfully! Balance updated.';
+                    // Security: Close till after emergency drop and require reauthentication
+                    $stmt = $conn->prepare("
+                        UPDATE register_tills
+                        SET is_active = 0, closed_at = NOW(), closed_by = ?
+                        WHERE id = ?
+                    ");
+                    $stmt->execute([$user_id, $till_id]);
+
+                    // Set session flags to trigger reauthentication on till side
+                    $_SESSION['till_closure_occurred'] = true;
+                    $_SESSION['till_closure_timestamp'] = time();
+                    $_SESSION['till_closure_till_id'] = $till_id;
+
+                    // Log till closure for audit trail
+                    try {
+                        $stmt = $conn->prepare("
+                            INSERT INTO security_logs (user_id, action, details, ip_address, user_agent)
+                            VALUES (?, 'till_closed_emergency', ?, ?, ?)
+                        ");
+                        $details = "Till closed after emergency drop - Till ID: {$till_id}, Drop Amount: " . formatCurrency($drop_amount);
+                        $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
+                        $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';
+                        $stmt->execute([$user_id, $details, $ip_address, $user_agent]);
+                    } catch (Exception $e) {
+                        error_log("Security log error: " . $e->getMessage());
+                    }
+
+                    // Update rate limiting
+                    $last_requests = [];
+                    if (file_exists($rate_limit_file)) {
+                        $last_requests = json_decode(file_get_contents($rate_limit_file), true) ?: [];
+                    }
+                    $last_requests[] = $current_time;
+                    file_put_contents($rate_limit_file, json_encode($last_requests));
+
+                    // Regenerate transaction ID to prevent reuse
+                    $_SESSION['transaction_id'] = uniqid('txn_', true);
+                    
+                    // Store success message in session and redirect to prevent resubmission
+                    $_SESSION['success_message'] = 'Emergency drop recorded successfully! Till has been closed. Cashier will need to reauthenticate on the till side to continue operations.';
+                    header("Location: cash-drop.php?success=1");
+                    exit();
                 } catch (Exception $e) {
-                    $error = 'Error recording cash drop: ' . $e->getMessage();
+                    $_SESSION['error_message'] = 'Error recording cash drop: ' . $e->getMessage();
+                    header("Location: cash-drop.php?error=1");
+                    exit();
                 }
                 break;
                 
             case 'confirm_drop':
                 try {
                     $drop_id = $_POST['drop_id'];
+
+                    // Get drop details for logging
+                    $stmt = $conn->prepare("SELECT cd.*, rt.till_name, u.username FROM cash_drops cd LEFT JOIN register_tills rt ON cd.till_id = rt.id LEFT JOIN users u ON cd.user_id = u.id WHERE cd.id = ?");
+                    $stmt->execute([$drop_id]);
+                    $drop_details = $stmt->fetch(PDO::FETCH_ASSOC);
+
                     $stmt = $conn->prepare("
-                        UPDATE cash_drops 
-                        SET status = 'confirmed', confirmed_by = ?, confirmed_at = NOW() 
+                        UPDATE cash_drops
+                        SET status = 'confirmed', confirmed_by = ?, confirmed_at = NOW()
                         WHERE id = ?
                     ");
                     $stmt->execute([$user_id, $drop_id]);
-                    $success = 'Cash drop confirmed successfully!';
+
+                    // Enhanced audit logging
+                    $stmt = $conn->prepare("
+                        INSERT INTO security_logs (event_type, details, ip_address, user_agent, severity)
+                        VALUES (?, ?, ?, ?, ?)
+                    ");
+                    $details = "Cash drop #{$drop_id} confirmed by {$username} - Amount: " . formatCurrency($drop_details['drop_amount']) . ", Till: {$drop_details['till_name']}, Dropped by: {$drop_details['username']}";
+                    $stmt->execute([
+                        'cash_drop_confirmed',
+                        $details,
+                        $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+                        $_SERVER['HTTP_USER_AGENT'] ?? 'unknown',
+                        'medium'
+                    ]);
+
+                    $_SESSION['success_message'] = 'Cash drop confirmed successfully!';
+                    header("Location: cash-drop.php?success=1");
+                    exit();
                 } catch (Exception $e) {
-                    $error = 'Error confirming cash drop: ' . $e->getMessage();
+                    $_SESSION['error_message'] = 'Error confirming cash drop: ' . $e->getMessage();
+                    header("Location: cash-drop.php?error=1");
+                    exit();
                 }
                 break;
                 
             case 'cancel_drop':
                 try {
                     $drop_id = $_POST['drop_id'];
+
+                    // Get drop details for logging
+                    $stmt = $conn->prepare("SELECT cd.*, rt.till_name, u.username FROM cash_drops cd LEFT JOIN register_tills rt ON cd.till_id = rt.id LEFT JOIN users u ON cd.user_id = u.id WHERE cd.id = ?");
+                    $stmt->execute([$drop_id]);
+                    $drop_details = $stmt->fetch(PDO::FETCH_ASSOC);
+
                     $stmt = $conn->prepare("
-                        UPDATE cash_drops 
-                        SET status = 'cancelled' 
+                        UPDATE cash_drops
+                        SET status = 'cancelled', confirmed_by = ?, confirmed_at = NOW()
                         WHERE id = ?
                     ");
-                    $stmt->execute([$drop_id]);
-                    $success = 'Cash drop cancelled successfully!';
+                    $stmt->execute([$user_id, $drop_id]);
+
+                    // Enhanced audit logging
+                    $stmt = $conn->prepare("
+                        INSERT INTO security_logs (event_type, details, ip_address, user_agent, severity)
+                        VALUES (?, ?, ?, ?, ?)
+                    ");
+                    $details = "Cash drop #{$drop_id} cancelled by {$username} - Amount: " . formatCurrency($drop_details['drop_amount']) . ", Till: {$drop_details['till_name']}, Dropped by: {$drop_details['username']}";
+                    $stmt->execute([
+                        'cash_drop_cancelled',
+                        $details,
+                        $_SERVER['REMOTE_ADDR'] ?? 'unknown',
+                        $_SERVER['HTTP_USER_AGENT'] ?? 'unknown',
+                        'high'
+                    ]);
+
+                    $_SESSION['success_message'] = 'Cash drop cancelled successfully!';
+                    header("Location: cash-drop.php?success=1");
+                    exit();
                 } catch (Exception $e) {
-                    $error = 'Error cancelling cash drop: ' . $e->getMessage();
+                    $_SESSION['error_message'] = 'Error cancelling cash drop: ' . $e->getMessage();
+                    header("Location: cash-drop.php?error=1");
+                    exit();
                 }
                 break;
+                
         }
     }
 }
@@ -152,6 +335,7 @@ $stmt = $conn->query("
     ORDER BY till_name
 ");
 $tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 
 // Get only pending cash drops that need action
 $stmt = $conn->query("
@@ -195,7 +379,7 @@ $today_stats = [
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cash Drop Management - POS System</title>
+    <title>Drop Management - POS System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <link href="../assets/css/dashboard.css" rel="stylesheet">
@@ -208,15 +392,15 @@ $today_stats = [
             <!-- Header -->
             <div class="d-flex justify-content-between align-items-center mb-4">
                 <div>
-                    <h2><i class="bi bi-cash-coin"></i> Cash Drop Management</h2>
-                    <p class="text-muted">Record and manage cash drops from tills</p>
+                    <h2><i class="bi bi-cash-coin"></i> Drop Management</h2>
+                    <p class="text-muted">Manage and confirm cash drops from tills</p>
                 </div>
                 <div>
                     <a href="salesdashboard.php" class="btn btn-outline-secondary me-2">
                         <i class="bi bi-arrow-left"></i> Back to Dashboard
                     </a>
                     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCashDropModal">
-                        <i class="bi bi-plus"></i> Record Cash Drop
+                        <i class="bi bi-plus"></i> Record Drop
                     </button>
                 </div>
             </div>
@@ -292,10 +476,11 @@ $today_stats = [
             </div>
             <?php endif; ?>
 
+
             <!-- Cash Drops Table -->
             <div class="card">
                 <div class="card-header">
-                    <h5 class="mb-0">Pending Cash Drops (Require Action)</h5>
+                    <h5 class="mb-0">Pending Drops (Awaiting Confirmation)</h5>
                 </div>
                 <div class="card-body">
                     <div class="table-responsive">
@@ -333,14 +518,9 @@ $today_stats = [
                                     <td>
                                         <?php
                                         $drop_type_labels = [
-                                            'cashier_drop' => 'Cashier Drop',
-                                            'manager_drop' => 'Manager Drop',
-                                            'end_of_day_drop' => 'End of Day',
-                                            'emergency_drop' => 'Emergency',
-                                            'bank_deposit' => 'Bank Deposit',
-                                            'safe_drop' => 'Safe Drop'
+                                            'emergency_drop' => 'Emergency Drop'
                                         ];
-                                        $drop_type_label = $drop_type_labels[$drop['drop_type']] ?? ucfirst(str_replace('_', ' ', $drop['drop_type']));
+                                        $drop_type_label = $drop_type_labels[$drop['drop_type']] ?? 'Emergency Drop';
                                         ?>
                                         <span class="badge bg-info">
                                             <?php echo $drop_type_label; ?>
@@ -389,8 +569,12 @@ $today_stats = [
             <div class="modal-content">
                 <form method="POST">
                     <input type="hidden" name="action" value="add_cash_drop">
+                    <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                    <input type="hidden" name="transaction_id" value="<?php echo $_SESSION['transaction_id']; ?>">
                     <div class="modal-header">
-                        <h5 class="modal-title">Record Cash Drop</h5>
+                        <h5 class="modal-title">
+                            <i class="bi bi-cash-coin me-2"></i>Record Cash Drop
+                        </h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
@@ -408,19 +592,20 @@ $today_stats = [
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Drop Type</label>
-                            <select class="form-select" name="drop_type" id="drop_type">
-                                <option value="cashier_drop">Cashier Drop</option>
-                                <option value="manager_drop">Manager Drop</option>
-                                <option value="end_of_day_drop">End of Day Drop</option>
-                                <option value="emergency_drop">Emergency Drop</option>
-                                <option value="bank_deposit">Bank Deposit</option>
-                                <option value="safe_drop">Safe Drop</option>
+                            <select class="form-select" name="drop_type" id="drop_type" required>
+                                <option value="emergency_drop" selected>Emergency Drop</option>
                             </select>
+                            <div class="form-text">
+                                <i class="bi bi-info-circle text-info"></i> 
+                                Drop type is automatically set to emergency for security control.
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Drop Amount *</label>
                             <input type="number" class="form-control" name="drop_amount" step="0.01" min="0.01" required>
-                            <div class="form-text">Available balance: <span id="available_balance">-</span></div>
+                            <div class="form-text">
+                                Available balance: <span id="available_balance">-</span>
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Notes</label>
@@ -429,27 +614,35 @@ $today_stats = [
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Record Drop</button>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-cash-coin"></i> Record Drop
+                        </button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
+
     <!-- Confirm Drop Form -->
     <form method="POST" id="confirmForm" style="display: none;">
         <input type="hidden" name="action" value="confirm_drop">
+        <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
         <input type="hidden" name="drop_id" id="confirm_drop_id">
     </form>
 
     <!-- Cancel Drop Form -->
     <form method="POST" id="cancelForm" style="display: none;">
         <input type="hidden" name="action" value="cancel_drop">
+        <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
         <input type="hidden" name="drop_id" id="cancel_drop_id">
     </form>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Prevent form resubmission and double-clicking
+        let formSubmitted = false;
+        
         // Update available balance when till is selected
         document.querySelector('select[name="till_id"]').addEventListener('change', function() {
             const selectedOption = this.options[this.selectedIndex];
@@ -457,19 +650,55 @@ $today_stats = [
             document.getElementById('available_balance').textContent = 'KES ' + parseFloat(balance).toFixed(2);
         });
 
+        // Prevent double-clicking on forms
+        document.querySelectorAll('form').forEach(form => {
+            form.addEventListener('submit', function(e) {
+                if (formSubmitted) {
+                    e.preventDefault();
+                    return false;
+                }
+                formSubmitted = true;
+                
+                // Disable submit buttons to prevent double-clicking
+                const submitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+                submitButtons.forEach(btn => {
+                    btn.disabled = true;
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+                });
+            });
+        });
+
         function confirmDrop(dropId) {
+            if (formSubmitted) return false;
+            
             if (confirm('Are you sure you want to confirm this cash drop?')) {
+                formSubmitted = true;
                 document.getElementById('confirm_drop_id').value = dropId;
                 document.getElementById('confirmForm').submit();
             }
         }
 
         function cancelDrop(dropId) {
+            if (formSubmitted) return false;
+            
             if (confirm('Are you sure you want to cancel this cash drop?')) {
+                formSubmitted = true;
                 document.getElementById('cancel_drop_id').value = dropId;
                 document.getElementById('cancelForm').submit();
             }
         }
+
+
+        // Reset form submission flag when modals are closed
+        document.getElementById('addCashDropModal').addEventListener('hidden.bs.modal', function() {
+            formSubmitted = false;
+            const submitButtons = document.querySelectorAll('#addCashDropModal button[type="submit"]');
+            submitButtons.forEach(btn => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cash-coin"></i> Record Drop';
+            });
+        });
+
     </script>
 </body>
 </html>

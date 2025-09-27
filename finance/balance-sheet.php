@@ -305,19 +305,7 @@ $stmt->execute([$selected_date]);
 $tax_data = $stmt->fetch(PDO::FETCH_ASSOC);
 $estimated_tax_liability = $tax_data['tax_collected'] * 0.8; // Assume 80% of collected tax is liability
 
-// 4. Short-term Loans (if any loan tracking exists)
-$short_term_loans = 0;
-try {
-    $stmt = $conn->prepare("
-        SELECT COALESCE(SUM(amount), 0) as short_term_loans
-        FROM loans 
-        WHERE loan_date <= ? AND loan_type = 'short_term' AND status = 'active'
-    ");
-    $stmt->execute([$selected_date]);
-    $short_term_loans = $stmt->fetch(PDO::FETCH_ASSOC)['short_term_loans'];
-} catch (Exception $e) {
-    $short_term_loans = 0;
-}
+// 4. Short-term Loans removed - loan tracking not implemented
 
 // 5. Supplier Advances (money owed to suppliers)
 $supplier_advances = 0;
@@ -337,29 +325,14 @@ $balance_sheet['liabilities']['current_liabilities'] = [
     'Accounts Payable' => $accounts_payable,
     'Accrued Expenses' => $accrued_expenses,
     'Tax Liabilities' => $estimated_tax_liability,
-    'Short-term Loans' => $short_term_loans,
     'Supplier Advances' => $supplier_advances
 ];
 
 $balance_sheet['liabilities']['total_current'] = array_sum($balance_sheet['liabilities']['current_liabilities']);
 
-// Long-term Liabilities
-$long_term_loans = 0;
-try {
-    $stmt = $conn->prepare("
-        SELECT COALESCE(SUM(amount), 0) as long_term_loans
-        FROM loans 
-        WHERE loan_date <= ? AND loan_type = 'long_term' AND status = 'active'
-    ");
-    $stmt->execute([$selected_date]);
-    $long_term_loans = $stmt->fetch(PDO::FETCH_ASSOC)['long_term_loans'];
-} catch (Exception $e) {
-    $long_term_loans = 0;
-}
-
+// Long-term Liabilities removed - loan tracking not implemented
 $balance_sheet['liabilities']['long_term_liabilities'] = [
-    'Long-term Loans' => $long_term_loans,
-    'Equipment Financing' => 0 // Can be expanded with specific equipment loans
+    // Equipment Financing will be added when actual financing data is available
 ];
 
 $balance_sheet['liabilities']['total_long_term'] = array_sum($balance_sheet['liabilities']['long_term_liabilities']);
@@ -383,9 +356,9 @@ try {
     $owner_capital = 0;
 }
 
-// If no capital investments table, use a default value
+// If no capital investments table, set to zero (no default demo data)
 if ($owner_capital == 0) {
-    $owner_capital = 100000; // Default starting capital
+    $owner_capital = 0; // No demo data - use actual capital investments only
 }
 
 // 2. Retained Earnings (calculated from profit/loss)
@@ -469,18 +442,53 @@ $debt_to_equity = $balance_sheet['equity']['total_equity'] > 0 ?
 
 $working_capital = $balance_sheet['assets']['total_current'] - $balance_sheet['liabilities']['total_current'];
 
-// Get inventory turnover (simplified)
+// Calculate inventory turnover properly
+// Formula: Inventory Turnover = Cost of Goods Sold / Average Inventory
+// This represents how many times inventory is sold and replaced annually
+// First, check how much historical data we have
+$stmt = $conn->prepare("
+    SELECT
+        MIN(sale_date) as earliest_sale,
+        MAX(sale_date) as latest_sale,
+        COUNT(DISTINCT DATE_FORMAT(sale_date, '%Y-%m')) as months_with_sales
+    FROM sales
+    WHERE sale_date <= ?
+");
+$stmt->execute([$selected_date]);
+$sales_period = $stmt->fetch(PDO::FETCH_ASSOC);
+
+$inventory_turnover = 0;
+
+if ($sales_period['earliest_sale']) {
+    // Calculate period length (in months) for turnover calculation
+    $period_months = max(1, min(12, $sales_period['months_with_sales']));
+
+    // Get COGS for available period
+    $period_start = date('Y-m-d', strtotime($selected_date . " -{$period_months} months"));
 $stmt = $conn->prepare("
     SELECT 
         COALESCE(SUM(si.quantity * p.cost_price), 0) as cost_of_goods_sold
     FROM sales s
     JOIN sale_items si ON s.id = si.sale_id
     JOIN products p ON si.product_id = p.id
-    WHERE s.sale_date <= ?
-");
-$stmt->execute([$selected_date]);
-$cogs = $stmt->fetch(PDO::FETCH_ASSOC)['cost_of_goods_sold'];
-$inventory_turnover = $inventory_value > 0 ? $cogs / $inventory_value : 0;
+        WHERE s.sale_date BETWEEN ? AND ?
+    ");
+    $stmt->execute([$period_start, $selected_date]);
+    $cogs_period = $stmt->fetch(PDO::FETCH_ASSOC)['cost_of_goods_sold'];
+
+    // Calculate average inventory (using current as approximation)
+    $average_inventory = $inventory_value;
+
+    // Calculate inventory turnover ratio (annualized if period is less than 12 months)
+    if ($average_inventory > 0 && $cogs_period > 0) {
+        $period_turnover = $cogs_period / $average_inventory;
+        // Annualize if we have less than 12 months of data
+        $inventory_turnover = $period_months < 12 ? $period_turnover * (12 / $period_months) : $period_turnover;
+    }
+}
+
+// Ensure reasonable bounds for display
+$inventory_turnover = min($inventory_turnover, 999); // Cap at reasonable maximum
 
 // Get accounts receivable aging
 $stmt = $conn->prepare("
@@ -499,7 +507,7 @@ $financial_metrics = [
     'current_ratio' => round($current_ratio, 2),
     'debt_to_equity' => round($debt_to_equity, 2),
     'working_capital' => $working_capital,
-    'inventory_turnover' => round($inventory_turnover, 2),
+    'inventory_turnover' => round($inventory_turnover, 1), // Updated to use corrected calculation
     'avg_receivables_days' => round($receivables_data['avg_days_outstanding'] ?? 0, 0),
     'total_credit_sales' => $receivables_data['total_credit_sales'] ?? 0,
     'low_stock_items' => $inventory_data['low_stock_items'] ?? 0,
@@ -1084,14 +1092,24 @@ $financial_metrics = [
                                         </div>
                                     </div>
                                     <div class="col-md-3 mb-4">
-                                        <div class="metric-card p-3 text-center">
+                                        <div class="metric-card p-3 text-center" title="How many times inventory is sold and replaced annually. Higher turnover indicates efficient inventory management.">
                                             <div class="metric-value text-info">
-                                                <?php echo $financial_metrics['inventory_turnover']; ?>
+                                                <?php echo number_format($inventory_turnover, 1); ?>
                                             </div>
                                             <div class="metric-label">Inventory Turnover</div>
                                             <div class="metric-description">
-                                                <span class="status-indicator status-good"></span>
-                                                Higher is better
+                                                <span class="status-indicator <?php echo $inventory_turnover >= 4 ? 'status-good' : ($inventory_turnover >= 2 ? 'status-warning' : 'status-danger'); ?>"></span>
+                                                <?php if ($inventory_turnover == 0): ?>
+                                                    No sales data available
+                                                <?php elseif ($inventory_turnover >= 6): ?>
+                                                    Very high (Excellent)
+                                                <?php elseif ($inventory_turnover >= 4): ?>
+                                                    Good (4-6 times/year)
+                                                <?php elseif ($inventory_turnover >= 2): ?>
+                                                    Moderate (2-4 times/year)
+                                                <?php else: ?>
+                                                    Low (Needs improvement)
+                                                <?php endif; ?>
                                             </div>
                                         </div>
                                     </div>

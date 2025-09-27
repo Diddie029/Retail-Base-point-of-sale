@@ -55,6 +55,19 @@ $till_id = $_GET['till_id'] ?? '';
 $user_filter = $_GET['user_id'] ?? '';
 $status_filter = $_GET['status'] ?? '';
 $drop_type = $_GET['drop_type'] ?? '';
+$amount_min = $_GET['amount_min'] ?? '';
+$amount_max = $_GET['amount_max'] ?? '';
+$confirmed_by_filter = $_GET['confirmed_by'] ?? '';
+$confirmation_time_filter = $_GET['confirmation_time'] ?? '';
+$audit_search = $_GET['audit_search'] ?? '';
+$show_audit_details = $_GET['show_audit'] ?? '0';
+
+// Handle export requests
+$export = $_GET['export'] ?? '';
+if ($export) {
+    handleExport($conn, $cash_drops, $summary_stats, $export, $settings);
+    exit();
+}
 
 // Check if cash_drops table exists
 $table_exists = false;
@@ -78,7 +91,7 @@ $summary_stats = [
 ];
 
 if ($table_exists) {
-    // Build query for cash drop report
+    // Build query for cash drop report with enhanced audit details
     $query = "
         SELECT
             cd.*,
@@ -86,13 +99,27 @@ if ($table_exists) {
             rt.till_code,
             rt.current_balance as till_current_balance,
             u.username as dropped_by_name,
+            u.role_name as dropped_by_role,
             cu.username as confirmed_by_name,
+            cu.role_name as confirmed_by_role,
+            TIMESTAMPDIFF(MINUTE, cd.drop_date, cd.confirmed_at) as confirmation_minutes,
+            TIMESTAMPDIFF(HOUR, cd.drop_date, cd.confirmed_at) as confirmation_hours,
+            TIMESTAMPDIFF(DAY, cd.drop_date, cd.confirmed_at) as confirmation_days,
             CASE
                 WHEN cd.status = 'pending' THEN 'Pending'
                 WHEN cd.status = 'confirmed' THEN 'Confirmed'
                 WHEN cd.status = 'cancelled' THEN 'Cancelled'
                 ELSE 'Unknown'
-            END as status_text
+            END as status_text,
+            CASE
+                WHEN TIMESTAMPDIFF(MINUTE, cd.drop_date, cd.confirmed_at) < 60 THEN
+                    CONCAT(TIMESTAMPDIFF(MINUTE, cd.drop_date, cd.confirmed_at), ' min')
+                WHEN TIMESTAMPDIFF(HOUR, cd.drop_date, cd.confirmed_at) < 24 THEN
+                    CONCAT(TIMESTAMPDIFF(HOUR, cd.drop_date, cd.confirmed_at), ' hrs')
+                ELSE CONCAT(TIMESTAMPDIFF(DAY, cd.drop_date, cd.confirmed_at), ' days')
+            END as time_to_confirm,
+            -- Get audit trail count
+            (SELECT COUNT(*) FROM security_logs sl WHERE sl.event_type LIKE '%cash_drop%' AND sl.details LIKE CONCAT('%', cd.id, '%')) as audit_count
         FROM cash_drops cd
         LEFT JOIN register_tills rt ON cd.till_id = rt.id
         LEFT JOIN users u ON cd.user_id = u.id
@@ -120,6 +147,50 @@ if ($table_exists) {
     if (!empty($drop_type) && $drop_type !== 'all') {
         $query .= " AND cd.drop_type = ?";
         $params[] = $drop_type;
+    }
+
+    if (!empty($confirmed_by_filter)) {
+        $query .= " AND cd.confirmed_by = ?";
+        $params[] = $confirmed_by_filter;
+    }
+
+    if (!empty($amount_min)) {
+        $query .= " AND cd.drop_amount >= ?";
+        $params[] = $amount_min;
+    }
+
+    if (!empty($amount_max)) {
+        $query .= " AND cd.drop_amount <= ?";
+        $params[] = $amount_max;
+    }
+
+    if (!empty($confirmation_time_filter)) {
+        switch ($confirmation_time_filter) {
+            case 'under_1h':
+                $query .= " AND TIMESTAMPDIFF(MINUTE, cd.drop_date, cd.confirmed_at) < 60";
+                break;
+            case '1h_to_4h':
+                $query .= " AND TIMESTAMPDIFF(MINUTE, cd.drop_date, cd.confirmed_at) BETWEEN 60 AND 240";
+                break;
+            case '4h_to_24h':
+                $query .= " AND TIMESTAMPDIFF(MINUTE, cd.drop_date, cd.confirmed_at) BETWEEN 241 AND 1440";
+                break;
+            case 'over_24h':
+                $query .= " AND TIMESTAMPDIFF(MINUTE, cd.drop_date, cd.confirmed_at) > 1440";
+                break;
+            case 'pending':
+                $query .= " AND cd.status = 'pending'";
+                break;
+        }
+    }
+
+    if (!empty($audit_search)) {
+        $query .= " AND (cd.notes LIKE ? OR u.username LIKE ? OR cu.username LIKE ? OR cd.id = ?)";
+        $search_param = '%' . $audit_search . '%';
+        $params[] = $search_param;
+        $params[] = $search_param;
+        $params[] = $search_param;
+        $params[] = $audit_search;
     }
 
     $query .= " ORDER BY cd.drop_date DESC";
@@ -160,8 +231,182 @@ $tills = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $stmt = $conn->query("SELECT id, username FROM users ORDER BY username");
 $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Get confirmed_by users for filter dropdown
+$stmt = $conn->query("
+    SELECT DISTINCT u.id, u.username
+    FROM users u
+    INNER JOIN cash_drops cd ON u.id = cd.confirmed_by
+    ORDER BY u.username
+");
+$confirmed_by_users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
 // Get settings for currency
 $settings = getSystemSettings($conn);
+
+// Export function
+function handleExport($conn, $cash_drops, $summary_stats, $export_type, $settings) {
+    $filename = 'cash_drop_report_' . date('Y-m-d_H-i-s');
+
+    if ($export_type === 'csv') {
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="' . $filename . '.csv"');
+
+        $output = fopen('php://output', 'w');
+
+        // Summary section
+        fputcsv($output, ['Cash Drop Report Summary']);
+        fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
+        fputcsv($output, []);
+        fputcsv($output, ['Total Drops', 'Total Amount', 'Pending Drops', 'Confirmed Drops', 'Cancelled Drops']);
+        fputcsv($output, [
+            $summary_stats['total_drops'],
+            formatCurrency($summary_stats['total_amount'], $settings),
+            $summary_stats['pending_drops'],
+            $summary_stats['confirmed_drops'],
+            $summary_stats['cancelled_drops']
+        ]);
+        fputcsv($output, []);
+
+        // Data headers
+        fputcsv($output, [
+            'Date & Time',
+            'Till Name',
+            'Drop Type',
+            'Amount',
+            'Dropped By',
+            'Status',
+            'Confirmed By',
+            'Confirmation Time',
+            'Notes'
+        ]);
+
+        // Data rows
+        foreach ($cash_drops as $drop) {
+            fputcsv($output, [
+                date('M d, Y H:i:s', strtotime($drop['drop_date'])),
+                $drop['till_name'] . ' (' . $drop['till_code'] . ')',
+                ucfirst(str_replace('_', ' ', $drop['drop_type'])),
+                formatCurrency($drop['drop_amount'], $settings),
+                $drop['dropped_by_name'],
+                $drop['status_text'],
+                $drop['confirmed_by_name'] ?: 'Not confirmed',
+                $drop['time_to_confirm'] ?: 'N/A',
+                $drop['notes'] ?: ''
+            ]);
+        }
+
+        fclose($output);
+    } elseif ($export_type === 'audit_csv') {
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="' . $filename . '_audit.csv"');
+
+        $output = fopen('php://output', 'w');
+
+        // Get audit data for all drops
+        $audit_data = [];
+        foreach ($cash_drops as $drop) {
+            $stmt = $conn->prepare("
+                SELECT * FROM security_logs
+                WHERE event_type LIKE '%cash_drop%' AND details LIKE ?
+                ORDER BY created_at ASC
+            ");
+            $stmt->execute(['%' . $drop['id'] . '%']);
+            $audit_events = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($audit_events as $event) {
+                $audit_data[] = [
+                    'drop_id' => $drop['id'],
+                    'drop_amount' => formatCurrency($drop['drop_amount'], $settings),
+                    'till_name' => $drop['till_name'],
+                    'event_type' => $event['event_type'],
+                    'details' => $event['details'],
+                    'severity' => $event['severity'],
+                    'ip_address' => $event['ip_address'],
+                    'created_at' => $event['created_at']
+                ];
+            }
+        }
+
+        // Headers
+        fputcsv($output, ['Cash Drop Audit Trail']);
+        fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
+        fputcsv($output, []);
+        fputcsv($output, [
+            'Drop ID',
+            'Amount',
+            'Till Name',
+            'Event Type',
+            'Details',
+            'Severity',
+            'IP Address',
+            'Timestamp'
+        ]);
+
+        // Data rows
+        foreach ($audit_data as $row) {
+            fputcsv($output, $row);
+        }
+
+        fclose($output);
+    } elseif ($export_type === 'single_audit_csv') {
+        $drop_id = intval($_GET['drop_id'] ?? 0);
+
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="cash_drop_' . $drop_id . '_audit_' . date('Y-m-d_H-i-s') . '.csv"');
+
+        $output = fopen('php://output', 'w');
+
+        // Get drop details
+        $stmt = $conn->prepare("
+            SELECT cd.*, rt.till_name, u.username as dropped_by_name
+            FROM cash_drops cd
+            LEFT JOIN register_tills rt ON cd.till_id = rt.id
+            LEFT JOIN users u ON cd.user_id = u.id
+            WHERE cd.id = ?
+        ");
+        $stmt->execute([$drop_id]);
+        $drop = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        // Get audit trail
+        $stmt = $conn->prepare("
+            SELECT * FROM security_logs
+            WHERE event_type LIKE '%cash_drop%' AND details LIKE ?
+            ORDER BY created_at ASC
+        ");
+        $stmt->execute(['%' . $drop_id . '%']);
+        $audit_events = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Headers
+        fputcsv($output, ['Cash Drop #' . $drop_id . ' Audit Trail']);
+        fputcsv($output, ['Drop Amount', formatCurrency($drop['drop_amount'], $settings)]);
+        fputcsv($output, ['Till Name', $drop['till_name']]);
+        fputcsv($output, ['Dropped By', $drop['dropped_by_name']]);
+        fputcsv($output, ['Generated', date('Y-m-d H:i:s')]);
+        fputcsv($output, []);
+        fputcsv($output, [
+            'Event Type',
+            'Details',
+            'Severity',
+            'IP Address',
+            'User Agent',
+            'Timestamp'
+        ]);
+
+        // Data rows
+        foreach ($audit_events as $event) {
+            fputcsv($output, [
+                $event['event_type'],
+                $event['details'],
+                $event['severity'],
+                $event['ip_address'],
+                substr($event['user_agent'] ?? '', 0, 100), // Truncate user agent
+                $event['created_at']
+            ]);
+        }
+
+        fclose($output);
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -282,9 +527,15 @@ $settings = getSystemSettings($conn);
 
             <!-- Filters -->
             <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-funnel me-2"></i>Advanced Filters</h6>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#advancedFilters" aria-expanded="false">
+                        <i class="bi bi-chevron-down"></i> Toggle Advanced Filters
+                    </button>
+                </div>
                 <div class="card-body">
                     <form method="GET" class="row g-3">
-                        <!-- First Row -->
+                        <!-- Basic Filters Row -->
                         <div class="col-lg-2 col-md-4 col-sm-6">
                             <label class="form-label fw-semibold">From Date</label>
                             <input type="date" class="form-control" name="date_from" value="<?php echo $date_from; ?>">
@@ -304,7 +555,7 @@ $settings = getSystemSettings($conn);
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="col-lg-3 col-md-6 col-sm-6">
+                        <div class="col-lg-2 col-md-4 col-sm-6">
                             <label class="form-label fw-semibold">Cashier</label>
                             <select class="form-select" name="user_id">
                                 <option value="">All Cashiers</option>
@@ -315,7 +566,7 @@ $settings = getSystemSettings($conn);
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="col-lg-1 col-md-3 col-sm-6">
+                        <div class="col-lg-2 col-md-4 col-sm-6">
                             <label class="form-label fw-semibold">Status</label>
                             <select class="form-select" name="status">
                                 <option value="all" <?php echo ($status_filter === 'all' || empty($status_filter)) ? 'selected' : ''; ?>>All</option>
@@ -324,7 +575,7 @@ $settings = getSystemSettings($conn);
                                 <option value="cancelled" <?php echo ($status_filter === 'cancelled') ? 'selected' : ''; ?>>Cancelled</option>
                             </select>
                         </div>
-                        <div class="col-lg-2 col-md-6 col-sm-6">
+                        <div class="col-lg-2 col-md-4 col-sm-6">
                             <label class="form-label fw-semibold">Drop Type</label>
                             <select class="form-select" name="drop_type">
                                 <option value="all" <?php echo ($drop_type === 'all' || empty($drop_type)) ? 'selected' : ''; ?>>All Types</option>
@@ -336,18 +587,67 @@ $settings = getSystemSettings($conn);
                                 <option value="safe_drop" <?php echo ($drop_type === 'safe_drop') ? 'selected' : ''; ?>>Safe Drop</option>
                             </select>
                         </div>
+
+                        <!-- Advanced Filters (Collapsible) -->
+                        <div class="collapse <?php echo (!empty($amount_min) || !empty($amount_max) || !empty($confirmed_by_filter) || !empty($confirmation_time_filter) || !empty($audit_search)) ? 'show' : ''; ?>" id="advancedFilters">
+                            <!-- Amount Range Row -->
+                            <div class="col-lg-2 col-md-4 col-sm-6">
+                                <label class="form-label fw-semibold">Min Amount</label>
+                                <input type="number" class="form-control" name="amount_min" value="<?php echo $amount_min; ?>" step="0.01" placeholder="0.00">
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6">
+                                <label class="form-label fw-semibold">Max Amount</label>
+                                <input type="number" class="form-control" name="amount_max" value="<?php echo $amount_max; ?>" step="0.01" placeholder="0.00">
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6">
+                                <label class="form-label fw-semibold">Confirmed By</label>
+                                <select class="form-select" name="confirmed_by">
+                                    <option value="">All Approvers</option>
+                                    <?php foreach ($confirmed_by_users as $user): ?>
+                                    <option value="<?php echo $user['id']; ?>" <?php echo ($confirmed_by_filter == $user['id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($user['username']); ?>
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6">
+                                <label class="form-label fw-semibold">Confirmation Time</label>
+                                <select class="form-select" name="confirmation_time">
+                                    <option value="">All Times</option>
+                                    <option value="under_1h" <?php echo ($confirmation_time_filter === 'under_1h') ? 'selected' : ''; ?>>Under 1 Hour</option>
+                                    <option value="1h_to_4h" <?php echo ($confirmation_time_filter === '1h_to_4h') ? 'selected' : ''; ?>>1-4 Hours</option>
+                                    <option value="4h_to_24h" <?php echo ($confirmation_time_filter === '4h_to_24h') ? 'selected' : ''; ?>>4-24 Hours</option>
+                                    <option value="over_24h" <?php echo ($confirmation_time_filter === 'over_24h') ? 'selected' : ''; ?>>Over 24 Hours</option>
+                                    <option value="pending" <?php echo ($confirmation_time_filter === 'pending') ? 'selected' : ''; ?>>Still Pending</option>
+                                </select>
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6">
+                                <label class="form-label fw-semibold">Audit Search</label>
+                                <input type="text" class="form-control" name="audit_search" value="<?php echo htmlspecialchars($audit_search); ?>" placeholder="Search notes, users, ID...">
+                            </div>
+                            <div class="col-lg-2 col-md-4 col-sm-6">
+                                <label class="form-label fw-semibold">Show Audit Details</label>
+                                <div class="form-check form-switch mt-2">
+                                    <input class="form-check-input" type="checkbox" name="show_audit" value="1" id="showAuditSwitch" <?php echo ($show_audit_details === '1') ? 'checked' : ''; ?>>
+                                    <label class="form-check-label" for="showAuditSwitch">Include audit trail</label>
+                                </div>
+                            </div>
+                        </div>
                         
                         <!-- Action Buttons Row -->
                         <div class="col-12">
                             <div class="d-flex flex-wrap gap-2 mt-3">
                                 <button type="submit" class="btn btn-primary">
-                                    <i class="bi bi-search me-1"></i> Filter
+                                    <i class="bi bi-search me-1"></i> Filter & Search
                                 </button>
                                 <a href="?date_from=<?php echo date('Y-m-d', strtotime('-30 days')); ?>&date_to=<?php echo date('Y-m-d'); ?>" class="btn btn-outline-secondary">
-                                    <i class="bi bi-arrow-clockwise me-1"></i> Reset
+                                    <i class="bi bi-arrow-clockwise me-1"></i> Reset All
                                 </a>
                                 <button type="button" class="btn btn-outline-info" onclick="exportReport()">
-                                    <i class="bi bi-download me-1"></i> Export
+                                    <i class="bi bi-download me-1"></i> Export Report
+                                </button>
+                                <button type="button" class="btn btn-outline-success" onclick="exportDetailedAudit()">
+                                    <i class="bi bi-file-earmark-spreadsheet me-1"></i> Export Audit Trail
                                 </button>
                             </div>
                         </div>
@@ -472,6 +772,9 @@ $settings = getSystemSettings($conn);
                                     <th>Balance After Drop</th>
                                     <th>Time to Confirm</th>
                                     <th>Notes</th>
+                                    <?php if ($show_audit_details === '1'): ?>
+                                    <th>Audit Trail</th>
+                                    <?php endif; ?>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -585,6 +888,29 @@ $settings = getSystemSettings($conn);
                                             <span class="text-muted">-</span>
                                         <?php endif; ?>
                                     </td>
+                                    <?php if ($show_audit_details === '1'): ?>
+                                    <td>
+                                        <div class="d-flex align-items-center">
+                                            <small class="text-muted">
+                                                <?php if ($drop['audit_count'] > 0): ?>
+                                                    <span class="badge bg-info"><?php echo $drop['audit_count']; ?> events</span>
+                                                    <button class="btn btn-sm btn-outline-primary ms-1" onclick="viewAuditTrail(<?php echo $drop['id']; ?>)" title="View audit trail">
+                                                        <i class="bi bi-clock-history"></i>
+                                                    </button>
+                                                <?php else: ?>
+                                                    <span class="text-muted">No audit</span>
+                                                <?php endif; ?>
+                                            </small>
+                                        </div>
+                                        <?php if ($drop['status'] !== 'pending'): ?>
+                                            <br>
+                                            <small class="text-success">
+                                                <i class="bi bi-check-circle-fill me-1"></i>
+                                                <?php echo date('M d, H:i', strtotime($drop['confirmed_at'] ?? $drop['updated_at'])); ?>
+                                            </small>
+                                        <?php endif; ?>
+                                    </td>
+                                    <?php endif; ?>
                                     <td>
                                         <div class="d-flex flex-wrap gap-1 justify-content-start">
                                             <!-- Primary Action - View Details -->
@@ -777,6 +1103,179 @@ $settings = getSystemSettings($conn);
             const url = new URL(window.location);
             url.searchParams.set('export', 'csv');
             window.open(url, '_blank');
+        }
+
+        function exportDetailedAudit() {
+            const url = new URL(window.location);
+            url.searchParams.set('export', 'audit_csv');
+            window.open(url, '_blank');
+        }
+
+        function viewAuditTrail(dropId) {
+            // Show loading modal or create one
+            const auditModal = document.getElementById('auditTrailModal') || createAuditModal();
+
+            // Show loading state
+            const modal = new bootstrap.Modal(auditModal);
+            const content = document.getElementById('auditTrailContent');
+            content.innerHTML = `
+                <div class="text-center">
+                    <div class="spinner-border text-info" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading audit trail...</p>
+                </div>
+            `;
+
+            modal.show();
+
+            // Fetch audit trail
+            fetch('cash_drop_audit.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    'action': 'get_audit_trail',
+                    'drop_id': dropId
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    content.innerHTML = generateAuditTrailHTML(data.audit_trail, data.drop);
+                } else {
+                    content.innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            ${data.message || 'No audit trail found for this cash drop.'}
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                content.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        Network error occurred while loading audit trail.
+                    </div>
+                `;
+            });
+        }
+
+        function createAuditModal() {
+            const modalHTML = `
+                <div class="modal fade" id="auditTrailModal" tabindex="-1">
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header bg-info text-white">
+                                <h5 class="modal-title">
+                                    <i class="bi bi-clock-history me-2"></i>Cash Drop Audit Trail
+                                </h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body" id="auditTrailContent">
+                                <!-- Content will be loaded dynamically -->
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                <button type="button" class="btn btn-primary" onclick="exportCurrentAudit()">
+                                    <i class="bi bi-download me-1"></i>Export This Trail
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.insertAdjacentHTML('beforeend', modalHTML);
+            return document.getElementById('auditTrailModal');
+        }
+
+        function generateAuditTrailHTML(auditTrail, drop) {
+            let html = `
+                <div class="row mb-3">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">Cash Drop #${drop.id} - ${drop.till_name}</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-3"><strong>Amount:</strong> ${drop.formatted_amount || drop.drop_amount}</div>
+                                    <div class="col-md-3"><strong>Status:</strong> <span class="badge bg-${drop.status === 'confirmed' ? 'success' : drop.status === 'pending' ? 'warning' : 'danger'}">${drop.status_text || drop.status}</span></div>
+                                    <div class="col-md-3"><strong>Dropped By:</strong> ${drop.dropped_by_name || 'N/A'}</div>
+                                    <div class="col-md-3"><strong>Drop Date:</strong> ${new Date(drop.drop_date).toLocaleString()}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="timeline">
+                    <h6 class="mb-3"><i class="bi bi-timeline me-2"></i>Audit Events</h6>
+            `;
+
+            if (auditTrail && auditTrail.length > 0) {
+                auditTrail.forEach((event, index) => {
+                    const eventTime = new Date(event.created_at);
+                    const severityClass = event.severity === 'high' ? 'danger' :
+                                        event.severity === 'medium' ? 'warning' :
+                                        event.severity === 'low' ? 'info' : 'secondary';
+
+                    html += `
+                        <div class="timeline-item mb-3">
+                            <div class="timeline-marker bg-${severityClass}"></div>
+                            <div class="timeline-content">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">${event.event_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</h6>
+                                        <p class="mb-1 text-muted small">${event.details}</p>
+                                        ${event.ip_address ? `<small class="text-muted">IP: ${event.ip_address}</small>` : ''}
+                                    </div>
+                                    <div class="text-end">
+                                        <small class="text-muted">${eventTime.toLocaleString()}</small>
+                                        <br>
+                                        <span class="badge bg-${severityClass}">${event.severity}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                html += `
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        No detailed audit trail available for this cash drop. Basic logging may be enabled.
+                    </div>
+                `;
+            }
+
+            html += `
+                </div>
+                <style>
+                    .timeline { position: relative; padding-left: 30px; }
+                    .timeline::before { content: ''; position: absolute; left: 15px; top: 0; bottom: 0; width: 2px; background: #e9ecef; }
+                    .timeline-item { position: relative; margin-bottom: 20px; }
+                    .timeline-marker { position: absolute; left: -22px; top: 5px; width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; }
+                    .timeline-content { background: #f8f9fa; padding: 15px; border-radius: 5px; }
+                </style>
+            `;
+
+            return html;
+        }
+
+        function exportCurrentAudit() {
+            // Get the current drop ID from the modal
+            const content = document.getElementById('auditTrailContent');
+            const dropIdMatch = content.innerHTML.match(/Cash Drop #(\d+)/);
+            if (dropIdMatch) {
+                const dropId = dropIdMatch[1];
+                const url = new URL(window.location);
+                url.searchParams.set('export', 'single_audit_csv');
+                url.searchParams.set('drop_id', dropId);
+                window.open(url, '_blank');
+            }
         }
 
         function showFullNotes(notes) {

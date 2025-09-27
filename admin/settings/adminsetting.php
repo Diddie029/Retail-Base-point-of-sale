@@ -844,6 +844,39 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
         }
         
+        /* Header Styling with Theme Color */
+        .header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, color-mix(in srgb, var(--primary-color) 80%, #000) 100%);
+            color: white;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            border-bottom: none;
+        }
+        
+        .header h1 {
+            color: white;
+            font-weight: 700;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header-subtitle {
+            color: rgba(255, 255, 255, 0.9);
+            font-weight: 400;
+        }
+        
+        .user-info {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .user-avatar {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+        
         .color-picker-group {
             display: flex;
             gap: 10px;
@@ -1526,20 +1559,6 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     <div class="form-text">Upload company logo (JPG, PNG, GIF - Max 2MB). Will appear on receipts and throughout the system.</div>
                                 </div>
                             </div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="company_logo" class="form-label">Company Logo</label>
-                            <?php if (!empty($settings['company_logo'])): ?>
-                                <div class="current-logo mb-3">
-                                    <img src="../../<?php echo htmlspecialchars($settings['company_logo']); ?>" 
-                                         alt="Current Logo" class="img-thumbnail" style="max-height: 100px;">
-                                    <div class="form-text">Current logo</div>
-                                </div>
-                            <?php endif; ?>
-                            <input type="file" class="form-control" id="company_logo" name="company_logo" 
-                                   accept="image/jpeg,image/jpg,image/png,image/gif">
-                            <div class="form-text">Upload company logo (JPG, PNG, GIF - Max 2MB). Will appear on receipts and throughout the system.</div>
                         </div>
                         
                         <div class="form-group">
@@ -3557,6 +3576,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 // Update CSS custom property
                 document.documentElement.style.setProperty('--primary-color', color);
+                
+                // Update the actual header background
+                const actualHeader = document.querySelector('.header');
+                if (actualHeader) {
+                    actualHeader.style.background = `linear-gradient(135deg, ${color} 0%, color-mix(in srgb, ${color} 80%, #000) 100%)`;
+                }
             }
             
             function updateSidebarPreview() {
