@@ -166,6 +166,69 @@ try {
         :root {
             --primary-color: <?php echo $settings['theme_color'] ?? '#6366f1'; ?>;
             --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
+            --primary-color-rgb: <?php 
+                $color = $settings['theme_color'] ?? '#6366f1';
+                $color = ltrim($color, '#');
+                $r = hexdec(substr($color, 0, 2));
+                $g = hexdec(substr($color, 2, 2));
+                $b = hexdec(substr($color, 4, 2));
+                echo "$r, $g, $b";
+            ?>;
+        }
+
+        /* Enhanced Header Styling */
+        .header {
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-color));
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            border-bottom: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+            pointer-events: none;
+        }
+
+        .header-content {
+            position: relative;
+            z-index: 1;
+        }
+
+        .header-title h1 {
+            color: white;
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .header-subtitle {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.875rem;
+            font-weight: 400;
+        }
+
+        .user-info {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .user-avatar {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
         }
 
         .bom-card {
@@ -265,17 +328,40 @@ try {
             transition: all 0.2s;
         }
 
-        .btn-view { background: #e0e7ff; color: #3730a3; }
-        .btn-view:hover { background: #c7d2fe; }
+        .btn-view { 
+            background: rgba(var(--primary-color-rgb, 99, 102, 241), 0.1); 
+            color: var(--primary-color); 
+            border: 1px solid rgba(var(--primary-color-rgb, 99, 102, 241), 0.2);
+        }
+        .btn-view:hover { 
+            background: rgba(var(--primary-color-rgb, 99, 102, 241), 0.2); 
+            color: var(--primary-color);
+        }
 
-        .btn-edit { background: #dbeafe; color: #1d4ed8; }
-        .btn-edit:hover { background: #bfdbfe; }
+        .btn-edit { 
+            background: var(--primary-color); 
+            color: white; 
+        }
+        .btn-edit:hover { 
+            background: color-mix(in srgb, var(--primary-color) 85%, black); 
+            color: white;
+        }
 
-        .btn-approve { background: #d1fae5; color: #047857; }
-        .btn-approve:hover { background: #a7f3d0; }
+        .btn-approve { 
+            background: #10b981; 
+            color: white; 
+        }
+        .btn-approve:hover { 
+            background: #059669; 
+        }
 
-        .btn-delete { background: #fee2e2; color: #dc2626; }
-        .btn-delete:hover { background: #fecaca; }
+        .btn-delete { 
+            background: #ef4444; 
+            color: white; 
+        }
+        .btn-delete:hover { 
+            background: #dc2626; 
+        }
 
         .filters-section {
             background: white;
@@ -513,23 +599,23 @@ try {
                 </div>
                 <div class="d-flex gap-2">
                     <?php if ($can_manage_boms): ?>
-                    <a href="add.php" class="btn btn-primary">
+                    <a href="add.php" class="btn btn-primary" style="background: var(--primary-color); border-color: var(--primary-color);">
                         <i class="bi bi-plus-circle me-2"></i>Create BOM
                     </a>
-                    <a href="auto_bom_setup.php" class="btn btn-outline-success">
+                    <a href="auto_bom_setup.php" class="btn btn-outline-primary" style="border-color: var(--primary-color); color: var(--primary-color);">
                         <i class="bi bi-gear-fill me-2"></i>Auto BOM Setup
                     </a>
-                    <a href="../product_families/families.php" class="btn btn-outline-warning">
+                    <a href="../product_families/families.php" class="btn btn-outline-primary" style="border-color: var(--primary-color); color: var(--primary-color);">
                         <i class="bi bi-diagram-3 me-2"></i>BOM Families
                     </a>
                     <?php endif; ?>
-                    <a href="auto_bom_products.php" class="btn btn-outline-info">
+                    <a href="auto_bom_products.php" class="btn btn-outline-primary" style="border-color: var(--primary-color); color: var(--primary-color);">
                         <i class="bi bi-list-ul me-2"></i>Auto BOM Products
                     </a>
-                    <a href="demo_multilevel.php" class="btn btn-outline-secondary">
+                    <a href="demo_multilevel.php" class="btn btn-outline-primary" style="border-color: var(--primary-color); color: var(--primary-color);">
                         <i class="bi bi-diagram-3 me-2"></i>Multi-Level Demo
                     </a>
-                    <a href="reports.php" class="btn btn-outline-primary">
+                    <a href="reports.php" class="btn btn-outline-primary" style="border-color: var(--primary-color); color: var(--primary-color);">
                         <i class="bi bi-graph-up me-2"></i>Reports
                     </a>
                 </div>
@@ -564,7 +650,7 @@ try {
                         </select>
                     </div>
                     <div class="col-md-2 d-flex align-items-end">
-                        <button type="submit" class="btn btn-outline-primary me-2">
+                        <button type="submit" class="btn btn-outline-primary me-2" style="border-color: var(--primary-color); color: var(--primary-color);">
                             <i class="bi bi-search me-1"></i>Filter
                         </button>
                         <a href="index.php" class="btn btn-outline-secondary">
@@ -594,7 +680,7 @@ try {
                         <h4 class="text-muted">No BOMs found</h4>
                         <p class="text-muted mb-4">Get started by creating your first Bill of Materials</p>
                         <?php if ($can_manage_boms): ?>
-                        <a href="add.php" class="btn btn-primary">
+                        <a href="add.php" class="btn btn-primary" style="background: var(--primary-color); border-color: var(--primary-color);">
                             <i class="bi bi-plus-circle me-2"></i>Create Your First BOM
                         </a>
                         <?php endif; ?>

@@ -109,12 +109,14 @@ $sql = "
         bp.cost_price as base_cost,
         pf.name as family_name,
         u.username as created_by_name,
+        u2.username as updated_by_name,
         COUNT(su.id) as selling_units_count
     FROM auto_bom_configs abc
     INNER JOIN products p ON abc.product_id = p.id
     INNER JOIN products bp ON abc.base_product_id = bp.id
     LEFT JOIN product_families pf ON abc.product_family_id = pf.id
     LEFT JOIN users u ON abc.created_by = u.id
+    LEFT JOIN users u2 ON abc.updated_by = u2.id
     LEFT JOIN auto_bom_selling_units su ON abc.id = su.auto_bom_config_id AND su.status = 'active'
     {$where_clause}
     GROUP BY abc.id
@@ -566,6 +568,7 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <th>Stock</th>
                                 <th>Status</th>
                                 <th>Created</th>
+                                <th>Created By</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -617,6 +620,14 @@ $product_families = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 </td>
                                 <td>
                                     <?php echo date('M j, Y', strtotime($bom['created_at'])); ?>
+                                </td>
+                                <td>
+                                    <div class="d-flex flex-column">
+                                        <small class="text-muted"><?php echo htmlspecialchars($bom['created_by_name'] ?? 'System'); ?></small>
+                                        <?php if (!empty($bom['updated_by_name']) && $bom['updated_by_name'] !== $bom['created_by_name']): ?>
+                                            <small class="text-muted">Updated: <?php echo htmlspecialchars($bom['updated_by_name']); ?></small>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                                 <td>
                                     <div class="btn-group btn-group-sm" role="group">

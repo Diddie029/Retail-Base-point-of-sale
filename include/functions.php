@@ -92,6 +92,11 @@ function api($path) {
  * @return bool True if user has permission, false otherwise
  */
 function hasPermission($permission, $userPermissions) {
+    // Admins have full access without explicit permissions
+    if (isAdminUser()) {
+        return true;
+    }
+
     // Be defensive: if $userPermissions is not an array, return false
     if (!is_array($userPermissions)) {
         return false;

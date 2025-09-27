@@ -1935,6 +1935,23 @@ try {
         // Foreign key might already exist
     }
 
+    // Add created_by and updated_by columns to auto_bom_configs table
+    try {
+        $stmt = $conn->prepare("SHOW COLUMNS FROM auto_bom_configs LIKE 'created_by'");
+        $stmt->execute();
+        $result = $stmt->fetch();
+        
+        if (!$result) {
+            $conn->exec("ALTER TABLE auto_bom_configs ADD COLUMN created_by INT DEFAULT NULL AFTER is_active");
+            $conn->exec("ALTER TABLE auto_bom_configs ADD COLUMN updated_by INT DEFAULT NULL AFTER created_by");
+            $conn->exec("ALTER TABLE auto_bom_configs ADD CONSTRAINT fk_auto_bom_configs_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL");
+            $conn->exec("ALTER TABLE auto_bom_configs ADD CONSTRAINT fk_auto_bom_configs_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL");
+            error_log("Added created_by and updated_by columns to auto_bom_configs table");
+        }
+    } catch (PDOException $e) {
+        error_log("Warning: Could not add created_by/updated_by columns to auto_bom_configs table: " . $e->getMessage());
+    }
+
     // Add indexes for user management
     $userIndexes = [
         "CREATE INDEX idx_users_first_name ON users (first_name)",

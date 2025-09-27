@@ -194,6 +194,7 @@ if (!method_exists('AutoBOMManager', 'updateAutoBOM')) {
                         description = :description,
                         auto_bom_type = :auto_bom_type,
                         is_active = :is_active,
+                        updated_by = :updated_by,
                         updated_at = NOW()
                     WHERE id = :id
                 ");
@@ -207,6 +208,7 @@ if (!method_exists('AutoBOMManager', 'updateAutoBOM')) {
                     ':description' => $config['description'],
                     ':auto_bom_type' => $config['auto_bom_type'],
                     ':is_active' => $config['is_active'],
+                    ':updated_by' => $this->user_id,
                     ':id' => $config_id
                 ]);
 

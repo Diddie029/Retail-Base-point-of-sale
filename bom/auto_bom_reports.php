@@ -81,12 +81,14 @@ $stmt = $conn->prepare("
         bp.cost_price as base_cost,
         pf.name as family_name,
         u.username as created_by_name,
+        u2.username as updated_by_name,
         COUNT(su.id) as selling_units_count
     FROM auto_bom_configs abc
     INNER JOIN products p ON abc.product_id = p.id
     INNER JOIN products bp ON abc.base_product_id = bp.id
     LEFT JOIN product_families pf ON abc.product_family_id = pf.id
     LEFT JOIN users u ON abc.created_by = u.id
+    LEFT JOIN users u2 ON abc.updated_by = u2.id
     LEFT JOIN auto_bom_selling_units su ON abc.id = su.auto_bom_config_id AND su.status = 'active'
     {$where_clause}
     GROUP BY abc.id
@@ -1217,9 +1219,16 @@ try {
                                                 </small>
                                             </td>
                                             <td>
-                                                <small class="text-muted">
-                                                    <?php echo htmlspecialchars($config['created_by_name'] ?? 'System'); ?>
-                                                </small>
+                                                <div class="d-flex flex-column">
+                                                    <small class="text-muted">
+                                                        Created: <?php echo htmlspecialchars($config['created_by_name'] ?? 'System'); ?>
+                                                    </small>
+                                                    <?php if (!empty($config['updated_by_name']) && $config['updated_by_name'] !== $config['created_by_name']): ?>
+                                                        <small class="text-muted">
+                                                            Updated: <?php echo htmlspecialchars($config['updated_by_name']); ?>
+                                                        </small>
+                                                    <?php endif; ?>
+                                                </div>
                                             </td>
                                             <td>
                                                 <div class="action-buttons">
