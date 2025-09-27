@@ -75,92 +75,14 @@ $stmt = $conn->query("SELECT id, name FROM categories ORDER BY name");
 $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get products for filters
-$stmt = $conn->query("SELECT id, name FROM products ORDER BY name");
+$stmt = $conn->query("SELECT id, name, sku FROM products ORDER BY name");
 $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Initialize report data
 $report_data = [];
 $comparison_data = [];
 
-// Debug: Check if we have any sales data
-$debug_stmt = $conn->query("SELECT COUNT(*) as count FROM sales");
-$sales_count = $debug_stmt->fetch(PDO::FETCH_ASSOC)['count'];
 
-$debug_stmt = $conn->query("SELECT COUNT(*) as count FROM sale_items");
-$sale_items_count = $debug_stmt->fetch(PDO::FETCH_ASSOC)['count'];
-
-// Debug: Check recent sales
-$debug_stmt = $conn->query("SELECT id, total_amount, created_at FROM sales ORDER BY created_at DESC LIMIT 5");
-$recent_sales = $debug_stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// If no sales data exists, create some sample data for testing
-if ($sales_count == 0) {
-    try {
-        // First, ensure we have a user and till
-        $user_stmt = $conn->query("SELECT id FROM users LIMIT 1");
-        $user = $user_stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if ($user) {
-            $user_id = $user['id'];
-            
-            // Create a till if none exists
-            $till_stmt = $conn->query("SELECT id FROM register_tills LIMIT 1");
-            $till = $till_stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$till) {
-                $conn->exec("INSERT INTO register_tills (till_name, is_active, till_status) VALUES ('Main Till', 1, 'open')");
-                $till_id = $conn->lastInsertId();
-            } else {
-                $till_id = $till['id'];
-            }
-            
-            // Create sample sales for the last 30 days
-            $sample_sales = [
-                ['2024-12-01 10:30:00', 150.00, 'cash'],
-                ['2024-12-02 14:15:00', 75.50, 'card'],
-                ['2024-12-03 09:45:00', 200.00, 'cash'],
-                ['2024-12-04 16:20:00', 120.75, 'mobile_money'],
-                ['2024-12-05 11:10:00', 85.25, 'cash'],
-                ['2024-12-06 13:30:00', 300.00, 'card'],
-                ['2024-12-07 15:45:00', 95.50, 'cash'],
-                ['2024-12-08 10:20:00', 180.00, 'mobile_money'],
-                ['2024-12-09 12:15:00', 250.75, 'card'],
-                ['2024-12-10 14:30:00', 110.25, 'cash']
-            ];
-            
-            foreach ($sample_sales as $sale_data) {
-                $stmt = $conn->prepare("
-                    INSERT INTO sales (user_id, till_id, customer_id, customer_name, total_amount, final_amount, payment_method, created_at) 
-                    VALUES (?, ?, 1, 'Walking Customer', ?, ?, ?, ?)
-                ");
-                $stmt->execute([$user_id, $till_id, $sale_data[1], $sale_data[1], $sale_data[2], $sale_data[0]]);
-                
-                $sale_id = $conn->lastInsertId();
-                
-                // Add sample sale items
-                $stmt = $conn->prepare("
-                    INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, price, total_price) 
-                    VALUES (?, 1, 'Sample Product', ?, 50.00, 50.00, ?)
-                ");
-                $quantity = rand(1, 3);
-                $total_price = $quantity * 50.00;
-                $stmt->execute([$sale_id, $quantity, $total_price]);
-            }
-            
-            // Refresh the counts
-            $debug_stmt = $conn->query("SELECT COUNT(*) as count FROM sales");
-            $sales_count = $debug_stmt->fetch(PDO::FETCH_ASSOC)['count'];
-            
-            $debug_stmt = $conn->query("SELECT COUNT(*) as count FROM sale_items");
-            $sale_items_count = $debug_stmt->fetch(PDO::FETCH_ASSOC)['count'];
-            
-            $debug_stmt = $conn->query("SELECT id, total_amount, created_at FROM sales ORDER BY created_at DESC LIMIT 5");
-            $recent_sales = $debug_stmt->fetchAll(PDO::FETCH_ASSOC);
-        }
-    } catch (Exception $e) {
-        error_log("Could not create sample sales data: " . $e->getMessage());
-    }
-}
 
 // Generate report data based on type
 if ($report_type === 'monthly_comparison') {
@@ -277,9 +199,6 @@ if ($report_type === 'monthly_comparison') {
         'unique_customers' => count(array_unique(array_column($week2_results, 'unique_customers')))
     ];
     
-    // Debug: Store query results for display
-    $debug_week1_results = $week1_results;
-    $debug_week2_results = $week2_results;
     
 } elseif ($report_type === 'product_comparison') {
     // Product Performance Comparison
@@ -287,6 +206,7 @@ if ($report_type === 'monthly_comparison') {
         SELECT 
             p.id,
             p.name,
+            p.sku,
             COUNT(si.id) as total_sales,
             SUM(si.quantity) as total_quantity,
             SUM(si.total_price) as total_revenue,
@@ -298,7 +218,7 @@ if ($report_type === 'monthly_comparison') {
         LEFT JOIN sales s ON si.sale_id = s.id
         WHERE s.created_at >= DATE_SUB(NOW(), INTERVAL 2 MONTH)
         " . ($product_id ? "AND p.id = :product_id" : "") . "
-        GROUP BY p.id, p.name
+        GROUP BY p.id, p.name, p.sku
         HAVING total_sales > 0
         ORDER BY total_revenue DESC
         LIMIT 20
@@ -420,6 +340,7 @@ if ($report_type === 'monthly_comparison') {
         SELECT 
             p.id,
             p.name,
+            p.sku,
             MONTH(s.created_at) as month,
             MONTHNAME(s.created_at) as month_name,
             COUNT(si.id) as total_sales,
@@ -431,7 +352,7 @@ if ($report_type === 'monthly_comparison') {
         LEFT JOIN sales s ON si.sale_id = s.id
         WHERE YEAR(s.created_at) = :year_filter
         " . ($product_id ? "AND p.id = :product_id" : "") . "
-        GROUP BY p.id, p.name, MONTH(s.created_at), MONTHNAME(s.created_at)
+        GROUP BY p.id, p.name, p.sku, MONTH(s.created_at), MONTHNAME(s.created_at)
         HAVING total_sales > 0
         ORDER BY p.name, MONTH(s.created_at)
     ";
@@ -515,6 +436,7 @@ if ($report_type === 'monthly_comparison') {
         SELECT 
             p.id,
             p.name as product_name,
+            p.sku,
             c.name as category_name,
             COUNT(si.id) as total_sales,
             SUM(si.quantity) as total_quantity,
@@ -529,7 +451,7 @@ if ($report_type === 'monthly_comparison') {
         WHERE s.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)
         " . ($product_id ? "AND p.id = :product_id" : "") . "
         " . ($category_id ? "AND c.id = :category_id" : "") . "
-        GROUP BY p.id, p.name, c.id, c.name
+        GROUP BY p.id, p.name, p.sku, c.id, c.name
         HAVING total_sales > 0
         ORDER BY total_revenue DESC
         LIMIT 50
@@ -666,6 +588,60 @@ if ($report_type === 'monthly_comparison') {
             background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
         }
         
+        /* Select2 Custom Styling */
+        .select2-container--default .select2-selection--single {
+            height: 38px;
+            border: 1px solid #ced4da;
+            border-radius: 0.375rem;
+        }
+        
+        .select2-container--default .select2-selection--single .select2-selection__rendered {
+            line-height: 36px;
+            padding-left: 12px;
+        }
+        
+        .select2-container--default .select2-selection--single .select2-selection__arrow {
+            height: 36px;
+        }
+        
+        .select2-dropdown {
+            border: 1px solid #ced4da;
+            border-radius: 0.375rem;
+        }
+        
+        .select2-container--default .select2-results__option--highlighted[aria-selected] {
+            background-color: #0d6efd;
+        }
+        
+        /* Product Search Autocomplete Styling */
+        .cursor-pointer {
+            cursor: pointer;
+        }
+        
+        .suggestion-item {
+            transition: background-color 0.2s ease;
+        }
+        
+        .suggestion-item:hover,
+        .suggestion-item.active {
+            background-color: #f8f9fa;
+        }
+        
+        .suggestion-item:last-child {
+            border-bottom: none !important;
+        }
+        
+        #product_suggestions {
+            border: 1px solid #dee2e6;
+            border-top: none;
+            border-radius: 0 0 0.375rem 0.375rem;
+        }
+        
+        #product_search:focus + #product_suggestions {
+            border-color: #86b7fe;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        }
+        
         .metric-value {
             font-size: 2rem;
             font-weight: 700;
@@ -767,7 +743,7 @@ if ($report_type === 'monthly_comparison') {
                                     <option value="customer_analysis" <?php echo $report_type === 'customer_analysis' ? 'selected' : ''; ?>>Customer Analysis</option>
                                 </optgroup>
                             </select>
-                        </div>
+                </div>
                         
                         <?php if (in_array($report_type, ['daily_comparison', 'weekly_comparison', 'monthly_comparison', 'yearly_comparison'])): ?>
                         <div class="col-md-3">
@@ -820,15 +796,22 @@ if ($report_type === 'monthly_comparison') {
                         
                         <?php if (in_array($report_type, ['product_comparison', 'product_monthly_trends', 'product_category_analysis'])): ?>
                         <div class="col-md-3">
-                            <label for="product_id" class="form-label">Product Filter</label>
-                            <select class="form-select" id="product_id" name="product_id">
-                                <option value="">All Products</option>
-                                <?php foreach ($products as $product): ?>
-                                <option value="<?php echo $product['id']; ?>" <?php echo $product_id == $product['id'] ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($product['name']); ?>
-                                </option>
-                                <?php endforeach; ?>
-                            </select>
+                            <label for="product_search" class="form-label">Product Filter</label>
+                            <div class="position-relative">
+                                <input type="text" 
+                                       class="form-control" 
+                                       id="product_search" 
+                                       name="product_search" 
+                                       placeholder="Search products by name, SKU, or barcode..."
+                                       value="<?php echo htmlspecialchars($_GET['product_search'] ?? ''); ?>"
+                                       autocomplete="off">
+                                <input type="hidden" id="product_id" name="product_id" value="<?php echo $product_id; ?>">
+                                <div id="product_suggestions" class="position-absolute w-100 bg-white border rounded shadow-lg" style="z-index: 1000; display: none; max-height: 300px; overflow-y: auto;"></div>
+                                <div class="position-absolute top-50 end-0 translate-middle-y pe-3">
+                                    <i class="bi bi-search text-muted"></i>
+                                </div>
+                            </div>
+                            <small class="text-muted">Type to search products by name, SKU, or barcode</small>
                         </div>
                         <?php endif; ?>
                         
@@ -905,52 +888,6 @@ if ($report_type === 'monthly_comparison') {
                     <?php endif; ?>
                 </div>
 
-                <!-- Debug Information -->
-                <div class="alert alert-info">
-                    <h6><i class="bi bi-info-circle"></i> Debug Information</h6>
-                    <p><strong>Sales Records:</strong> <?php echo $sales_count; ?> | <strong>Sale Items:</strong> <?php echo $sale_items_count; ?></p>
-                    <?php if (!empty($recent_sales)): ?>
-                    <p><strong>Recent Sales:</strong></p>
-                    <ul class="mb-0">
-                        <?php foreach ($recent_sales as $sale): ?>
-                        <li>ID: <?php echo $sale['id']; ?> | Amount: <?php echo $sale['total_amount']; ?> | Date: <?php echo $sale['created_at']; ?>
-                            <?php if (in_array($report_type, ['weekly_comparison'])): ?>
-                                | Week: <?php echo date('Y-W', strtotime($sale['created_at'])); ?> (<?php echo date('Y', strtotime($sale['created_at'])) . date('W', strtotime($sale['created_at'])); ?>)
-                            <?php endif; ?>
-                        </li>
-                        <?php endforeach; ?>
-                    </ul>
-                    <?php if (in_array($report_type, ['weekly_comparison'])): ?>
-                    <p><strong>Week Comparison:</strong> Period 1: <?php echo $period1; ?> | Period 2: <?php echo $period2; ?></p>
-                    <p><strong>Date Ranges:</strong> Week 1: <?php echo $week1_start ?? 'N/A'; ?> to <?php echo $week1_end ?? 'N/A'; ?> | Week 2: <?php echo $week2_start ?? 'N/A'; ?> to <?php echo $week2_end ?? 'N/A'; ?></p>
-                    <p><strong>Query Results:</strong></p>
-                    <ul class="mb-0">
-                        <li><strong>Week 1 Results:</strong> <?php echo count($debug_week1_results ?? []); ?> days with data
-                            <?php if (!empty($debug_week1_results)): ?>
-                                | <?php echo json_encode($debug_week1_results); ?>
-                            <?php endif; ?>
-                        </li>
-                        <li><strong>Week 2 Results:</strong> <?php echo count($debug_week2_results ?? []); ?> days with data
-                            <?php if (!empty($debug_week2_results)): ?>
-                                | <?php echo json_encode($debug_week2_results); ?>
-                            <?php endif; ?>
-                        </li>
-                        <li><strong>Final Aggregated Data:</strong> Week 1: <?php echo json_encode($report_data ?? []); ?> | Week 2: <?php echo json_encode($comparison_data ?? []); ?></li>
-                        <?php if (!empty($recent_sales)): ?>
-                        <li><strong>Sale Date Check:</strong> 
-                            Sale date: 2025-09-24 | 
-                            Week 1 range: <?php echo $week1_start ?? 'N/A'; ?> to <?php echo $week1_end ?? 'N/A'; ?> | 
-                            Week 2 range: <?php echo $week2_start ?? 'N/A'; ?> to <?php echo $week2_end ?? 'N/A'; ?> |
-                            In Week 1: <?php echo (isset($week1_start) && isset($week1_end) && '2025-09-24' >= $week1_start && '2025-09-24' <= $week1_end) ? 'YES' : 'NO'; ?> |
-                            In Week 2: <?php echo (isset($week2_start) && isset($week2_end) && '2025-09-24' >= $week2_start && '2025-09-24' <= $week2_end) ? 'YES' : 'NO'; ?>
-                        </li>
-                        <?php endif; ?>
-                    </ul>
-                    <?php endif; ?>
-                    <?php else: ?>
-                    <p class="text-warning"><strong>No sales data found!</strong> Create some sales to see reports.</p>
-                    <?php endif; ?>
-                </div>
 
                 <!-- Report Results -->
                 <?php if (in_array($report_type, ['daily_comparison', 'weekly_comparison', 'monthly_comparison', 'yearly_comparison'])): ?>
@@ -1509,7 +1446,186 @@ if ($report_type === 'monthly_comparison') {
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script>
+        // Initialize Select2 for searchable dropdowns
+        $(document).ready(function() {
+            // Initialize category search
+            $('#category_id, #category2_id').select2({
+                placeholder: 'Search and select a category...',
+                allowClear: true,
+                width: '100%',
+                dropdownParent: $('#category_id').parent()
+            });
+            
+            // Initialize supplier search
+            $('#supplier_id').select2({
+                placeholder: 'Search and select a supplier...',
+                allowClear: true,
+                width: '100%',
+                dropdownParent: $('#supplier_id').parent()
+            });
+            
+            // Initialize product autocomplete
+            initializeProductSearch();
+            
+            // Load selected product if exists
+            loadSelectedProduct();
+        });
+        
+        function initializeProductSearch() {
+            const searchInput = $('#product_search');
+            const suggestionsDiv = $('#product_suggestions');
+            const productIdInput = $('#product_id');
+            let searchTimeout;
+            let selectedProduct = null;
+            
+            // Handle input changes
+            searchInput.on('input', function() {
+                const query = $(this).val().trim();
+                
+                clearTimeout(searchTimeout);
+                
+                if (query.length < 2) {
+                    suggestionsDiv.hide();
+                    productIdInput.val('');
+                    selectedProduct = null;
+                    return;
+                }
+                
+                searchTimeout = setTimeout(() => {
+                    searchProducts(query);
+                }, 300);
+            });
+            
+            // Handle focus
+            searchInput.on('focus', function() {
+                if ($(this).val().trim().length >= 2) {
+                    suggestionsDiv.show();
+                }
+            });
+            
+            // Handle blur (hide suggestions after a delay)
+            searchInput.on('blur', function() {
+                setTimeout(() => {
+                    suggestionsDiv.hide();
+                }, 200);
+            });
+            
+            // Handle keyboard navigation
+            searchInput.on('keydown', function(e) {
+                const suggestions = suggestionsDiv.find('.suggestion-item');
+                const active = suggestionsDiv.find('.suggestion-item.active');
+                
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (active.length === 0) {
+                        suggestions.first().addClass('active');
+                    } else {
+                        active.removeClass('active').next().addClass('active');
+                    }
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    if (active.length > 0) {
+                        active.removeClass('active').prev().addClass('active');
+                    }
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (active.length > 0) {
+                        active.click();
+                    }
+                } else if (e.key === 'Escape') {
+                    suggestionsDiv.hide();
+                }
+            });
+            
+            function searchProducts(query) {
+                $.ajax({
+                    url: '../api/search_products.php',
+                    method: 'GET',
+                    data: { q: query, limit: 20 },
+                    dataType: 'json',
+                    success: function(response) {
+                        if (response && response.products) {
+                            displaySuggestions(response.products);
+                        } else {
+                            suggestionsDiv.html('<div class="p-2 text-muted">No products found</div>').show();
+                        }
+                    },
+                    error: function() {
+                        suggestionsDiv.html('<div class="p-2 text-danger">Error loading products. Please try again.</div>').show();
+                    }
+                });
+            }
+            
+            function displaySuggestions(products) {
+                if (products.length === 0) {
+                    suggestionsDiv.html('<div class="p-2 text-muted">No products found</div>').show();
+                    return;
+                }
+                
+                let html = '';
+                products.forEach(function(product) {
+                    html += `
+                        <div class="suggestion-item p-2 border-bottom cursor-pointer" 
+                             data-id="${product.id}" 
+                             data-name="${product.name}"
+                             data-sku="${product.sku}">
+                            <div class="fw-bold">${product.name}</div>
+                            <small class="text-muted">
+                                SKU: ${product.sku} | 
+                                Barcode: ${product.barcode} | 
+                                Price: KES ${product.price} | 
+                                Stock: ${product.quantity} | 
+                                Category: ${product.category}
+                            </small>
+                        </div>
+                    `;
+                });
+                
+                suggestionsDiv.html(html).show();
+                
+                // Handle suggestion clicks
+                suggestionsDiv.find('.suggestion-item').on('click', function() {
+                    const productId = $(this).data('id');
+                    const productName = $(this).data('name');
+                    const productSku = $(this).data('sku');
+                    
+                    productIdInput.val(productId);
+                    searchInput.val(productName + ' (' + productSku + ')');
+                    suggestionsDiv.hide();
+                    selectedProduct = { id: productId, name: productName, sku: productSku };
+                });
+                
+                // Handle hover effects
+                suggestionsDiv.find('.suggestion-item').on('mouseenter', function() {
+                    suggestionsDiv.find('.suggestion-item').removeClass('active');
+                    $(this).addClass('active');
+                });
+            }
+        }
+        
+        function loadSelectedProduct() {
+            const productId = $('#product_id').val();
+            if (productId) {
+                // Fetch product details to display
+                $.ajax({
+                    url: '../api/search_products.php',
+                    method: 'GET',
+                    data: { product_id: productId },
+                    dataType: 'json',
+                    success: function(response) {
+                        if (response.products && response.products.length > 0) {
+                            const product = response.products[0];
+                            $('#product_search').val(product.display_text);
+                        }
+                    }
+                });
+            }
+        }
+        
         function setSamePeriod() {
             const period1 = document.getElementById('period1').value;
             document.getElementById('period2').value = period1;
@@ -1603,17 +1719,20 @@ if ($report_type === 'monthly_comparison') {
                 csvContent += `${reportType === 'product_comparison' ? 'Product' : 'Category'} Performance Comparison\n\n`;
                 csvContent += `${reportType === 'product_comparison' ? 'Product' : 'Category'},Sales Count,Quantity Sold,Revenue,Avg Price,Total Cost,Profit,Profit Margin\n`;
                 
-                <?php foreach ($report_data as $item): 
-                    $profit_margin = $item['total_revenue'] > 0 ? ($item['total_profit'] / $item['total_revenue']) * 100 : 0;
-                ?>
-                csvContent += `<?php echo addslashes($item[$report_type === 'product_comparison' ? 'name' : 'category_name']); ?>,<?php echo $item['total_sales']; ?>,<?php echo $item['total_quantity']; ?>,<?php echo $item['total_revenue']; ?>,<?php echo $item['avg_price']; ?>,<?php echo $item['total_cost']; ?>,<?php echo $item['total_profit']; ?>,<?php echo number_format($profit_margin, 1); ?>%\n`;
-                <?php endforeach; ?>
+                // Add data rows
+                const reportData = <?php echo json_encode($report_data); ?>;
+                const nameField = '<?php echo $report_type === 'product_comparison' ? 'name' : 'category_name'; ?>';
+                reportData.forEach(function(item) {
+                    const profitMargin = item.total_revenue > 0 ? (item.total_profit / item.total_revenue) * 100 : 0;
+                    const name = item[nameField] || 'N/A';
+                    csvContent += `"${name}",${item.total_sales},${item.total_quantity},${item.total_revenue},${item.avg_price},${item.total_cost},${item.total_profit},${profitMargin.toFixed(1)}%\n`;
+                });
             }
             
             const encodedUri = encodeURI(csvContent);
             const link = document.createElement("a");
             link.setAttribute("href", encodedUri);
-            link.setAttribute("download", `custom_report_${reportType}_<?php echo date('Y-m-d'); ?>.csv`);
+            link.setAttribute("download", `custom_report_${reportType}_${new Date().toISOString().split('T')[0]}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);

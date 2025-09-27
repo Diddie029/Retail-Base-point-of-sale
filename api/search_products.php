@@ -1,145 +1,121 @@
 <?php
+session_start();
+require_once '../include/db.php';
+
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Unauthorized']);
+    exit();
+}
+
 header('Content-Type: application/json');
-require_once __DIR__ . '/../include/db.php';
 
 try {
-    // Get search parameters
-    $search = $_GET['search'] ?? '';
-    $supplier_id = $_GET['supplier_id'] ?? '';
-    $limit = min(10, max(1, intval($_GET['limit'] ?? 10))); // Default 10, max 10 suggestions
-
-    // Validate inputs
-    $search = trim($search);
-    if (strlen($search) < 2) {
-        echo json_encode([
-            'success' => true,
-            'suggestions' => []
-        ]);
+    $conn = $GLOBALS['conn'];
+    $query = $_GET['q'] ?? '';
+    $productId = $_GET['product_id'] ?? null;
+    $limit = min((int)($_GET['limit'] ?? 20), 50); // Max 50 results
+    
+    // Handle single product lookup
+    if ($productId) {
+        $stmt = $conn->prepare("
+            SELECT 
+                p.id,
+                p.name,
+                p.sku,
+                p.barcode,
+                p.price,
+                p.quantity,
+                c.name as category_name
+            FROM products p
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE p.id = :product_id
+        ");
+        $stmt->bindParam(':product_id', $productId);
+        $stmt->execute();
+        $product = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($product) {
+            $formattedProduct = [
+                'id' => $product['id'],
+                'name' => $product['name'],
+                'sku' => $product['sku'] ?: 'N/A',
+                'barcode' => $product['barcode'] ?: 'N/A',
+                'price' => number_format($product['price'], 2),
+                'quantity' => $product['quantity'],
+                'category' => $product['category_name'] ?: 'Uncategorized',
+                'display_text' => $product['name'] . ' (' . ($product['sku'] ?: 'N/A') . ')'
+            ];
+            echo json_encode(['products' => [$formattedProduct]]);
+        } else {
+            echo json_encode(['products' => []]);
+        }
         exit();
     }
-
-    $search = htmlspecialchars($search, ENT_QUOTES, 'UTF-8');
     
-    // Validate supplier_id if provided
-    if ($supplier_id && !is_numeric($supplier_id)) {
-        $supplier_id = '';
+    if (strlen($query) < 2) {
+        echo json_encode(['products' => []]);
+        exit();
     }
-
-    // Build query for product suggestions
-    $query = "
-        SELECT p.id, p.name, p.sku, p.barcode, p.quantity, p.minimum_stock, p.cost_price,
-               c.name as category_name, s.name as supplier_name,
-               p.is_auto_bom_enabled, p.auto_bom_type,
-               COUNT(CASE WHEN su.status = 'active' THEN 1 END) as selling_units_count
+    
+    // Search products by name, SKU, or barcode
+    $searchTerm = '%' . $query . '%';
+    $stmt = $conn->prepare("
+        SELECT 
+            p.id,
+            p.name,
+            p.sku,
+            p.barcode,
+            p.price,
+            p.quantity,
+            c.name as category_name
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
-        LEFT JOIN suppliers s ON p.supplier_id = s.id
-        LEFT JOIN auto_bom_configs abc ON p.id = abc.product_id
-        LEFT JOIN auto_bom_selling_units su ON abc.id = su.auto_bom_config_id
-        WHERE p.status = 'active'
-        AND p.cost_price IS NOT NULL
-        AND p.cost_price > 0
-    ";
-
-    $params = [];
-
-    // Add supplier filter if provided (required for order creation)
-    if (!empty($supplier_id)) {
-        $query .= " AND p.supplier_id = :supplier_id";
-        $params[':supplier_id'] = $supplier_id;
-    }
-
-    // Search in name, SKU, and barcode
-    $searchTerm = '%' . $search . '%';
-    $query .= " AND (
-        p.name LIKE :search_name
-        OR p.sku LIKE :search_sku
-        OR p.barcode LIKE :search_barcode
-    )";
+        WHERE (
+            p.name LIKE :search 
+            OR p.sku LIKE :search 
+            OR p.barcode LIKE :search
+        )
+        AND p.status = 'active'
+        ORDER BY 
+            CASE 
+                WHEN p.name LIKE :exact THEN 1
+                WHEN p.sku LIKE :exact THEN 2
+                WHEN p.barcode LIKE :exact THEN 3
+                ELSE 4
+            END,
+            p.name
+        LIMIT :limit
+    ");
     
-    $params[':search_name'] = $searchTerm;
-    $params[':search_sku'] = $searchTerm;
-    $params[':search_barcode'] = $searchTerm;
-
-    $query .= " GROUP BY p.id ORDER BY
-        CASE
-            WHEN p.name LIKE :exact_name THEN 1
-            WHEN p.sku LIKE :exact_sku THEN 2
-            WHEN p.barcode LIKE :exact_barcode THEN 3
-            WHEN p.name LIKE :starts_name THEN 4
-            WHEN p.sku LIKE :starts_sku THEN 5
-            ELSE 6
-        END,
-        p.name ASC
-        LIMIT :limit";
-
-    $params[':exact_name'] = $search;
-    $params[':exact_sku'] = $search;
-    $params[':exact_barcode'] = $search;
-    $params[':starts_name'] = $search . '%';
-    $params[':starts_sku'] = $search . '%';
-    $params[':limit'] = $limit;
-
-    $stmt = $conn->prepare($query);
-    
-    foreach ($params as $key => $value) {
-        if ($key === ':limit') {
-            $stmt->bindValue($key, $value, PDO::PARAM_INT);
-        } else {
-            $stmt->bindValue($key, $value, PDO::PARAM_STR);
-        }
-    }
-
+    $exactTerm = $query . '%';
+    $stmt->bindParam(':search', $searchTerm);
+    $stmt->bindParam(':exact', $exactTerm);
+    $stmt->bindParam(':limit', $limit, PDO::PARAM_INT);
     $stmt->execute();
+    
     $products = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Format the response
-    $suggestions = array_map(function($product) {
-        $stockStatus = $product['quantity'] <= $product['minimum_stock'] ? 'low' : 'ok';
-
-        return [
-            'id' => (int)$product['id'],
+    
+    // Format products for display
+    $formattedProducts = [];
+    foreach ($products as $product) {
+        $formattedProducts[] = [
+            'id' => $product['id'],
             'name' => $product['name'],
-            'sku' => $product['sku'] ?? '',
-            'barcode' => $product['barcode'] ?? '',
-            'quantity' => (int)$product['quantity'],
-            'minimum_stock' => (int)($product['minimum_stock'] ?? 0),
-            'cost_price' => (float)$product['cost_price'],
-            'category_name' => $product['category_name'] ?? '',
-            'supplier_name' => $product['supplier_name'] ?? '',
-            'stock_status' => $stockStatus,
-            'is_auto_bom_enabled' => (bool)$product['is_auto_bom_enabled'],
-            'auto_bom_type' => $product['auto_bom_type'] ?? null,
-            'selling_units_count' => (int)$product['selling_units_count'],
-            'display_text' => $product['name'] .
-                            ($product['sku'] ? ' (SKU: ' . $product['sku'] . ')' : '') .
-                            ($product['barcode'] ? ' [' . $product['barcode'] . ']' : '') .
-                            ($product['is_auto_bom_enabled'] ? ' [Auto BOM - ' . $product['selling_units_count'] . ' units]' : '')
+            'sku' => $product['sku'] ?: 'N/A',
+            'barcode' => $product['barcode'] ?: 'N/A',
+            'price' => number_format($product['price'], 2),
+            'quantity' => $product['quantity'],
+            'category' => $product['category_name'] ?: 'Uncategorized',
+            'display_text' => $product['name'] . ' (' . ($product['sku'] ?: 'N/A') . ')'
         ];
-    }, $products);
-
-    echo json_encode([
-        'success' => true,
-        'suggestions' => $suggestions,
-        'total_found' => count($suggestions)
-    ]);
-
-} catch (PDOException $e) {
-    error_log("API search_products error: " . $e->getMessage());
+    }
     
-    echo json_encode([
-        'success' => false,
-        'error' => 'Database error occurred. Please try again.',
-        'suggestions' => []
-    ]);
-
+    echo json_encode(['products' => $formattedProducts]);
+    
 } catch (Exception $e) {
-    error_log("API search_products general error: " . $e->getMessage());
-    
-    echo json_encode([
-        'success' => false,
-        'error' => 'An unexpected error occurred. Please try again.',
-        'suggestions' => []
-    ]);
+    http_response_code(500);
+    echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
 }
 ?>
