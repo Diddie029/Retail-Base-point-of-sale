@@ -61,6 +61,7 @@ $confirmed_by_filter = $_GET['confirmed_by'] ?? '';
 $confirmation_time_filter = $_GET['confirmation_time'] ?? '';
 $audit_search = $_GET['audit_search'] ?? '';
 $show_audit_details = $_GET['show_audit'] ?? '0';
+$emergency_filter = $_GET['emergency_filter'] ?? '';
 
 // Handle export requests
 $export = $_GET['export'] ?? '';
@@ -99,9 +100,9 @@ if ($table_exists) {
             rt.till_code,
             rt.current_balance as till_current_balance,
             u.username as dropped_by_name,
-            u.role_name as dropped_by_role,
+            u.role as dropped_by_role,
             cu.username as confirmed_by_name,
-            cu.role_name as confirmed_by_role,
+            cu.role as confirmed_by_role,
             TIMESTAMPDIFF(MINUTE, cd.drop_date, cd.confirmed_at) as confirmation_minutes,
             TIMESTAMPDIFF(HOUR, cd.drop_date, cd.confirmed_at) as confirmation_hours,
             TIMESTAMPDIFF(DAY, cd.drop_date, cd.confirmed_at) as confirmation_days,
@@ -147,6 +148,14 @@ if ($table_exists) {
     if (!empty($drop_type) && $drop_type !== 'all') {
         $query .= " AND cd.drop_type = ?";
         $params[] = $drop_type;
+    }
+
+    if (!empty($emergency_filter) && $emergency_filter !== 'all') {
+        if ($emergency_filter === 'yes') {
+            $query .= " AND cd.is_emergency = 1";
+        } elseif ($emergency_filter === 'no') {
+            $query .= " AND cd.is_emergency = 0";
+        }
     }
 
     if (!empty($confirmed_by_filter)) {
@@ -499,6 +508,27 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
             padding-right: calc(var(--bs-gutter-x) * 0.5);
             padding-left: calc(var(--bs-gutter-x) * 0.5);
         }
+        
+        /* Table borders */
+        .table {
+            border: 1px solid #dee2e6;
+        }
+        
+        .table th,
+        .table td {
+            border: 1px solid #dee2e6;
+            vertical-align: middle;
+        }
+        
+        .table thead th {
+            border-bottom: 2px solid #dee2e6;
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }
+        
+        .table tbody tr:hover {
+            background-color: #f8f9fa;
+        }
     </style>
 </head>
 <body>
@@ -570,7 +600,7 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                             <label class="form-label fw-semibold">Status</label>
                             <select class="form-select" name="status">
                                 <option value="all" <?php echo ($status_filter === 'all' || empty($status_filter)) ? 'selected' : ''; ?>>All</option>
-                                <option value="pending" <?php echo ($status_filter === 'pending') ? 'selected' : ''; ?>>Pending</option>
+                                <option value="pending" <?php echo ($status_filter === 'pending') ? 'selected' : ''; ?>>Not Confirmed (Pending)</option>
                                 <option value="confirmed" <?php echo ($status_filter === 'confirmed') ? 'selected' : ''; ?>>Confirmed</option>
                                 <option value="cancelled" <?php echo ($status_filter === 'cancelled') ? 'selected' : ''; ?>>Cancelled</option>
                             </select>
@@ -585,6 +615,14 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                                 <option value="emergency_drop" <?php echo ($drop_type === 'emergency_drop') ? 'selected' : ''; ?>>Emergency</option>
                                 <option value="bank_deposit" <?php echo ($drop_type === 'bank_deposit') ? 'selected' : ''; ?>>Bank Deposit</option>
                                 <option value="safe_drop" <?php echo ($drop_type === 'safe_drop') ? 'selected' : ''; ?>>Safe Drop</option>
+                            </select>
+                        </div>
+                        <div class="col-lg-2 col-md-4 col-sm-6">
+                            <label class="form-label fw-semibold">Emergency</label>
+                            <select class="form-select" name="emergency_filter">
+                                <option value="all" <?php echo ($emergency_filter === 'all' || empty($emergency_filter)) ? 'selected' : ''; ?>>All</option>
+                                <option value="yes" <?php echo ($emergency_filter === 'yes') ? 'selected' : ''; ?>>Emergency Only</option>
+                                <option value="no" <?php echo ($emergency_filter === 'no') ? 'selected' : ''; ?>>Regular Only</option>
                             </select>
                         </div>
 
@@ -618,7 +656,7 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                                     <option value="1h_to_4h" <?php echo ($confirmation_time_filter === '1h_to_4h') ? 'selected' : ''; ?>>1-4 Hours</option>
                                     <option value="4h_to_24h" <?php echo ($confirmation_time_filter === '4h_to_24h') ? 'selected' : ''; ?>>4-24 Hours</option>
                                     <option value="over_24h" <?php echo ($confirmation_time_filter === 'over_24h') ? 'selected' : ''; ?>>Over 24 Hours</option>
-                                    <option value="pending" <?php echo ($confirmation_time_filter === 'pending') ? 'selected' : ''; ?>>Still Pending</option>
+                                    <option value="pending" <?php echo ($confirmation_time_filter === 'pending') ? 'selected' : ''; ?>>Not Confirmed (Still Pending)</option>
                                 </select>
                             </div>
                             <div class="col-lg-2 col-md-4 col-sm-6">
@@ -723,31 +761,6 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                 </div>
             </div>
 
-            <!-- Bulk Actions -->
-            <div class="row mb-4">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <div>
-                                    <h6 class="mb-0">
-                                        <i class="bi bi-check-square me-2"></i>Bulk Actions
-                                    </h6>
-                                    <small class="text-muted">Select multiple pending drops to approve or deny at once</small>
-                                </div>
-                                <div class="btn-group">
-                                    <button class="btn btn-success btn-sm" onclick="bulkApproveSelected()" id="bulkApproveBtn" disabled>
-                                        <i class="bi bi-check-circle me-1"></i>Approve Selected
-                                    </button>
-                                    <button class="btn btn-warning btn-sm" onclick="bulkDenySelected()" id="bulkDenyBtn" disabled>
-                                        <i class="bi bi-x-circle me-1"></i>Deny Selected
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <!-- Cash Drops Table -->
             <div class="card">
@@ -759,12 +772,10 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                         <table class="table table-hover">
                             <thead>
                                 <tr>
-                                    <th>
-                                        <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
-                                    </th>
                                     <th>Date & Time</th>
                                     <th>Till</th>
                                     <th>Drop Type</th>
+                                    <th>Emergency</th>
                                     <th>Amount</th>
                                     <th>Dropped By</th>
                                     <th>Status</th>
@@ -781,11 +792,6 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                             <tbody>
                                 <?php foreach ($cash_drops as $drop): ?>
                                 <tr>
-                                    <td>
-                                        <?php if ($drop['status'] === 'pending'): ?>
-                                        <input type="checkbox" class="drop-checkbox" value="<?php echo $drop['id']; ?>" onchange="updateBulkButtons()">
-                                        <?php endif; ?>
-                                    </td>
                                     <td>
                                         <?php echo date('M d, Y H:i:s', strtotime($drop['drop_date'])); ?>
                                         <br>
@@ -808,6 +814,15 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                                             }
                                             ?>
                                         </span>
+                                    </td>
+                                    <td>
+                                        <?php if ($drop['is_emergency']): ?>
+                                            <span class="badge bg-danger">
+                                                <i class="bi bi-exclamation-triangle me-1"></i>Emergency
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="text-muted">-</span>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <strong class="text-primary"><?php echo formatCurrency($drop['drop_amount'], $settings); ?></strong>
@@ -894,9 +909,6 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                                             <small class="text-muted">
                                                 <?php if ($drop['audit_count'] > 0): ?>
                                                     <span class="badge bg-info"><?php echo $drop['audit_count']; ?> events</span>
-                                                    <button class="btn btn-sm btn-outline-primary ms-1" onclick="viewAuditTrail(<?php echo $drop['id']; ?>)" title="View audit trail">
-                                                        <i class="bi bi-clock-history"></i>
-                                                    </button>
                                                 <?php else: ?>
                                                     <span class="text-muted">No audit</span>
                                                 <?php endif; ?>
@@ -946,9 +958,6 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
 
                                             <!-- Admin Actions -->
                                             <?php if (isAdmin($role_name) && $drop['status'] === 'confirmed'): ?>
-                                            <button class="btn btn-outline-secondary btn-sm ms-1" onclick="viewAuditTrail(<?php echo $drop['id']; ?>)" title="View audit trail">
-                                                <i class="bi bi-clock-history"></i>
-                                            </button>
                                             <?php endif; ?>
                                         </div>
                                     </td>
@@ -1171,7 +1180,7 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                         <div class="modal-content">
                             <div class="modal-header bg-info text-white">
                                 <h5 class="modal-title">
-                                    <i class="bi bi-clock-history me-2"></i>Cash Drop Audit Trail
+                                    Cash Drop Audit Trail
                                 </h5>
                                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                             </div>
@@ -1373,6 +1382,10 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                                 <td><span class="badge bg-info">${dropTypeLabel}</span></td>
                             </tr>
                             <tr>
+                                <td class="fw-bold">Emergency Drop:</td>
+                                <td>${drop.is_emergency ? '<span class="badge bg-danger"><i class="bi bi-exclamation-triangle me-1"></i>Yes</span>' : '<span class="text-muted">No</span>'}</td>
+                            </tr>
+                            <tr>
                                 <td class="fw-bold">Status:</td>
                                 <td><span class="badge bg-${statusClass}">${drop.status_text || drop.status}</span></td>
                             </tr>
@@ -1454,6 +1467,7 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
                         <table>
                             <tr><th>Till:</th><td>${drop.till_name || 'N/A'} (${drop.till_code || ''})</td></tr>
                             <tr><th>Amount:</th><td>${drop.formatted_amount || drop.drop_amount}</td></tr>
+                            <tr><th>Emergency Drop:</th><td>${drop.is_emergency ? 'YES - Emergency Drop' : 'No'}</td></tr>
                             <tr><th>Status:</th><td><span class="status status-${drop.status}">${drop.status_text || drop.status}</span></td></tr>
                             <tr><th>Dropped By:</th><td>${drop.dropped_by_name || 'N/A'}</td></tr>
                             <tr><th>Drop Date:</th><td>${new Date(drop.drop_date).toLocaleString()}</td></tr>
@@ -1619,160 +1633,6 @@ function handleExport($conn, $cash_drops, $summary_stats, $export_type, $setting
             window.open('cash_drop_audit.php?id=' + dropId, '_blank', 'width=1000,height=700');
         }
 
-        // Bulk Actions Functions
-        function toggleSelectAll() {
-            const selectAllCheckbox = document.getElementById('selectAll');
-            const checkboxes = document.querySelectorAll('.drop-checkbox');
-
-            checkboxes.forEach(checkbox => {
-                checkbox.checked = selectAllCheckbox.checked;
-            });
-
-            updateBulkButtons();
-        }
-
-        function updateBulkButtons() {
-            const checkboxes = document.querySelectorAll('.drop-checkbox:checked');
-            const bulkApproveBtn = document.getElementById('bulkApproveBtn');
-            const bulkDenyBtn = document.getElementById('bulkDenyBtn');
-
-            const hasSelection = checkboxes.length > 0;
-            bulkApproveBtn.disabled = !hasSelection;
-            bulkDenyBtn.disabled = !hasSelection;
-        }
-
-        function bulkApproveSelected() {
-            const selectedIds = Array.from(document.querySelectorAll('.drop-checkbox:checked')).map(cb => cb.value);
-
-            if (selectedIds.length === 0) {
-                alert('Please select drops to approve');
-                return;
-            }
-
-            if (!confirm(`Are you sure you want to approve ${selectedIds.length} cash drop(s)?`)) {
-                return;
-            }
-
-            // Show loading
-            const button = event.target;
-            const originalText = button.innerHTML;
-            button.innerHTML = '<i class="bi bi-hourglass me-1"></i>Processing...';
-            button.disabled = true;
-
-            // Process each selected drop
-            let completed = 0;
-            let failed = 0;
-
-            selectedIds.forEach(dropId => {
-                fetch('cash_drop_actions.php', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: new URLSearchParams({
-                        'action': 'approve_drop',
-                        'drop_id': dropId,
-                        'notes': 'Bulk approval'
-                    })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        completed++;
-                    } else {
-                        failed++;
-                        console.error('Failed to approve drop', dropId, data.message);
-                    }
-
-                    // Check if all requests are complete
-                    if (completed + failed === selectedIds.length) {
-                        const message = `Bulk approval completed!\nApproved: ${completed}\nFailed: ${failed}`;
-                        alert(message);
-                        location.reload();
-                    }
-                })
-                .catch(error => {
-                    failed++;
-                    console.error('Error approving drop', dropId, error);
-
-                    if (completed + failed === selectedIds.length) {
-                        const message = `Bulk approval completed!\nApproved: ${completed}\nFailed: ${failed}`;
-                        alert(message);
-                        location.reload();
-                    }
-                });
-            });
-        }
-
-        function bulkDenySelected() {
-            const selectedIds = Array.from(document.querySelectorAll('.drop-checkbox:checked')).map(cb => cb.value);
-
-            if (selectedIds.length === 0) {
-                alert('Please select drops to deny');
-                return;
-            }
-
-            const reason = prompt('Please enter a reason for denying these cash drops:', 'Bulk denial');
-
-            if (!reason || reason.trim() === '') {
-                alert('Reason is required for denial');
-                return;
-            }
-
-            if (!confirm(`Are you sure you want to deny ${selectedIds.length} cash drop(s) with reason: "${reason}"?`)) {
-                return;
-            }
-
-            // Show loading
-            const button = event.target;
-            const originalText = button.innerHTML;
-            button.innerHTML = '<i class="bi bi-hourglass me-1"></i>Processing...';
-            button.disabled = true;
-
-            // Process each selected drop
-            let completed = 0;
-            let failed = 0;
-
-            selectedIds.forEach(dropId => {
-                fetch('cash_drop_actions.php', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: new URLSearchParams({
-                        'action': 'deny_drop',
-                        'drop_id': dropId,
-                        'reason': 'bulk_denial',
-                        'notes': `Bulk denial: ${reason}`
-                    })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        completed++;
-                    } else {
-                        failed++;
-                        console.error('Failed to deny drop', dropId, data.message);
-                    }
-
-                    // Check if all requests are complete
-                    if (completed + failed === selectedIds.length) {
-                        const message = `Bulk denial completed!\nDenied: ${completed}\nFailed: ${failed}`;
-                        alert(message);
-                        location.reload();
-                    }
-                })
-                .catch(error => {
-                    failed++;
-                    console.error('Error denying drop', dropId, error);
-
-                    if (completed + failed === selectedIds.length) {
-                        const message = `Bulk denial completed!\nDenied: ${completed}\nFailed: ${failed}`;
-                        location.reload();
-                    }
-                });
-            });
-        }
 
         // Enhanced table interactions
         document.addEventListener('DOMContentLoaded', function() {

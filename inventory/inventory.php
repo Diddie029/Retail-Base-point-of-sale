@@ -46,24 +46,8 @@ if ($can_manage_boms || $can_view_boms) {
     $bom_stats = getBOMStatistics($conn);
 }
 
-// Get inventory statistics
-$stats = [];
-
-// Total Products in Inventory
-$stmt = $conn->query("SELECT COUNT(*) as count FROM products WHERE quantity > 0");
-$stats['total_products'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-
-// Low Stock Products (quantity < 10)
-$stmt = $conn->query("SELECT COUNT(*) as count FROM products WHERE quantity < 10 AND quantity > 0");
-$stats['low_stock'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-
-// Out of Stock Products
-$stmt = $conn->query("SELECT COUNT(*) as count FROM products WHERE quantity = 0");
-$stats['out_of_stock'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-
-// Total Inventory Value
-$stmt = $conn->query("SELECT COALESCE(SUM(quantity * cost_price), 0) as total FROM products");
-$stats['total_inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+// Get inventory statistics using function from db.php
+$stats = getInventoryStatistics($conn);
 
 // Enhanced Order Statistics
 // Orders Pending Reception

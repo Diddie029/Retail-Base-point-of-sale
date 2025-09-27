@@ -205,25 +205,25 @@ $status_options = [
             <div class="row mb-4">
                 <div class="col-md-3">
                     <div class="summary-card text-center">
-                        <h3 class="text-primary mb-1"><?php echo number_format($summary['total_held']); ?></h3>
+                        <h3 class="text-primary mb-1"><?php echo number_format($summary['total_held'] ?? 0); ?></h3>
                         <p class="text-muted mb-0">Total Held</p>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="summary-card text-center">
-                        <h3 class="text-warning mb-1"><?php echo number_format($summary['currently_held']); ?></h3>
+                        <h3 class="text-warning mb-1"><?php echo number_format($summary['currently_held'] ?? 0); ?></h3>
                         <p class="text-muted mb-0">Currently Held</p>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="summary-card text-center">
-                        <h3 class="text-success mb-1"><?php echo number_format($summary['resumed']); ?></h3>
+                        <h3 class="text-success mb-1"><?php echo number_format($summary['resumed'] ?? 0); ?></h3>
                         <p class="text-muted mb-0">Resumed</p>
                     </div>
                 </div>
                 <div class="col-md-3">
                     <div class="summary-card text-center">
-                        <h3 class="text-info mb-1"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($summary['total_held_amount'], 2); ?></h3>
+                        <h3 class="text-info mb-1"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($summary['total_held_amount'] ?? 0, 2); ?></h3>
                         <p class="text-muted mb-0">Total Value</p>
                     </div>
                 </div>

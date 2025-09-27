@@ -229,7 +229,7 @@ $void_types = [
                                 <h6 class="mb-0">Total Voids</h6>
                                 <i class="bi bi-x-circle fs-4"></i>
                             </div>
-                            <h3 class="mb-0"><?php echo number_format($summary['total_voids']); ?></h3>
+                            <h3 class="mb-0"><?php echo number_format($summary['total_voids'] ?? 0); ?></h3>
                             <small class="opacity-75">Voided transactions</small>
                         </div>
                     </div>
@@ -240,7 +240,7 @@ $void_types = [
                                 <h6 class="mb-0">Total Amount</h6>
                                 <i class="bi bi-currency-dollar fs-4"></i>
                             </div>
-                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($summary['total_voided_amount'], 2); ?></h3>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($summary['total_voided_amount'] ?? 0, 2); ?></h3>
                             <small class="opacity-75">Voided amount</small>
                         </div>
                     </div>
@@ -251,7 +251,7 @@ $void_types = [
                                 <h6 class="mb-0">Cashiers Involved</h6>
                                 <i class="bi bi-people fs-4"></i>
                             </div>
-                            <h3 class="mb-0"><?php echo number_format($summary['cashiers_involved']); ?></h3>
+                            <h3 class="mb-0"><?php echo number_format($summary['cashiers_involved'] ?? 0); ?></h3>
                             <small class="opacity-75">Different cashiers</small>
                         </div>
                     </div>
@@ -262,7 +262,7 @@ $void_types = [
                                 <h6 class="mb-0">Avg Void Amount</h6>
                                 <i class="bi bi-graph-up fs-4"></i>
                             </div>
-                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($summary['avg_void_amount'], 2); ?></h3>
+                            <h3 class="mb-0"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($summary['avg_void_amount'] ?? 0, 2); ?></h3>
                             <small class="opacity-75">Per transaction</small>
                         </div>
                     </div>
@@ -382,9 +382,9 @@ $void_types = [
                                         <td>
                                             <span class="badge bg-secondary"><?php echo $void['quantity']; ?></span>
                                         </td>
-                                        <td><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($void['unit_price'], 2); ?></td>
+                                        <td><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($void['unit_price'] ?? 0, 2); ?></td>
                                         <td>
-                                            <strong class="text-danger"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($void['total_amount'], 2); ?></strong>
+                                            <strong class="text-danger"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($void['total_amount'] ?? 0, 2); ?></strong>
                                         </td>
                                         <td>
                                             <div class="void-reason" title="<?php echo htmlspecialchars($void['void_reason']); ?>">

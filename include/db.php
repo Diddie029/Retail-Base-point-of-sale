@@ -982,14 +982,15 @@ try {
             ['quotations', 'Quotations', 'bi-file-earmark-text', 'Create and manage customer quotations', 3],
             ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 4],
             ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 5],
-            ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 6],
-            ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 7],
-            ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 8],
-            ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 9],
-            ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 10],
-            ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 11],
-            ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 12],
-            ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 13]
+            ['reports', 'Reports', 'bi-graph-up', 'Comprehensive reporting and analytics dashboard', 6],
+            ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 7],
+            ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 8],
+            ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 9],
+            ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 10],
+            ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 11],
+            ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 12],
+            ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 13],
+            ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 14]
         ];
 
         $stmt = $conn->prepare("
@@ -2934,21 +2935,7 @@ try {
     $stmt->bindParam(':role_id', $cashier_role_id);
     $stmt->execute();
 
-    // Insert default return reasons
-    $return_reasons = [
-        ['defective', 'Defective Products', 'Products that are damaged or not working properly'],
-        ['wrong_item', 'Wrong Items Received', 'Received different products than ordered'],
-        ['damaged', 'Damaged in Transit', 'Products damaged during shipping'],
-        ['expired', 'Expired Products', 'Products that have passed their expiration date'],
-        ['overstock', 'Overstock/Excess Inventory', 'Too much inventory, need to return excess'],
-        ['quality', 'Quality Issues', 'Products do not meet quality standards'],
-        ['other', 'Other', 'Other reasons not listed above']
-    ];
-
-    $stmt = $conn->prepare("INSERT IGNORE INTO return_reasons (code, name, description) VALUES (?, ?, ?)");
-    foreach ($return_reasons as $reason) {
-        $stmt->execute($reason);
-    }
+    // Return reasons will be created by users as needed
         // Update existing users to have role_id
     $conn->exec("UPDATE users SET role_id = 1 WHERE role = 'Admin' AND (role_id IS NULL OR role_id = 0)");
     $conn->exec("UPDATE users SET role_id = 2 WHERE role = 'Cashier' AND (role_id IS NULL OR role_id = 0)");
@@ -3500,103 +3487,12 @@ try {
     $stmt = $conn->query("SELECT COUNT(*) as count FROM expense_categories");
     $existing_categories = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
 
-    if ($existing_categories == 0) {
-        $default_expense_categories = [
-            ['Rent', 'Office and facility rent expenses', NULL, '#ef4444', 1, 1, 1],
-            ['Utilities', 'Electricity, water, internet, phone', NULL, '#f59e0b', 1, 1, 2],
-            ['Salaries', 'Employee salaries and wages', NULL, '#10b981', 0, 1, 3],
-            ['Marketing', 'Advertising and promotional expenses', NULL, '#8b5cf6', 1, 1, 4],
-            ['Supplies', 'Office supplies and materials', NULL, '#06b6d4', 1, 1, 5],
-            ['Maintenance', 'Equipment and facility maintenance', NULL, '#84cc16', 1, 1, 6],
-            ['Travel', 'Business travel expenses', NULL, '#f97316', 1, 1, 7],
-            ['Insurance', 'Business insurance premiums', NULL, '#ec4899', 1, 1, 8],
-            ['Professional Services', 'Legal, accounting, consulting', NULL, '#6366f1', 1, 1, 9],
-            ['Equipment', 'Office equipment and furniture', NULL, '#14b8a6', 1, 1, 10],
-            ['Software', 'Software licenses and subscriptions', NULL, '#f43f5e', 1, 1, 11],
-            ['Other', 'Miscellaneous expenses', NULL, '#6b7280', 0, 1, 12]
-        ];
+    // Expense categories will be created by users as needed
 
-        $stmt = $conn->prepare("INSERT INTO expense_categories (name, description, parent_id, color_code, is_tax_deductible, is_active, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)");
-        foreach ($default_expense_categories as $category) {
-            $stmt->execute($category);
-        }
 
-        // Insert subcategories using dynamic parent IDs
-        $parent_map = [];
-        $parent_stmt = $conn->query("SELECT id, name FROM expense_categories WHERE parent_id IS NULL");
-        while ($parent = $parent_stmt->fetch(PDO::FETCH_ASSOC)) {
-            $parent_map[$parent['name']] = $parent['id'];
-        }
+    // Payment methods will be created by users as needed
 
-        $subcategories = [
-            ['Electricity', 'Electricity bills', 'Utilities', '#f59e0b', 1, 1, 1],
-            ['Water', 'Water and sewage bills', 'Utilities', '#f59e0b', 1, 1, 2],
-            ['Internet', 'Internet and phone services', 'Utilities', '#f59e0b', 1, 1, 3],
-            ['Gas', 'Gas and heating expenses', 'Utilities', '#f59e0b', 1, 1, 4],
-            ['Print Advertising', 'Newspaper, magazine ads', 'Marketing', '#8b5cf6', 1, 1, 1],
-            ['Digital Marketing', 'Online advertising and SEO', 'Marketing', '#8b5cf6', 1, 1, 2],
-            ['Social Media', 'Social media marketing', 'Marketing', '#8b5cf6', 1, 1, 3],
-            ['Office Supplies', 'Paper, pens, stationery', 'Supplies', '#06b6d4', 1, 1, 1],
-            ['Cleaning Supplies', 'Cleaning materials', 'Supplies', '#06b6d4', 1, 1, 2],
-            ['Equipment Repair', 'Computer and equipment repairs', 'Maintenance', '#84cc16', 1, 1, 1],
-            ['Facility Maintenance', 'Building and facility repairs', 'Maintenance', '#84cc16', 1, 1, 2],
-            ['Airfare', 'Flight tickets', 'Travel', '#f97316', 1, 1, 1],
-            ['Hotel', 'Accommodation expenses', 'Travel', '#f97316', 1, 1, 2],
-            ['Meals', 'Business meals and entertainment', 'Travel', '#f97316', 1, 1, 3],
-            ['Transportation', 'Local transportation costs', 'Travel', '#f97316', 1, 1, 4]
-        ];
-
-        foreach ($subcategories as $subcategory) {
-            $parent_name = $subcategory[2];
-            $parent_id = $parent_map[$parent_name] ?? null;
-            if ($parent_id) {
-                $stmt->execute([
-                    $subcategory[0], // name
-                    $subcategory[1], // description
-                    $parent_id,      // parent_id (dynamic)
-                    $subcategory[3], // color_code
-                    $subcategory[4], // is_tax_deductible
-                    $subcategory[5], // is_active
-                    $subcategory[6]  // sort_order
-                ]);
-            }
-        }
-    }
-
-    // Insert default payment methods
-    $default_payment_methods = [
-        ['Cash', 'Cash payments', 1, 1],
-        ['Check', 'Check payments', 1, 2],
-        ['Credit Card', 'Credit card payments', 1, 3],
-        ['Bank Transfer', 'Bank transfers and wire transfers', 1, 4],
-        ['Mobile Money', 'Mobile money payments', 1, 5],
-        ['PayPal', 'PayPal payments', 1, 6]
-    ];
-
-    $stmt = $conn->prepare("INSERT IGNORE INTO expense_payment_methods (name, description, is_active, sort_order) VALUES (?, ?, ?, ?)");
-    foreach ($default_payment_methods as $method) {
-        $stmt->execute($method);
-    }
-
-    // Insert default departments only if they don't exist
-    $stmt = $conn->query("SELECT COUNT(*) as count FROM expense_departments");
-    $existing_departments = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
-
-    if ($existing_departments == 0) {
-        $default_departments = [
-            ['Administration', 'General administration and management', NULL, 50000, 'monthly'],
-            ['Sales', 'Sales and marketing department', NULL, 30000, 'monthly'],
-            ['Operations', 'Operations and production', NULL, 40000, 'monthly'],
-            ['Finance', 'Finance and accounting', NULL, 25000, 'monthly'],
-            ['IT', 'Information technology', NULL, 35000, 'monthly'],
-            ['Human Resources', 'HR and personnel management', NULL, 20000, 'monthly']
-        ];
-
-        $stmt = $conn->prepare("INSERT INTO expense_departments (name, description, manager_id, budget_amount, budget_period) VALUES (?, ?, ?, ?, ?)");
-        foreach ($default_departments as $department) {
-            $stmt->execute($department);
-        }
-    }
+    // Departments will be created by users as needed
 
     // Add expense management permissions
     $expense_permissions = [
@@ -5080,37 +4976,9 @@ try {
         )
     ");
 
-    // Insert default budget categories
-    $conn->exec("
-        INSERT IGNORE INTO budget_categories (id, name, description, color, icon) VALUES
-        (1, 'Operating Expenses', 'Day-to-day operational costs', '#dc3545', 'bi-gear'),
-        (2, 'Marketing & Advertising', 'Marketing campaigns and promotional activities', '#fd7e14', 'bi-megaphone'),
-        (3, 'Personnel & Payroll', 'Employee salaries and benefits', '#198754', 'bi-people'),
-        (4, 'Office Supplies', 'Stationery and office equipment', '#6f42c1', 'bi-box'),
-        (5, 'Technology & Software', 'IT infrastructure and software licenses', '#0dcaf0', 'bi-laptop'),
-        (6, 'Utilities', 'Electricity, water, internet, and other utilities', '#ffc107', 'bi-lightning'),
-        (7, 'Rent & Facilities', 'Office rent and facility maintenance', '#6c757d', 'bi-building'),
-        (8, 'Travel & Transportation', 'Business travel and transportation costs', '#20c997', 'bi-car-front'),
-        (9, 'Professional Services', 'Legal, accounting, and consulting services', '#e83e8c', 'bi-briefcase'),
-        (10, 'Training & Development', 'Employee training and skill development', '#fd7e14', 'bi-book'),
-        (11, 'Insurance', 'Business and employee insurance', '#0d6efd', 'bi-shield-check'),
-        (12, 'Maintenance & Repairs', 'Equipment and facility maintenance', '#dc3545', 'bi-tools')
-    ");
+    // Budget categories will be created by users as needed
 
-    // Insert default budget settings
-    $conn->exec("
-        INSERT IGNORE INTO budget_settings (setting_key, setting_value, setting_type, description) VALUES
-        ('default_budget_period', 'monthly', 'string', 'Default budget period for new budgets'),
-        ('budget_alert_threshold_warning', '75', 'integer', 'Warning threshold percentage for budget alerts'),
-        ('budget_alert_threshold_critical', '90', 'integer', 'Critical threshold percentage for budget alerts'),
-        ('enable_budget_notifications', 'true', 'boolean', 'Enable budget alert notifications'),
-        ('auto_sync_expenses', 'true', 'boolean', 'Automatically sync actual expenses with budget tracking'),
-        ('budget_approval_required', 'false', 'boolean', 'Require approval for budget activation'),
-        ('default_currency', 'KES', 'string', 'Default currency for budgets'),
-        ('fiscal_year_start_month', '1', 'integer', 'Fiscal year start month (1-12)'),
-        ('hide_till_amounts', '1', 'boolean', 'Hide monetary amounts in till closing to prevent theft'),
-        ('require_amount_view_permission', '1', 'boolean', 'Require specific permission to view till amounts')
-    ");
+    // Budget settings will be configured by users as needed
 
     // Create indexes for better performance
     try {
@@ -5247,27 +5115,7 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
-    // Insert default payment types
-    $default_payment_types = [
-        ['cash', 'Cash', 'Physical cash payments', 'cash', 'bi-cash', '#28a745', 1, 1, 1],
-        ['mobile_money', 'Mobile Money', 'Mobile money payments (M-Pesa, Airtel Money, etc.)', 'digital', 'bi-phone', '#007bff', 1, 1, 2],
-        ['bank_transfer', 'Bank Transfer', 'Direct bank transfers and wire transfers', 'bank', 'bi-bank', '#6f42c1', 1, 1, 3],
-        ['credit_card', 'Credit Card', 'Credit card payments', 'card', 'bi-credit-card', '#dc3545', 1, 1, 4],
-        ['debit_card', 'Debit Card', 'Debit card payments', 'card', 'bi-credit-card-2-front', '#fd7e14', 1, 1, 5],
-        ['check', 'Check', 'Check payments', 'bank', 'bi-receipt', '#20c997', 1, 1, 6],
-        ['pos_card', 'POS Card', 'Point of sale card payments', 'card', 'bi-credit-card-fill', '#e83e8c', 1, 1, 7],
-        ['online_payment', 'Online Payment', 'Online payment gateways', 'digital', 'bi-globe', '#17a2b8', 1, 1, 8],
-        ['voucher', 'Voucher', 'Gift vouchers and coupons', 'other', 'bi-ticket', '#6c757d', 1, 0, 9],
-        ['store_credit', 'Store Credit', 'Store credit and loyalty points', 'other', 'bi-gift', '#ffc107', 1, 0, 10]
-    ];
-
-    $stmt = $conn->prepare("
-        INSERT IGNORE INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-    foreach ($default_payment_types as $type) {
-        $stmt->execute($type);
-    }
+    // Payment types will be created by users as needed
 
     // Final safeguard: restrict Cashier (role_id=2) to minimal permission set
     try {
@@ -5358,27 +5206,7 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
-    // Insert default payment types
-    $default_payment_types = [
-        ['cash', 'Cash', 'Physical cash payments', 'cash', 'bi-cash', '#28a745', 1, 1, 1],
-        ['mobile_money', 'Mobile Money', 'Mobile money payments (M-Pesa, Airtel Money, etc.)', 'digital', 'bi-phone', '#007bff', 1, 1, 2],
-        ['bank_transfer', 'Bank Transfer', 'Direct bank transfers and wire transfers', 'bank', 'bi-bank', '#6f42c1', 1, 1, 3],
-        ['credit_card', 'Credit Card', 'Credit card payments', 'card', 'bi-credit-card', '#dc3545', 1, 1, 4],
-        ['debit_card', 'Debit Card', 'Debit card payments', 'card', 'bi-credit-card-2-front', '#fd7e14', 1, 1, 5],
-        ['check', 'Check', 'Check payments', 'bank', 'bi-receipt', '#20c997', 1, 1, 6],
-        ['pos_card', 'POS Card', 'Point of sale card payments', 'card', 'bi-credit-card-fill', '#e83e8c', 1, 1, 7],
-        ['online_payment', 'Online Payment', 'Online payment gateways', 'digital', 'bi-globe', '#17a2b8', 1, 1, 8],
-        ['voucher', 'Voucher', 'Gift vouchers and coupons', 'other', 'bi-ticket', '#6c757d', 1, 0, 9],
-        ['store_credit', 'Store Credit', 'Store credit and loyalty points', 'other', 'bi-gift', '#ffc107', 1, 0, 10]
-    ];
-
-    $stmt = $conn->prepare("
-        INSERT IGNORE INTO payment_types (name, display_name, description, category, icon, color, is_active, requires_reconciliation, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-    foreach ($default_payment_types as $type) {
-        $stmt->execute($type);
-    }
+    // Payment types will be created by users as needed
 
     // Update bank_transactions table to include payment type
     try {
@@ -5454,6 +5282,7 @@ try {
             drop_type VARCHAR(50) DEFAULT 'cashier_sales',
             drop_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             notes TEXT,
+            is_emergency BOOLEAN DEFAULT FALSE,
             status ENUM('pending', 'confirmed', 'cancelled') DEFAULT 'pending',
             confirmed_by INT,
             confirmed_at TIMESTAMP NULL,
@@ -5478,6 +5307,17 @@ try {
     } catch (PDOException $e) {
         // Column might already exist or table doesn't exist yet
         error_log('drop_type column add to cash_drops table: ' . $e->getMessage());
+    }
+
+    // Add is_emergency column to existing cash_drops table if it doesn't exist
+    try {
+        $stmt = $conn->query("SHOW COLUMNS FROM cash_drops LIKE 'is_emergency'");
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE cash_drops ADD COLUMN is_emergency BOOLEAN DEFAULT FALSE AFTER notes");
+        }
+    } catch (PDOException $e) {
+        // Column might already exist or table doesn't exist yet
+        error_log('is_emergency column add to cash_drops table: ' . $e->getMessage());
     }
 
     // Create till_closings table
@@ -5595,43 +5435,9 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
-    // Insert default register tills
-    $default_tills = [
-        ['Main Till', 'TILL001', 'Main Counter', 0.00, 0.00, null, 1],
-        ['Secondary Till', 'TILL002', 'Secondary Counter', 0.00, 0.00, null, 1],
-        ['Mobile Till', 'TILL003', 'Mobile Device', 0.00, 0.00, null, 1]
-    ];
+    // Register tills will be created by users as needed
 
-    $stmt = $conn->prepare("
-        INSERT IGNORE INTO register_tills (till_name, till_code, location, opening_balance, current_balance, assigned_user_id, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ");
-    foreach ($default_tills as $till) {
-        $stmt->execute($till);
-    }
-
-    // Insert default POS settings
-    $default_pos_settings = [
-        ['require_customer_info', '0', 'boolean', 'sales', 'Require customer information for sales', 1],
-        ['default_payment_method', 'cash', 'string', 'payment', 'Default payment method', 1],
-        ['tax_inclusive', '1', 'boolean', 'tax', 'Prices include tax by default', 1],
-        ['round_to_nearest', '0.01', 'number', 'calculation', 'Round amounts to nearest value', 1],
-        ['low_stock_threshold', '10', 'number', 'inventory', 'Low stock alert threshold', 1],
-        ['max_discount_percentage', '50', 'number', 'sales', 'Maximum discount percentage allowed', 1],
-        ['enable_loyalty_program', '1', 'boolean', 'customer', 'Enable customer loyalty program', 1],
-        ['loyalty_points_per_currency', '1', 'decimal', 'customer', 'Points earned per currency unit (e.g., 1 point per $1)', 1],
-        ['loyalty_minimum_purchase', '0', 'decimal', 'customer', 'Minimum purchase amount to earn points', 1],
-        ['loyalty_points_expiry_days', '365', 'integer', 'customer', 'Days until loyalty points expire (0 = never)', 1],
-        ['loyalty_auto_level_upgrade', '1', 'boolean', 'customer', 'Automatically upgrade customer membership level based on points', 1]
-    ];
-
-    $stmt = $conn->prepare("
-        INSERT IGNORE INTO pos_settings (setting_key, setting_value, setting_type, category, description, is_active)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ");
-    foreach ($default_pos_settings as $setting) {
-        $stmt->execute($setting);
-    }
+    // POS settings will be configured by users as needed
 
     // Create loyalty_points table
     try {
@@ -7042,6 +6848,117 @@ function showInstallerMessage() {
 </body>
 </html>';
 }
+}
+
+/**
+ * Get inventory statistics including total value
+ */
+if (!function_exists('getInventoryStatistics')) {
+    function getInventoryStatistics($conn) {
+        try {
+            $stats = [];
+
+            // Total Products in Inventory
+            $stmt = $conn->query("SELECT COUNT(*) as count FROM products WHERE quantity > 0");
+            $stats['total_products'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+            // Low Stock Products (quantity <= minimum_stock)
+            $stmt = $conn->prepare("SELECT COUNT(*) as count FROM products WHERE quantity <= minimum_stock AND quantity > 0");
+            $stmt->execute();
+            $stats['low_stock'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+            // Out of Stock Products
+            $stmt = $conn->query("SELECT COUNT(*) as count FROM products WHERE quantity = 0");
+            $stats['out_of_stock'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+            // Total Inventory Value (cost price × total quantity for ALL products)
+            $stmt = $conn->query("SELECT COALESCE(SUM(quantity * COALESCE(cost_price, 0)), 0) as total FROM products");
+            $stats['total_inventory_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+            // Total Retail Value (selling price × total quantity for ALL products)
+            $stmt = $conn->query("SELECT COALESCE(SUM(quantity * COALESCE(price, 0)), 0) as total FROM products");
+            $stats['total_retail_value'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+
+            // Total Products Count (including zero quantity)
+            $stmt = $conn->query("SELECT COUNT(*) as count FROM products");
+            $stats['total_products_count'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+
+            return $stats;
+        } catch (PDOException $e) {
+            error_log("Error getting inventory statistics: " . $e->getMessage());
+            return [
+                'total_products' => 0,
+                'low_stock' => 0,
+                'out_of_stock' => 0,
+                'total_inventory_value' => 0,
+                'total_retail_value' => 0,
+                'total_products_count' => 0
+            ];
+        }
+    }
+}
+
+/**
+ * Get sales statistics for reports
+ */
+if (!function_exists('getSalesStatistics')) {
+    function getSalesStatistics($conn, $start_date = null, $end_date = null) {
+        try {
+            $stats = [];
+            
+            // Build date filter
+            $date_filter = "";
+            if ($start_date && $end_date) {
+                $date_filter = "WHERE DATE(created_at) BETWEEN :start_date AND :end_date";
+            } elseif ($start_date) {
+                $date_filter = "WHERE DATE(created_at) >= :start_date";
+            } elseif ($end_date) {
+                $date_filter = "WHERE DATE(created_at) <= :end_date";
+            }
+            
+            // Total Sales Count
+            $query = "SELECT COUNT(*) as count FROM sales " . $date_filter;
+            $stmt = $conn->prepare($query);
+            if ($start_date) $stmt->bindParam(':start_date', $start_date);
+            if ($end_date) $stmt->bindParam(':end_date', $end_date);
+            $stmt->execute();
+            $stats['total_sales'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+            
+            // Total Revenue
+            $query = "SELECT COALESCE(SUM(total_amount), 0) as total FROM sales " . $date_filter;
+            $stmt = $conn->prepare($query);
+            if ($start_date) $stmt->bindParam(':start_date', $start_date);
+            if ($end_date) $stmt->bindParam(':end_date', $end_date);
+            $stmt->execute();
+            $stats['total_revenue'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+            
+            // Average Sale Amount
+            $query = "SELECT COALESCE(AVG(total_amount), 0) as avg FROM sales " . $date_filter;
+            $stmt = $conn->prepare($query);
+            if ($start_date) $stmt->bindParam(':start_date', $start_date);
+            if ($end_date) $stmt->bindParam(':end_date', $end_date);
+            $stmt->execute();
+            $stats['avg_sale_amount'] = $stmt->fetch(PDO::FETCH_ASSOC)['avg'];
+            
+            // Unique Customers
+            $query = "SELECT COUNT(DISTINCT customer_id) as count FROM sales " . $date_filter;
+            $stmt = $conn->prepare($query);
+            if ($start_date) $stmt->bindParam(':start_date', $start_date);
+            if ($end_date) $stmt->bindParam(':end_date', $end_date);
+            $stmt->execute();
+            $stats['unique_customers'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
+            
+            return $stats;
+        } catch (PDOException $e) {
+            error_log("Error getting sales statistics: " . $e->getMessage());
+            return [
+                'total_sales' => 0,
+                'total_revenue' => 0,
+                'avg_sale_amount' => 0,
+                'unique_customers' => 0
+            ];
+        }
+    }
 }
 
 ?>

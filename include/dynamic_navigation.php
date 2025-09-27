@@ -83,7 +83,21 @@ $sectionContentMappings = [
         [url('shelf_label/export_labels.php'), 'bi-download', 'Export Labels']
     ],
     'reports' => [
-        [url('reports/index.php'), 'bi-file-earmark-bar-graph', 'Reports Dashboard']
+        [url('reports/index.php'), 'bi-graph-up', 'Reports Dashboard'],
+        [url('reports/sales_summary.php'), 'bi-graph-up-arrow', 'Sales Summary'],
+        [url('reports/sales_by_category.php'), 'bi-pie-chart-fill', 'Sales by Category'],
+        [url('reports/product_performance.php'), 'bi-bar-chart-fill', 'Product Performance'],
+        [url('reports/customer_reports.php'), 'bi-people', 'Customer Reports'],
+        [url('reports/financial_reports.php'), 'bi-calculator', 'Financial Reports'],
+        [url('reports/inventory_reports.php'), 'bi-boxes', 'Inventory Reports'],
+        [url('reports/staff_performance.php'), 'bi-person-check-fill', 'Staff Performance'],
+        [url('reports/cashier_reports.php'), 'bi-cash-register', 'Cashier Reports'],
+        [url('reports/cash_drop_report.php'), 'bi-cash-stack', 'Cash Drop Reports'],
+        [url('reports/void_transactions_report.php'), 'bi-x-circle', 'Void Transactions'],
+        [url('reports/held_transactions_report.php'), 'bi-pause-circle-fill', 'Held Transactions'],
+        [url('reports/loyalty_points_summary.php'), 'bi-star', 'Loyalty Points Summary'],
+        [url('reports/payment_methods.php'), 'bi-credit-card', 'Payment Methods Report'],
+        [url('reports/custom_reports.php'), 'bi-gear', 'Custom Reports']
     ]
 ];
 
@@ -159,7 +173,7 @@ if (isset($menuAccess) && !empty($menuAccess)) {
         'analytics' => ['Analytics', 'bi-graph-up', $sectionContentMappings['analytics'] ?? []],
         'sales' => ['Sales Management', 'bi-graph-up', $sectionContentMappings['sales'] ?? []],
         'shelf_labels' => ['Shelf Labels', 'bi-tags', $sectionContentMappings['shelf_labels'] ?? []],
-        'reports' => ['Reports', 'bi-file-earmark-bar-graph', $sectionContentMappings['reports'] ?? []],
+        'reports' => ['Reports', 'bi-graph-up', $sectionContentMappings['reports'] ?? []],
         'admin' => ['Administration', 'bi-shield', $sectionContentMappings['admin'] ?? []]
     ];
     
