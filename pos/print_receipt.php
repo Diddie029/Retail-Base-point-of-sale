@@ -765,9 +765,17 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             const noPrintTimer = setTimeout(function() {
                 // Show manual print fallback
                 showFallback();
-                // Always redirect to sales page after timeout
+                // Close tab after timeout if auto_close is enabled, otherwise redirect
                 setTimeout(function() {
-                    try { window.location.href = 'sale.php'; } catch (e) {}
+                    if (autoClose) {
+                        try { window.close(); } catch (e) {}
+                        // Fallback redirect if close fails
+                        setTimeout(function() {
+                            try { window.location.href = 'sale.php'; } catch (e) {}
+                        }, 1000);
+                    } else {
+                        try { window.location.href = 'sale.php'; } catch (e) {}
+                    }
                 }, 3000); // 3 second delay to allow user to print manually
             }, 2500);
 
@@ -784,9 +792,17 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                     }
                 } catch (e) {}
 
-                // Always redirect to sales page after printing
+                // Close tab after printing if auto_close is enabled, otherwise redirect
                 setTimeout(function() {
-                    try { window.location.href = 'sale.php'; } catch (e) {}
+                    if (autoClose) {
+                        try { window.close(); } catch (e) {}
+                        // Fallback redirect if close fails
+                        setTimeout(function() {
+                            try { window.location.href = 'sale.php'; } catch (e) {}
+                        }, 1000);
+                    } else {
+                        try { window.location.href = 'sale.php'; } catch (e) {}
+                    }
                 }, 1000); // 1 second delay to allow printing to complete
                 window.removeEventListener('afterprint', afterPrintHandler);
             });

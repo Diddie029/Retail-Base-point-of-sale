@@ -107,6 +107,9 @@ if ($isAdmin) {
         },
         'quotations' => function($perms){
             return hasPermission('process_sales', $perms) || hasPermission('manage_quotations', $perms) || hasPermission('create_quotations', $perms) || hasPermission('view_quotations', $perms);
+        },
+        'reception' => function($perms){
+            return hasPermission('manage_reception', $perms) || hasPermission('process_returns', $perms) || hasPermission('manage_customer_service', $perms);
         }
     ];
 
@@ -179,6 +182,7 @@ if ($isAdmin) {
             'dashboard' => hasPermission('view_dashboard', $permissions) || hasPermission('view_reports', $permissions) || hasPermission('view_analytics', $permissions),
             'pos' => hasPermission('process_sales', $permissions),
             'quotations' => hasPermission('process_sales', $permissions) || hasPermission('manage_quotations', $permissions) || hasPermission('create_quotations', $permissions) || hasPermission('view_quotations', $permissions),
+            'reception' => hasPermission('manage_reception', $permissions) || hasPermission('process_returns', $permissions) || hasPermission('manage_customer_service', $permissions),
             'customer_crm' => hasPermission('view_customers', $permissions) || hasPermission('manage_customers', $permissions) || hasPermission('manage_loyalty', $permissions),
             'inventory' => hasPermission('manage_inventory', $permissions) || hasPermission('manage_categories', $permissions) || hasPermission('manage_product_brands', $permissions) || hasPermission('manage_product_suppliers', $permissions),
             'expiry' => hasPermission('view_expiry_alerts', $permissions) || hasPermission('manage_expiry_tracker', $permissions),

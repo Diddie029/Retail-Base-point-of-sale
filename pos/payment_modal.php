@@ -844,9 +844,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         is_split_payment: true
                     };
 
-                    // Redirect to print receipt page
-                    const printUrl = `print_receipt.php?data=${encodeURIComponent(JSON.stringify(receiptData))}&auto_print=true`;
-                    window.location.href = printUrl;
+                    // Open receipt in new tab instead of redirecting
+                    const printUrl = `print_receipt.php?data=${encodeURIComponent(JSON.stringify(receiptData))}&auto_print=true&auto_close=true`;
+                    const printTab = window.open(printUrl, '_blank');
+                    
+                    if (!printTab) {
+                        alert('Print tab could not be opened. Please check if popups are blocked and try again.');
+                    } else {
+                        printTab.focus();
+                    }
                 } else {
                     // Show receipt modal for single payments
                     if (window.showReceiptModal) {

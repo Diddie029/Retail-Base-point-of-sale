@@ -259,38 +259,47 @@ class PaymentProcessor {
     }
 
     updatePaymentSummary() {
-        // Calculate cart totals from current cart data
-        let subtotal = 0;
-        let itemCount = 0;
-        
-        if (this.transactionData && this.transactionData.length > 0) {
-            this.transactionData.forEach(item => {
-                subtotal += parseFloat(item.price) * parseInt(item.quantity);
-                itemCount += parseInt(item.quantity);
-            });
-        }
-        
-        const tax = subtotal * (this.taxRate / 100);
-        const total = subtotal + tax;
-        
-        // Update payment totals
-        this.paymentAmount = total;
-        window.paymentTotals = { subtotal, tax, total };
-        
-        // Update the display
-        const subtotalEl = document.getElementById('paymentSubtotal');
-        const taxEl = document.getElementById('paymentTax');
-        const totalEl = document.getElementById('paymentTotal');
-        const itemCountEl = document.getElementById('paymentItemCount');
-        const itemsEl = document.getElementById('paymentItems');
+        // Use requestIdleCallback for better performance
+        const updateSummary = () => {
+            // Calculate cart totals from current cart data
+            let subtotal = 0;
+            let itemCount = 0;
+            
+            if (this.transactionData && this.transactionData.length > 0) {
+                this.transactionData.forEach(item => {
+                    subtotal += parseFloat(item.price) * parseInt(item.quantity);
+                    itemCount += parseInt(item.quantity);
+                });
+            }
+            
+            const tax = subtotal * (this.taxRate / 100);
+            const total = subtotal + tax;
+            
+            // Update payment totals
+            this.paymentAmount = total;
+            window.paymentTotals = { subtotal, tax, total };
+            
+            // Cache DOM elements for better performance
+            if (!this._summaryElements) {
+                this._summaryElements = {
+                    subtotal: document.getElementById('paymentSubtotal'),
+                    tax: document.getElementById('paymentTax'),
+                    total: document.getElementById('paymentTotal'),
+                    itemCount: document.getElementById('paymentItemCount'),
+                    items: document.getElementById('paymentItems')
+                };
+            }
+            
+            const elements = this._summaryElements;
+            
+            // Batch DOM updates
+            if (elements.subtotal) elements.subtotal.textContent = this.formatAmount(subtotal);
+            if (elements.tax) elements.tax.textContent = this.formatAmount(tax);
+            if (elements.total) elements.total.textContent = this.formatAmount(total);
+            if (elements.itemCount) elements.itemCount.textContent = this.transactionData.length;
 
-        if (subtotalEl) subtotalEl.textContent = this.formatAmount(subtotal);
-        if (taxEl) taxEl.textContent = this.formatAmount(tax);
-        if (totalEl) totalEl.textContent = this.formatAmount(total);
-        if (itemCountEl) itemCountEl.textContent = this.transactionData.length;
-
-        // Update items display
-        if (itemsEl && this.transactionData.length > 0) {
+            // Update items display
+            if (elements.items && this.transactionData.length > 0) {
             // Calculate total quantity of all products
             const totalQuantity = this.transactionData.reduce((sum, item) => sum + item.quantity, 0);
             const productCount = this.transactionData.length;
@@ -318,15 +327,23 @@ class PaymentProcessor {
                 </div>
             `;
             
-            itemsEl.innerHTML = itemsHtml;
-        } else if (itemsEl) {
-            itemsEl.innerHTML = `
-                <div class="text-center text-muted py-4">
-                    <i class="bi bi-cart-x fs-1"></i>
-                    <p class="mt-2 mb-1">No items in cart</p>
-                    <small>Add products to get started</small>
-                </div>
-            `;
+                elements.items.innerHTML = itemsHtml;
+            } else if (elements.items) {
+                elements.items.innerHTML = `
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-cart-x fs-1"></i>
+                        <p class="mt-2 mb-1">No items in cart</p>
+                        <small>Add products to get started</small>
+                    </div>
+                `;
+            }
+        };
+
+        // Use requestIdleCallback with timeout for better performance
+        if (window.requestIdleCallback) {
+            requestIdleCallback(updateSummary, { timeout: 50 });
+        } else {
+            requestAnimationFrame(updateSummary);
         }
     }
 
@@ -406,6 +423,8 @@ class PaymentProcessor {
         document.getElementById('mobileMoneySection').style.display = 'none';
         document.getElementById('cardPaymentSection').style.display = 'none';
         document.getElementById('loyaltyPointsPaymentSection').style.display = 'none';
+        const refundSec = document.getElementById('refundReceiptPaymentSection');
+        if (refundSec) refundSec.style.display = 'none';
 
         // Show relevant section
         switch (method) {
@@ -424,11 +443,29 @@ class PaymentProcessor {
                 document.getElementById('cardPaymentSection').style.display = 'block';
                 break;
             case 'loyalty_points':
-                this.loadCustomerLoyaltyInfo();
-                document.getElementById('loyaltyPointsPaymentSection').style.display = 'block';
-                setTimeout(() => {
-                    document.getElementById('loyaltyPointsToUse').focus();
-                }, 100);
+                const loyaltySection = document.getElementById('loyaltyPointsPaymentSection');
+                if (loyaltySection) {
+                    loyaltySection.style.display = 'block';
+                    this.loadCustomerLoyaltyInfo();
+                    setTimeout(() => {
+                        const pointsInput = document.getElementById('loyaltyPointsToUse');
+                        if (pointsInput) pointsInput.focus();
+                    }, 100);
+                }
+                break;
+            case 'refund_receipt':
+                // Show store credit/refund receipt section in single-payment mode
+                const refundSection = document.getElementById('refundReceiptPaymentSection');
+                if (refundSection) {
+                    refundSection.style.display = 'block';
+                    setTimeout(() => {
+                        const receiptInput = document.getElementById('refundReceiptNumber');
+                        if (receiptInput) {
+                            receiptInput.focus();
+                            // Do not select automatically to avoid accidental overwrite after validation
+                        }
+                    }, 100);
+                }
                 break;
         }
     }
@@ -497,6 +534,9 @@ class PaymentProcessor {
         } else if (this.selectedPaymentMethod === 'loyalty_points') {
             const loyaltyValidation = this.validateLoyaltyPayment();
             canConfirm = loyaltyValidation.valid && this.paymentAmount > 0;
+        } else if (this.selectedPaymentMethod === 'refund_receipt') {
+            const refundValidation = this.validateRefundReceiptPayment();
+            canConfirm = refundValidation.valid && this.paymentAmount > 0;
         }
 
         confirmBtn.disabled = !canConfirm;
@@ -543,7 +583,8 @@ class PaymentProcessor {
             }
         } catch (error) {
             console.error('Payment error:', error);
-            this.showError('Payment processing failed. Please try again.');
+            // Show the actual error message from the server
+            this.showError(error.message || 'Payment processing failed. Please try again.');
         } finally {
             // Reset button
             confirmBtn.disabled = false;
@@ -588,6 +629,11 @@ class PaymentProcessor {
             const loyaltyValidation = this.validateLoyaltyPayment();
             if (!loyaltyValidation.valid) {
                 throw new Error(loyaltyValidation.error);
+            }
+        } else if (this.selectedPaymentMethod === 'refund_receipt') {
+            const refundReceiptValidation = this.validateRefundReceiptPayment();
+            if (!refundReceiptValidation.valid) {
+                throw new Error(refundReceiptValidation.error);
             }
         }
 
@@ -664,7 +710,39 @@ class PaymentProcessor {
                 paymentData.customer_type = 'registered';
                 paymentData.tax_exempt = false;
             }
+        } else if (this.selectedPaymentMethod === 'refund_receipt') {
+            const refundValidation = this.validateRefundReceiptPayment();
+            if (!refundValidation.valid) {
+                throw new Error(refundValidation.error);
+            }
+            
+            // Add refund receipt data
+            paymentData.refund_number = refundValidation.refundNumber;
+            paymentData.amount_to_use = refundValidation.amountToUse;
         }
+
+        // Ensure refund receipt fields are present when required (defensive)
+        if (this.selectedPaymentMethod === 'refund_receipt') {
+            if (!paymentData.refund_number) {
+                const rn = document.getElementById('refundReceiptNumber')?.value?.trim();
+                if (rn) paymentData.refund_number = rn;
+            }
+            if (!paymentData.amount_to_use || paymentData.amount_to_use <= 0) {
+                const amt = parseFloat(document.getElementById('refundReceiptAmountToUse')?.value) || 0;
+                if (amt > 0) paymentData.amount_to_use = amt;
+            }
+            
+            // Final validation before sending
+            if (!paymentData.refund_number) {
+                throw new Error('Refund receipt number is missing. Please validate the receipt first.');
+            }
+            if (!paymentData.amount_to_use || paymentData.amount_to_use <= 0) {
+                throw new Error('Refund receipt amount is missing. Please validate the receipt first.');
+            }
+        }
+
+        // Log payload for debugging
+        try { console.debug('processPayment payload', paymentData); } catch (e) {}
 
         // Send payment data to server
         const response = await fetch('process_payment.php', {
@@ -675,7 +753,20 @@ class PaymentProcessor {
             body: JSON.stringify(paymentData)
         });
 
-        return await response.json();
+        // Read JSON safely and surface server errors
+        let json;
+        try {
+            json = await response.json();
+        } catch (e) {
+            const txt = await response.text().catch(() => '');
+            throw new Error(txt || 'Invalid response from server');
+        }
+
+        if (!response.ok) {
+            throw new Error(json?.error || 'Payment processing failed');
+        }
+
+        return json;
     }
 
     showReceipt(paymentData) {
@@ -768,74 +859,33 @@ class PaymentProcessor {
     }
 
     printReceipt() {
-    const receiptData = this.getReceiptData();
-    // Build print URL with optional auto-print and auto-close flags so the print page
-    // can trigger printing and close itself when appropriate.
-    const params = new URLSearchParams();
-    params.set('data', encodeURIComponent(JSON.stringify(receiptData)));
-    if (window.autoPrintReceipt) params.set('auto_print', 'true');
-    if (window.autoClosePrintWindow) params.set('auto_close', 'true');
-    const printUrl = `print_receipt.php?${params.toString()}`;
+        const receiptData = this.getReceiptData();
+        // Build print URL with auto-print and auto-close flags
+        const params = new URLSearchParams();
+        params.set('data', encodeURIComponent(JSON.stringify(receiptData)));
+        params.set('auto_print', 'true');
+        params.set('auto_close', 'true');
+        const printUrl = `print_receipt.php?${params.toString()}`;
 
-        // Reuse pre-opened print window if available (opened synchronously on user click)
-        let printWindow = null;
-        if (this._preopenedPrintWindow && !this._preopenedPrintWindow.closed) {
-            try {
-                printWindow = this._preopenedPrintWindow;
-                printWindow.location.href = printUrl;
-            } catch (e) {
-                // Could fail in some cross-origin or restricted contexts, fallback to open
-                printWindow = window.open(printUrl, '_blank', 'width=800,height=600');
-            }
-        } else {
-            printWindow = window.open(printUrl, '_blank', 'width=800,height=600');
-        }
+        // Open in new tab instead of popup window
+        const printTab = window.open(printUrl, '_blank');
         
-        // Check if window was opened successfully
-        if (!printWindow) {
-            console.error('Failed to open print window. Popup may be blocked.');
-            alert('Print window could not be opened. Please check if popups are blocked and try again.');
+        // Check if tab was opened successfully
+        if (!printTab) {
+            console.error('Failed to open print tab. Popup may be blocked.');
+            alert('Print tab could not be opened. Please check if popups are blocked and try again.');
             return;
         }
         
-        // Auto-trigger print dialog when window loads unless the print page will handle it
-        printWindow.onload = () => {
-            try {
-                printWindow.focus();
-            } catch (e) {}
-
-            // If we explicitly requested auto_print on the print page, let that page call print().
-            // Otherwise, trigger print from this opener.
-            if (!printUrl.includes('auto_print=true')) {
-                try {
-                    printWindow.print();
-
-                    // Auto-close from opener side as a fallback when requested
-                    if (window.autoClosePrintWindow) {
-                        setTimeout(() => {
-                            try { printWindow.close(); } catch (e) {}
-                        }, 2000);
-                    }
-                } catch (e) {
-                    console.warn('Could not trigger print from opener:', e);
-                }
-            }
-
-            // Clear the preopened reference so future prints will re-open
-            try { window._preopenedPrintWindow = null; } catch (e) {}
-        };
+        // Focus the new tab
+        printTab.focus();
         
-        // Handle window load error
-        printWindow.onerror = function() {
-            console.error('Error loading print window');
-            alert('Error loading print window. Please try again.');
-        };
-        
-        // Listen for the print window to close or complete printing
+        // The print page will handle auto-printing and auto-closing
+        // Listen for tab close to start new transaction
         const checkClosed = setInterval(() => {
-            if (printWindow.closed) {
+            if (printTab.closed) {
                 clearInterval(checkClosed);
-                // Start new transaction after print window closes
+                // Start new transaction after print tab closes
                 this.startNewTransaction();
             }
         }, 1000);
@@ -949,12 +999,19 @@ class PaymentProcessor {
     showLoyaltyCustomerSearch() {
         // Clear any previous selection
         this.loyaltySelectedCustomer = null;
-        document.getElementById('loyaltySelectedCustomer').style.display = 'none';
-        document.getElementById('loyaltyCustomerResults').style.display = 'none';
-        document.getElementById('loyaltyPointsToUse').disabled = true;
-        document.getElementById('loyaltyPointsAvailable').value = '0';
-        document.getElementById('loyaltyPointsValue').value = '0.00';
-        document.getElementById('remainingAmount').value = this.formatAmount(this.paymentAmount);
+        const selectedCustomerEl = document.getElementById('loyaltySelectedCustomer');
+        const resultsEl = document.getElementById('loyaltyCustomerResults');
+        const pointsToUseEl = document.getElementById('loyaltyPointsToUse');
+        const pointsAvailableEl = document.getElementById('loyaltyPointsAvailable');
+        const pointsValueEl = document.getElementById('loyaltyPointsValue');
+        const remainingAmountEl = document.getElementById('remainingAmount');
+        
+        if (selectedCustomerEl) selectedCustomerEl.style.display = 'none';
+        if (resultsEl) resultsEl.style.display = 'none';
+        if (pointsToUseEl) pointsToUseEl.disabled = true;
+        if (pointsAvailableEl) pointsAvailableEl.value = '0';
+        if (pointsValueEl) pointsValueEl.value = '0.00';
+        if (remainingAmountEl) remainingAmountEl.value = this.formatAmount(this.paymentAmount);
     }
 
     // Cash Customer Search Methods
@@ -1255,6 +1312,49 @@ class PaymentProcessor {
             pointsValue: pointsValue, 
             remainingAmount: remainingAmount,
             customer: selectedCustomer
+        };
+    }
+
+    validateRefundReceiptPayment() {
+        // Check if receipt was already validated via the validate button
+        // (payment_modal.php stores this in window.currentRefundReceiptData)
+        if (window.currentRefundReceiptData && window.currentRefundReceiptData.success) {
+            const refundReceiptNumber = document.getElementById('refundReceiptNumber')?.value?.trim();
+            const refundReceiptAmount = parseFloat(document.getElementById('refundReceiptAmountToUse')?.value) || 0;
+            
+            if (refundReceiptAmount > 0) {
+                return { 
+                    valid: true,
+                    refundNumber: refundReceiptNumber,
+                    amountToUse: refundReceiptAmount
+                };
+            }
+        }
+
+        // Fallback: check fields manually
+        const refundReceiptNumber = document.getElementById('refundReceiptNumber')?.value?.trim();
+        const refundReceiptAmount = parseFloat(document.getElementById('refundReceiptAmountToUse')?.value) || 0;
+
+        if (!refundReceiptNumber) {
+            return { valid: false, error: 'Please enter a refund receipt number' };
+        }
+
+        if (!refundReceiptNumber.match(/^RFD-\d{7}$/)) {
+            return { valid: false, error: 'Invalid receipt format. Please use format: RFD-0000001' };
+        }
+
+        if (refundReceiptAmount <= 0) {
+            return { valid: false, error: 'Please validate the refund receipt first' };
+        }
+
+        if (refundReceiptAmount > this.paymentAmount) {
+            return { valid: false, error: 'Refund amount exceeds payment amount' };
+        }
+
+        return { 
+            valid: true,
+            refundNumber: refundReceiptNumber,
+            amountToUse: refundReceiptAmount
         };
     }
 

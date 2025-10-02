@@ -16,6 +16,10 @@ $sectionContentMappings = [
         [url('quotations/quotation.php?action=create'), 'bi-plus-circle', 'Create Quotation'],
         [url('quotations/invoices.php'), 'bi-receipt', 'All Invoices']
     ],
+    'reception' => [
+        [url('reception/reception.php'), 'bi-person-workspace', 'Reception Dashboard'],
+        [url('reception/returns_refunds.php'), 'bi-arrow-return-left', 'Returns & Refunds']
+    ],
     'customer_crm' => [
         [url('customers/crm_dashboard.php'), 'bi-speedometer2', 'CRM Dashboard']
     ],
@@ -163,6 +167,7 @@ if (isset($menuAccess) && !empty($menuAccess)) {
         'dashboard' => ['Dashboard', 'bi-speedometer2', $sectionContentMappings['dashboard'] ?? []],
         'pos' => ['Point of Sale', 'bi-cart-plus', $sectionContentMappings['pos'] ?? []],
         'quotations' => ['Quotations', 'bi-file-earmark-text', $sectionContentMappings['quotations'] ?? []],
+        'reception' => ['Reception', 'bi-person-workspace', $sectionContentMappings['reception'] ?? []],
         'pos_management' => ['POS Management', 'bi-cash-register', $sectionContentMappings['pos_management'] ?? []],
         'customer_crm' => ['Customer CRM', 'bi-people', $sectionContentMappings['customer_crm'] ?? []],
         'inventory' => ['Inventory', 'bi-boxes', $sectionContentMappings['inventory'] ?? []],

@@ -833,31 +833,39 @@ class SplitPaymentManager {
     }
 
     /**
-     * Update the payments list display
+     * Update the payments list display (optimized for performance)
      */
     updatePaymentsList() {
         const container = document.getElementById('splitPaymentsList');
         if (!container) return;
 
-        if (this.payments.length === 0) {
-            container.innerHTML = `
-                <div class="text-center text-muted py-4">
-                    <i class="bi bi-credit-card fs-1"></i>
-                    <p class="mt-2 mb-1">No payments added</p>
-                    <small>Add payment methods above to split the total</small>
-                </div>
-            `;
-            return;
-        }
+        // Use requestIdleCallback for better performance
+        const updateDisplay = () => {
+            if (this.payments.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-credit-card fs-1"></i>
+                        <p class="mt-2 mb-1">No payments added</p>
+                        <small>Add payment methods above to split the total</small>
+                    </div>
+                `;
+                return;
+            }
 
-        const paymentsHtml = this.payments.map(payment => {
-            const methodInfo = this.paymentMethods.find(m => m.name === payment.method);
-            const methodName = methodInfo ? methodInfo.display_name : payment.method;
-            const methodIcon = methodInfo ? methodInfo.icon : 'bi-credit-card';
-            const methodColor = methodInfo ? methodInfo.color : '#6c757d';
+            // Use DocumentFragment for better performance
+            const fragment = document.createDocumentFragment();
+            
+            this.payments.forEach((payment, index) => {
+                const methodInfo = this.paymentMethods.find(m => m.name === payment.method);
+                const methodName = methodInfo ? methodInfo.display_name : payment.method;
+                const methodIcon = methodInfo ? methodInfo.icon : 'bi-credit-card';
+                const methodColor = methodInfo ? methodInfo.color : '#6c757d';
 
-            return `
-                <div class="payment-item card mb-2" data-payment-id="${payment.id}">
+                const paymentDiv = document.createElement('div');
+                paymentDiv.className = 'payment-item card mb-2';
+                paymentDiv.setAttribute('data-payment-id', payment.id);
+                
+                paymentDiv.innerHTML = `
                     <div class="card-body p-3">
                         <div class="row align-items-center">
                             <div class="col-auto">
@@ -868,7 +876,7 @@ class SplitPaymentManager {
                             </div>
                             <div class="col">
                                 <h6 class="mb-1">${methodName}</h6>
-                                <small class="text-muted">Payment ${this.payments.indexOf(payment) + 1}</small>
+                                <small class="text-muted">Payment ${index + 1}</small>
                             </div>
                             <div class="col-auto">
                                 <div class="text-end">
@@ -881,19 +889,29 @@ class SplitPaymentManager {
                             </div>
                         </div>
                     </div>
-                </div>
-            `;
-        }).join('');
-
-        container.innerHTML = paymentsHtml;
-
-        // Bind remove buttons
-        container.querySelectorAll('.remove-payment-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const paymentId = e.target.closest('.remove-payment-btn').dataset.paymentId;
-                this.removePayment(paymentId);
+                `;
+                
+                // Bind remove button immediately to avoid later DOM queries
+                const removeBtn = paymentDiv.querySelector('.remove-payment-btn');
+                removeBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.removePayment(payment.id);
+                });
+                
+                fragment.appendChild(paymentDiv);
             });
-        });
+
+            // Single DOM update
+            container.innerHTML = '';
+            container.appendChild(fragment);
+        };
+
+        // Use requestIdleCallback with timeout for better performance
+        if (window.requestIdleCallback) {
+            requestIdleCallback(updateDisplay, { timeout: 50 });
+        } else {
+            requestAnimationFrame(updateDisplay);
+        }
     }
 
     /**

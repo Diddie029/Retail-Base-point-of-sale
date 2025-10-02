@@ -665,6 +665,66 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
 
+    // Create returns table for product returns and refunds
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS returns (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            return_number VARCHAR(20) UNIQUE NOT NULL COMMENT 'Unique return reference number',
+            original_sale_id INT NOT NULL COMMENT 'Original sale ID being returned',
+            user_id INT NOT NULL COMMENT 'User processing the return',
+            customer_id INT DEFAULT NULL COMMENT 'Customer ID if registered',
+            customer_name VARCHAR(255) DEFAULT 'Walk-in Customer',
+            customer_phone VARCHAR(20) DEFAULT '',
+            customer_email VARCHAR(255) DEFAULT '',
+            return_type ENUM('refund', 'exchange') NOT NULL DEFAULT 'refund',
+            refund_method ENUM('cash', 'store_credit', 'card') DEFAULT 'cash',
+            total_return_amount DECIMAL(10, 2) NOT NULL DEFAULT 0,
+            refund_amount DECIMAL(10, 2) DEFAULT 0 COMMENT 'Actual amount refunded',
+            return_reason TEXT,
+            return_notes TEXT,
+            status ENUM('pending', 'approved', 'processed', 'cancelled') DEFAULT 'pending',
+            processed_by INT DEFAULT NULL,
+            processed_at TIMESTAMP NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (original_sale_id) REFERENCES sales(id),
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (customer_id) REFERENCES customers(id),
+            FOREIGN KEY (processed_by) REFERENCES users(id),
+            INDEX idx_return_number (return_number),
+            INDEX idx_original_sale_id (original_sale_id),
+            INDEX idx_customer_id (customer_id),
+            INDEX idx_status (status),
+            INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    // Create return_items table for individual returned products
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS return_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            return_id INT NOT NULL,
+            sale_item_id INT NOT NULL COMMENT 'Original sale item being returned',
+            product_id INT NULL COMMENT 'Product ID (NULL for custom/manual items)',
+            product_name VARCHAR(255) NOT NULL,
+            quantity INT NOT NULL,
+            unit_price DECIMAL(10, 2) NOT NULL,
+            total_price DECIMAL(10, 2) NOT NULL,
+            return_quantity INT NOT NULL DEFAULT 0 COMMENT 'Quantity being returned',
+            return_amount DECIMAL(10, 2) NOT NULL DEFAULT 0 COMMENT 'Amount to be refunded for this item',
+            condition_status ENUM('new', 'used', 'damaged') DEFAULT 'used',
+            condition_notes TEXT,
+            restocked TINYINT(1) DEFAULT 0 COMMENT 'Whether inventory has been updated',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (return_id) REFERENCES customer_returns(id) ON DELETE CASCADE,
+            FOREIGN KEY (sale_item_id) REFERENCES sale_items(id),
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
+            INDEX idx_return_id (return_id),
+            INDEX idx_product_id (product_id),
+            INDEX idx_restocked (restocked)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
     // Ensure sales table has columns needed for checkout and split payments
     try {
         $stmt = $conn->query("DESCRIBE sales");
@@ -1387,8 +1447,8 @@ try {
         error_log("Could not add updated_at column: " . $e->getMessage());
     }
 
-    // Create returns table for product returns
-    $conn->exec("CREATE TABLE IF NOT EXISTS returns (
+    // Create supplier_returns table for supplier product returns
+    $conn->exec("CREATE TABLE IF NOT EXISTS supplier_returns (
         id INT PRIMARY KEY AUTO_INCREMENT,
         return_number VARCHAR(50) UNIQUE NOT NULL,
         supplier_id INT NOT NULL,
@@ -1416,8 +1476,8 @@ try {
         INDEX idx_created_at (created_at)
     )");
 
-    // Create return_items table for return line items
-    $conn->exec("CREATE TABLE IF NOT EXISTS return_items (
+    // Create supplier_return_items table for supplier return line items
+    $conn->exec("CREATE TABLE IF NOT EXISTS supplier_return_items (
         id INT PRIMARY KEY AUTO_INCREMENT,
         return_id INT NOT NULL,
         product_id INT NOT NULL,
@@ -1431,7 +1491,7 @@ try {
         action_notes TEXT COMMENT 'Notes about the action taken on this item',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'When this item was last updated',
-        FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
+        FOREIGN KEY (return_id) REFERENCES supplier_returns(id) ON DELETE CASCADE,
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
         INDEX idx_return_id (return_id),
         INDEX idx_product_id (product_id),
@@ -1440,8 +1500,8 @@ try {
         INDEX idx_updated_at (updated_at)
     )");
 
-    // Create return_attachments table for file attachments
-    $conn->exec("CREATE TABLE IF NOT EXISTS return_attachments (
+    // Create supplier_return_attachments table for file attachments
+    $conn->exec("CREATE TABLE IF NOT EXISTS supplier_return_attachments (
         id INT PRIMARY KEY AUTO_INCREMENT,
         return_id INT NOT NULL,
         file_name VARCHAR(255) NOT NULL,
@@ -1450,13 +1510,13 @@ try {
         file_size INT,
         uploaded_by INT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
+        FOREIGN KEY (return_id) REFERENCES supplier_returns(id) ON DELETE CASCADE,
         FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE,
         INDEX idx_return_id (return_id)
     )");
 
-    // Create return_status_history table for status tracking
-    $conn->exec("CREATE TABLE IF NOT EXISTS return_status_history (
+    // Create supplier_return_status_history table for status tracking
+    $conn->exec("CREATE TABLE IF NOT EXISTS supplier_return_status_history (
         id INT PRIMARY KEY AUTO_INCREMENT,
         return_id INT NOT NULL,
         old_status ENUM('pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed'),
@@ -1464,7 +1524,7 @@ try {
         changed_by INT NOT NULL,
         change_reason TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (return_id) REFERENCES returns(id) ON DELETE CASCADE,
+        FOREIGN KEY (return_id) REFERENCES supplier_returns(id) ON DELETE CASCADE,
         FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE CASCADE,
         INDEX idx_return_id (return_id),
         INDEX idx_changed_by (changed_by),
@@ -7010,6 +7070,690 @@ if (!function_exists('getSalesStatistics')) {
                 'avg_sale_amount' => 0,
                 'unique_customers' => 0
             ];
+        }
+    }
+}
+
+/**
+ * Search sales for return processing
+ */
+if (!function_exists('searchSalesForReturn')) {
+    function searchSalesForReturn($conn, $filters = []) {
+        try {
+            // First, ensure the returns tables exist
+            createReturnsTablesIfNotExist($conn);
+            
+            $where_conditions = [];
+            $params = [];
+
+            // Search by receipt number
+            if (!empty($filters['receipt_number'])) {
+                $numeric_part = preg_replace('/[^0-9]/', '', $filters['receipt_number']);
+                if (!empty($numeric_part)) {
+                    $where_conditions[] = "s.id = ?";
+                    $params[] = intval($numeric_part);
+                }
+            }
+
+            // Date range filter
+            if (!empty($filters['date_from'])) {
+                $where_conditions[] = "DATE(s.created_at) >= ?";
+                $params[] = $filters['date_from'];
+            }
+            if (!empty($filters['date_to'])) {
+                $where_conditions[] = "DATE(s.created_at) <= ?";
+                $params[] = $filters['date_to'];
+            }
+
+            // Search term filter - only by receipt number or transaction ID
+            if (!empty($filters['search_term'])) {
+                // Check if it's a receipt number (RCP-XXXXXX format)
+                if (preg_match('/^RCP-(\d+)$/', strtoupper($filters['search_term']), $matches)) {
+                    $where_conditions[] = "s.id = ?";
+                    $params[] = intval($matches[1]);
+                }
+                // Check if it's a plain receipt number
+                elseif (preg_match('/^(\d+)$/', $filters['search_term'])) {
+                    $where_conditions[] = "s.id = ?";
+                    $params[] = intval($filters['search_term']);
+                }
+                // Otherwise treat as transaction ID or search in customer info
+                else {
+                    $where_conditions[] = "(s.id = ? OR CONCAT('RCP-', LPAD(s.id, 6, '0')) LIKE ? OR s.customer_name LIKE ? OR s.customer_phone LIKE ?)";
+                    $params[] = intval($filters['search_term']) ?: 0;
+                    $params[] = '%' . $filters['search_term'] . '%';
+                    $params[] = '%' . $filters['search_term'] . '%';
+                    $params[] = '%' . $filters['search_term'] . '%';
+                }
+            }
+
+            $where_clause = !empty($where_conditions) ? 'WHERE ' . implode(' AND ', $where_conditions) : '';
+            
+
+            // Simplified query without returns table join to avoid errors
+            $stmt = $conn->prepare("
+                SELECT s.id, s.created_at, s.customer_name, s.customer_phone, s.customer_email,
+                       s.final_amount, s.payment_method, s.total_paid, s.change_due,
+                       COUNT(si.id) as item_count, s.user_id, u.username as cashier_name,
+                       CONCAT('RCP-', LPAD(s.id, 6, '0')) as receipt_number,
+                       0 as total_returned
+                FROM sales s
+                LEFT JOIN sale_items si ON s.id = si.sale_id
+                LEFT JOIN users u ON s.user_id = u.id
+                {$where_clause}
+                GROUP BY s.id
+                ORDER BY s.created_at DESC
+                LIMIT 50
+            ");
+
+            $stmt->execute($params);
+            $sales = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // If no results with current criteria, try a broader search
+            if (empty($sales) && !empty($filters['search_term'])) {
+                
+                // Try search without date restrictions
+                $broadStmt = $conn->prepare("
+                    SELECT s.id, s.created_at, s.customer_name, s.customer_phone, s.customer_email,
+                           s.final_amount, s.payment_method, s.total_paid, s.change_due,
+                           COUNT(si.id) as item_count, s.user_id, u.username as cashier_name,
+                           CONCAT('RCP-', LPAD(s.id, 6, '0')) as receipt_number,
+                           0 as total_returned
+                    FROM sales s
+                    LEFT JOIN sale_items si ON s.id = si.sale_id
+                    LEFT JOIN users u ON s.user_id = u.id
+                    WHERE (s.id = ? OR CONCAT('RCP-', LPAD(s.id, 6, '0')) LIKE ? OR s.customer_name LIKE ? OR s.customer_phone LIKE ?)
+                    GROUP BY s.id
+                    ORDER BY s.created_at DESC
+                    LIMIT 50
+                ");
+                
+                $broadParams = [
+                    intval($filters['search_term']) ?: 0,
+                    '%' . $filters['search_term'] . '%',
+                    '%' . $filters['search_term'] . '%',
+                    '%' . $filters['search_term'] . '%'
+                ];
+                
+                $broadStmt->execute($broadParams);
+                $sales = $broadStmt->fetchAll(PDO::FETCH_ASSOC);
+            }
+
+            return [
+                'success' => true,
+                'sales' => $sales,
+                'count' => count($sales)
+            ];
+
+        } catch (PDOException $e) {
+            error_log("Error searching sales for return: " . $e->getMessage());
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'sales' => [],
+                'count' => 0
+            ];
+        }
+    }
+}
+
+/**
+ * Create returns tables if they don't exist
+ */
+if (!function_exists('createReturnsTablesIfNotExist')) {
+    function createReturnsTablesIfNotExist($conn) {
+        try {
+            // Check if customer_returns table exists and has the correct structure
+            $stmt = $conn->query("SHOW TABLES LIKE 'customer_returns'");
+            $table_exists = $stmt->rowCount() > 0;
+            
+            if ($table_exists) {
+                // Check if table has the correct columns
+                $stmt = $conn->query("DESCRIBE customer_returns");
+                $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+                
+                // Check for missing columns and add them
+                if (!in_array('original_sale_id', $columns)) {
+                    // Add as nullable first, then update with default values, then make NOT NULL
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN original_sale_id INT NULL COMMENT 'Original sale ID being returned' AFTER return_number");
+                    $conn->exec("UPDATE customer_returns SET original_sale_id = 0 WHERE original_sale_id IS NULL");
+                    $conn->exec("ALTER TABLE customer_returns MODIFY COLUMN original_sale_id INT NOT NULL COMMENT 'Original sale ID being returned'");
+                    $conn->exec("ALTER TABLE customer_returns ADD INDEX idx_original_sale_id (original_sale_id)");
+                    error_log("Added missing original_sale_id column to returns table");
+                }
+                
+                if (!in_array('customer_name', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN customer_name VARCHAR(255) DEFAULT 'Walk-in Customer' AFTER customer_id");
+                }
+                
+                if (!in_array('customer_phone', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN customer_phone VARCHAR(20) DEFAULT '' AFTER customer_name");
+                }
+                
+                if (!in_array('customer_email', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN customer_email VARCHAR(255) DEFAULT '' AFTER customer_phone");
+                }
+                
+                if (!in_array('return_type', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN return_type ENUM('refund', 'exchange') NOT NULL DEFAULT 'refund' AFTER customer_email");
+                }
+                
+                if (!in_array('refund_method', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN refund_method ENUM('cash', 'store_credit', 'card') DEFAULT 'cash' AFTER return_type");
+                }
+                
+                if (!in_array('total_return_amount', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN total_return_amount DECIMAL(10, 2) NOT NULL DEFAULT 0 AFTER refund_method");
+                }
+                
+                if (!in_array('refund_amount', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN refund_amount DECIMAL(10, 2) DEFAULT 0 COMMENT 'Actual amount refunded' AFTER total_return_amount");
+                }
+                
+                if (!in_array('return_reason', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN return_reason TEXT AFTER refund_amount");
+                }
+                
+                if (!in_array('return_notes', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN return_notes TEXT AFTER return_reason");
+                }
+                
+                if (!in_array('processed_by', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN processed_by INT DEFAULT NULL AFTER status");
+                }
+                
+                if (!in_array('processed_at', $columns)) {
+                    $conn->exec("ALTER TABLE customer_returns ADD COLUMN processed_at TIMESTAMP NULL AFTER processed_by");
+                }
+                
+            } else {
+                // Create customer_returns table for product returns and refunds
+            $conn->exec("
+                    CREATE TABLE customer_returns (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    return_number VARCHAR(20) UNIQUE NOT NULL COMMENT 'Unique return reference number',
+                    original_sale_id INT NOT NULL COMMENT 'Original sale ID being returned',
+                    user_id INT NOT NULL COMMENT 'User processing the return',
+                    customer_id INT DEFAULT NULL COMMENT 'Customer ID if registered',
+                    customer_name VARCHAR(255) DEFAULT 'Walk-in Customer',
+                    customer_phone VARCHAR(20) DEFAULT '',
+                    customer_email VARCHAR(255) DEFAULT '',
+                    return_type ENUM('refund', 'exchange') NOT NULL DEFAULT 'refund',
+                    refund_method ENUM('cash', 'store_credit', 'card') DEFAULT 'cash',
+                    total_return_amount DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                    refund_amount DECIMAL(10, 2) DEFAULT 0 COMMENT 'Actual amount refunded',
+                    return_reason TEXT,
+                    return_notes TEXT,
+                    status ENUM('pending', 'approved', 'processed', 'cancelled') DEFAULT 'pending',
+                    processed_by INT DEFAULT NULL,
+                    processed_at TIMESTAMP NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_return_number (return_number),
+                    INDEX idx_original_sale_id (original_sale_id),
+                    INDEX idx_customer_id (customer_id),
+                    INDEX idx_status (status),
+                    INDEX idx_created_at (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ");
+            }
+
+            // Check if return_items table exists and has the correct structure
+            $stmt = $conn->query("SHOW TABLES LIKE 'return_items'");
+            $return_items_exists = $stmt->rowCount() > 0;
+            
+            if ($return_items_exists) {
+                // Check if table has the correct columns for customer returns
+                $stmt = $conn->query("DESCRIBE return_items");
+                $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+                
+                // Add missing columns for customer returns functionality
+                if (!in_array('sale_item_id', $columns)) {
+                    $conn->exec("ALTER TABLE return_items ADD COLUMN sale_item_id INT NULL COMMENT 'Original sale item being returned' AFTER return_id");
+                    $conn->exec("ALTER TABLE return_items ADD INDEX idx_sale_item_id (sale_item_id)");
+                    error_log("Added missing sale_item_id column to return_items table");
+                }
+                
+                if (!in_array('product_name', $columns)) {
+                    $conn->exec("ALTER TABLE return_items ADD COLUMN product_name VARCHAR(255) NULL AFTER product_id");
+                }
+                
+                if (!in_array('unit_price', $columns)) {
+                    $conn->exec("ALTER TABLE return_items ADD COLUMN unit_price DECIMAL(10, 2) NULL AFTER product_name");
+                }
+                
+                if (!in_array('total_price', $columns)) {
+                    $conn->exec("ALTER TABLE return_items ADD COLUMN total_price DECIMAL(10, 2) NULL AFTER unit_price");
+                }
+                
+                if (!in_array('return_quantity', $columns)) {
+                    $conn->exec("ALTER TABLE return_items ADD COLUMN return_quantity INT NOT NULL DEFAULT 0 COMMENT 'Quantity being returned' AFTER total_price");
+                }
+                
+                if (!in_array('return_amount', $columns)) {
+                    $conn->exec("ALTER TABLE return_items ADD COLUMN return_amount DECIMAL(10, 2) NOT NULL DEFAULT 0 COMMENT 'Amount to be refunded for this item' AFTER return_quantity");
+                }
+                
+                if (!in_array('condition_notes', $columns)) {
+                    $conn->exec("ALTER TABLE return_items ADD COLUMN condition_notes TEXT AFTER condition_status");
+                }
+                
+                if (!in_array('restocked', $columns)) {
+                    $conn->exec("ALTER TABLE return_items ADD COLUMN restocked TINYINT(1) DEFAULT 0 COMMENT 'Whether inventory has been updated' AFTER condition_notes");
+                }
+                
+            } else {
+            // Create return_items table for individual returned products
+            $conn->exec("
+                    CREATE TABLE return_items (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    return_id INT NOT NULL,
+                    sale_item_id INT NOT NULL COMMENT 'Original sale item being returned',
+                    product_id INT NULL COMMENT 'Product ID (NULL for custom/manual items)',
+                    product_name VARCHAR(255) NOT NULL,
+                    quantity INT NOT NULL,
+                    unit_price DECIMAL(10, 2) NOT NULL,
+                    total_price DECIMAL(10, 2) NOT NULL,
+                    return_quantity INT NOT NULL DEFAULT 0 COMMENT 'Quantity being returned',
+                    return_amount DECIMAL(10, 2) NOT NULL DEFAULT 0 COMMENT 'Amount to be refunded for this item',
+                    condition_status ENUM('new', 'used', 'damaged') DEFAULT 'used',
+                    condition_notes TEXT,
+                    restocked TINYINT(1) DEFAULT 0 COMMENT 'Whether inventory has been updated',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_return_id (return_id),
+                    INDEX idx_sale_item_id (sale_item_id),
+                    INDEX idx_product_id (product_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ");
+            }
+            
+        } catch (PDOException $e) {
+            // Log table creation/migration errors for debugging
+            error_log("Returns table migration error: " . $e->getMessage());
+            // Continue execution - don't fail completely on table issues
+        }
+    }
+}
+
+/**
+ * Get sale details for return processing
+ */
+if (!function_exists('getSaleDetailsForReturn')) {
+    function getSaleDetailsForReturn($conn, $sale_id) {
+        try {
+            // Ensure returns tables exist
+            createReturnsTablesIfNotExist($conn);
+            
+            if ($sale_id <= 0) {
+                return ['success' => false, 'message' => 'Invalid sale ID'];
+            }
+
+            // Get sale details
+            $stmt = $conn->prepare("
+                SELECT s.*, u.username as cashier_name,
+                       CONCAT('RCP-', LPAD(s.id, 6, '0')) as receipt_number
+                FROM sales s
+                LEFT JOIN users u ON s.user_id = u.id
+                WHERE s.id = ?
+            ");
+            $stmt->execute([$sale_id]);
+            $sale = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$sale) {
+                return ['success' => false, 'message' => 'Sale not found'];
+            }
+
+            // Get sale items - simplified query without returns table dependency
+            $stmt = $conn->prepare("
+                SELECT si.*, p.sku, p.quantity as current_stock,
+                       0 as already_returned
+                FROM sale_items si
+                LEFT JOIN products p ON si.product_id = p.id
+                WHERE si.sale_id = ?
+                ORDER BY si.id
+            ");
+            $stmt->execute([$sale_id]);
+            $sale_items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // Try to get returned quantities if tables exist
+            try {
+                $returnStmt = $conn->prepare("
+                    SELECT ri.sale_item_id, SUM(ri.return_quantity) as returned_quantity
+                    FROM return_items ri
+                    JOIN customer_returns r ON ri.return_id = r.id
+                    WHERE r.status IN ('processed', 'approved')
+                    GROUP BY ri.sale_item_id
+                ");
+                $returnStmt->execute();
+                $returnedItems = $returnStmt->fetchAll(PDO::FETCH_KEY_PAIR);
+                
+                // Update sale items with returned quantities and calculate available for return
+                foreach ($sale_items as &$item) {
+                    $item['already_returned'] = intval($returnedItems[$item['id']] ?? 0);
+                    $item['available_for_return'] = intval($item['quantity']) - $item['already_returned'];
+                    
+                    // Ensure available quantity is not negative
+                    if ($item['available_for_return'] < 0) {
+                        $item['available_for_return'] = 0;
+                    }
+                }
+            } catch (PDOException $e) {
+                // If returns tables don't exist or have issues, set default values
+                foreach ($sale_items as &$item) {
+                    $item['already_returned'] = 0;
+                    $item['available_for_return'] = intval($item['quantity']);
+                }
+            }
+
+            return [
+                'success' => true,
+                'sale' => $sale,
+                'items' => $sale_items
+            ];
+
+        } catch (PDOException $e) {
+            error_log("Error getting sale details for return: " . $e->getMessage());
+            return ['success' => false, 'message' => 'Error retrieving sale details: ' . $e->getMessage()];
+        }
+    }
+}
+
+/**
+ * Process return and refund
+ */
+if (!function_exists('processReturn')) {
+    function processReturn($conn, $data) {
+        try {
+            // Ensure returns tables exist
+            createReturnsTablesIfNotExist($conn);
+            
+            $sale_id = intval($data['sale_id'] ?? 0);
+            $return_type = trim($data['return_type'] ?? 'refund');
+            $refund_method = trim($data['refund_method'] ?? 'cash');
+            $return_reason = trim($data['return_reason'] ?? '');
+            $return_notes = trim($data['return_notes'] ?? '');
+            $return_items = $data['return_items'] ?? [];
+            $user_id = $data['user_id'] ?? null;
+
+            if ($sale_id <= 0) {
+                return ['success' => false, 'message' => 'Invalid sale ID'];
+            }
+
+            if (empty($return_items)) {
+                return ['success' => false, 'message' => 'No items selected for return'];
+            }
+
+            // Get sale details with return tracking
+            $saleDetailsResult = getSaleDetailsForReturn($conn, $sale_id);
+            if (!$saleDetailsResult['success']) {
+                return $saleDetailsResult;
+            }
+            
+            $sale = $saleDetailsResult['sale'];
+            $sale_items = $saleDetailsResult['items'];
+            
+            // Create lookup array for sale items
+            $saleItemsLookup = [];
+            foreach ($sale_items as $saleItem) {
+                $saleItemsLookup[$saleItem['id']] = $saleItem;
+            }
+            
+            // Validate return quantities against available quantities
+            foreach ($return_items as $returnItem) {
+                $saleItemId = intval($returnItem['sale_item_id'] ?? 0);
+                $returnQuantity = intval($returnItem['return_quantity'] ?? 0);
+                
+                if (!isset($saleItemsLookup[$saleItemId])) {
+                    return ['success' => false, 'message' => 'Invalid sale item ID: ' . $saleItemId];
+                }
+                
+                $saleItem = $saleItemsLookup[$saleItemId];
+                $availableForReturn = $saleItem['available_for_return'];
+                
+                if ($returnQuantity > $availableForReturn) {
+                    $productName = $saleItem['product_name'] ?? 'Unknown Product';
+                    return [
+                        'success' => false, 
+                        'message' => "Cannot return {$returnQuantity} units of '{$productName}'. Only {$availableForReturn} units available for return (Already returned: {$saleItem['already_returned']})."
+                    ];
+                }
+                
+                if ($returnQuantity <= 0) {
+                    return ['success' => false, 'message' => 'Return quantity must be greater than 0'];
+                }
+            }
+
+            // Start transaction
+            $conn->beginTransaction();
+
+            // Generate return number
+            $return_number = generateReturnNumber($conn);
+
+            // Calculate total return amount
+            $total_return_amount = 0;
+            foreach ($return_items as $item) {
+                $total_return_amount += floatval($item['return_amount']);
+            }
+
+            // Insert return record
+            $stmt = $conn->prepare("
+                INSERT INTO customer_returns (
+                    return_number, original_sale_id, user_id, customer_id,
+                    customer_name, customer_phone, customer_email,
+                    return_type, refund_method, total_return_amount,
+                    return_reason, return_notes, status, processed_by, processed_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processed', ?, NOW()
+                )
+            ");
+
+            $result = $stmt->execute([
+                $return_number,
+                $sale_id,
+                $user_id,
+                $sale['customer_id'] ?: null,
+                $sale['customer_name'],
+                $sale['customer_phone'],
+                $sale['customer_email'],
+                $return_type,
+                $refund_method,
+                $total_return_amount,
+                $return_reason,
+                $return_notes,
+                $user_id
+            ]);
+
+            if (!$result) {
+                throw new Exception('Failed to create return record');
+            }
+
+            $return_id = $conn->lastInsertId();
+
+            // Insert return items and update inventory
+            foreach ($return_items as $item) {
+                if ($item['return_quantity'] > 0) {
+                    // Insert return item
+                    $stmt = $conn->prepare("
+                        INSERT INTO return_items (
+                            return_id, sale_item_id, product_id, product_name,
+                            quantity, cost_price, unit_price, total_price, return_quantity,
+                            return_amount, condition_status, condition_notes
+                        ) VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        )
+                    ");
+
+                    // Handle NULL values properly
+                    $product_id = null;
+                    if (!empty($item['product_id']) && $item['product_id'] !== 'null' && $item['product_id'] !== 'NULL') {
+                        $product_id = intval($item['product_id']);
+                    }
+                    
+                    $sale_item_id = null;
+                    if (!empty($item['sale_item_id']) && $item['sale_item_id'] !== 'null' && $item['sale_item_id'] !== 'NULL') {
+                        $sale_item_id = intval($item['sale_item_id']);
+                    }
+                    
+                    // Get cost price from product table if available, otherwise use unit price
+                    $cost_price = floatval($item['unit_price'] ?? 0);
+                    if ($product_id) {
+                        try {
+                            $costStmt = $conn->prepare("SELECT cost_price FROM products WHERE id = ?");
+                            $costStmt->execute([$product_id]);
+                            $productCost = $costStmt->fetchColumn();
+                            if ($productCost !== false && $productCost > 0) {
+                                $cost_price = floatval($productCost);
+                            }
+                        } catch (PDOException $e) {
+                            // If cost_price column doesn't exist in products table, use unit_price
+                            $cost_price = floatval($item['unit_price'] ?? 0);
+                        }
+                    }
+
+                    $stmt->execute([
+                        $return_id,
+                        $sale_item_id,
+                        $product_id,
+                        $item['product_name'] ?? '',
+                        intval($item['quantity'] ?? 0),
+                        $cost_price, // cost_price from product table or unit_price fallback
+                        floatval($item['unit_price'] ?? 0), // unit_price
+                        floatval($item['total_price'] ?? 0),
+                        intval($item['return_quantity'] ?? 0),
+                        floatval($item['return_amount'] ?? 0),
+                        $item['condition_status'] ?? 'used',
+                        $item['condition_notes'] ?? ''
+                    ]);
+
+                    // Update product inventory if it's a physical product
+                    if ($product_id) {
+                        $stmt = $conn->prepare("
+                            UPDATE products
+                            SET quantity = quantity + ?
+                            WHERE id = ?
+                        ");
+                        $stmt->execute([intval($item['return_quantity'] ?? 0), $product_id]);
+                    }
+                }
+            }
+
+            // Update return item restocked status
+            $stmt = $conn->prepare("
+                UPDATE return_items
+                SET restocked = 1
+                WHERE return_id = ?
+            ");
+            $stmt->execute([$return_id]);
+
+            $conn->commit();
+
+            return [
+                'success' => true,
+                'message' => 'Return processed successfully',
+                'return_number' => $return_number,
+                'return_id' => $return_id
+            ];
+
+        } catch (Exception $e) {
+            $conn->rollBack();
+            error_log("Error processing return: " . $e->getMessage());
+            return ['success' => false, 'message' => 'Error processing return: ' . $e->getMessage()];
+        }
+    }
+}
+
+/**
+ * Get return details
+ */
+if (!function_exists('getReturnDetails')) {
+    function getReturnDetails($conn, $return_id) {
+        try {
+            // Ensure returns tables exist
+            createReturnsTablesIfNotExist($conn);
+            
+            if ($return_id <= 0) {
+                return ['success' => false, 'message' => 'Invalid return ID'];
+            }
+
+            // Get return details
+            $stmt = $conn->prepare("
+                SELECT r.*, s.customer_name as original_customer,
+                       CONCAT('RCP-', LPAD(s.id, 6, '0')) as original_receipt,
+                       u.username as processed_by_name
+                FROM customer_returns r
+                JOIN sales s ON r.original_sale_id = s.id
+                LEFT JOIN users u ON r.processed_by = u.id
+                WHERE r.id = ?
+            ");
+            $stmt->execute([$return_id]);
+            $return = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$return) {
+                return ['success' => false, 'message' => 'Return not found'];
+            }
+
+            // Get return items
+            $stmt = $conn->prepare("
+                SELECT ri.*, p.sku
+                FROM return_items ri
+                LEFT JOIN products p ON ri.product_id = p.id
+                WHERE ri.return_id = ?
+                ORDER BY ri.id
+            ");
+            $stmt->execute([$return_id]);
+            $return_items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            return [
+                'success' => true,
+                'return' => $return,
+                'items' => $return_items
+            ];
+
+        } catch (PDOException $e) {
+            error_log("Error getting return details: " . $e->getMessage());
+            return ['success' => false, 'message' => 'Error retrieving return details: ' . $e->getMessage()];
+        }
+    }
+}
+
+/**
+ * Generate unique return number
+ */
+if (!function_exists('generateReturnNumber')) {
+    function generateReturnNumber($conn) {
+        try {
+            // Get the highest existing refund number
+            $stmt = $conn->prepare("SELECT return_number FROM customer_returns WHERE return_number LIKE 'RFD-%' ORDER BY id DESC LIMIT 1");
+            $stmt->execute();
+            $lastNumber = $stmt->fetchColumn();
+            
+            if ($lastNumber) {
+                // Extract the numeric part and increment
+                $numericPart = intval(substr($lastNumber, 4)); // Remove 'RFD-' prefix
+                $nextNumber = $numericPart + 1;
+            } else {
+                // Start with 1 if no existing refunds
+                $nextNumber = 1;
+            }
+            
+            // Format as RFD-0000001
+            $return_number = 'RFD-' . str_pad($nextNumber, 7, '0', STR_PAD_LEFT);
+            
+            // Double-check uniqueness (shouldn't be needed but good practice)
+            $check = $conn->prepare("SELECT id FROM customer_returns WHERE return_number = ?");
+            $check->execute([$return_number]);
+            
+            if ($check->rowCount() > 0) {
+                // If somehow exists, try next number
+                $return_number = 'RFD-' . str_pad($nextNumber + 1, 7, '0', STR_PAD_LEFT);
+            }
+
+        return $return_number;
+            
+        } catch (PDOException $e) {
+            // Fallback to timestamp-based if there's an error
+            return 'RFD-' . str_pad(time() % 9999999, 7, '0', STR_PAD_LEFT);
         }
     }
 }

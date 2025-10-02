@@ -44,12 +44,12 @@ try {
 }
 
 // Get filter parameters
-$start_date = $_GET['start_date'] ?? date('Y-m-01'); // First day of current month
+$start_date = $_GET['start_date'] ?? date('Y-m-d', strtotime('-30 days')); // Last 30 days
 $end_date = $_GET['end_date'] ?? date('Y-m-d'); // Today
 $payment_method = $_GET['payment_method'] ?? 'all';
 $search = $_GET['search'] ?? '';
 $page = (int)($_GET['page'] ?? 1);
-$per_page = 25;
+$per_page = 50;
 $offset = ($page - 1) * $per_page;
 
 // Build query conditions
@@ -173,6 +173,22 @@ $payment_stats = $stmt->fetchAll();
             border-radius: 12px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
             overflow: hidden;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        
+        .sales-table .table-responsive {
+            max-height: 65vh;
+            overflow-y: auto;
+            border-radius: 12px;
+        }
+        
+        .sales-table .table thead th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #f8fafc !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         
         .table th {
@@ -360,6 +376,11 @@ $payment_stats = $stmt->fetchAll();
             .table-responsive {
                 border-radius: 12px;
                 overflow: hidden;
+                max-height: 60vh;
+            }
+            
+            .sales-table {
+                max-height: 60vh;
             }
             
             .action-buttons-container {
@@ -377,6 +398,44 @@ $payment_stats = $stmt->fetchAll();
                 font-size: 0.65rem;
                 padding: 0.2rem 0.4rem;
             }
+            
+            .header-actions {
+                flex-wrap: wrap;
+                gap: 0.5rem;
+            }
+            
+            .header-actions .btn {
+                font-size: 0.8rem;
+                padding: 0.5rem 0.75rem;
+            }
+        }
+        
+        /* Smooth scrolling */
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        .sales-table .table-responsive {
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e1 #f1f5f9;
+        }
+        
+        .sales-table .table-responsive::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .sales-table .table-responsive::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+        
+        .sales-table .table-responsive::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        
+        .sales-table .table-responsive::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
         }
         
         /* Loyalty Points Styling */
@@ -417,6 +476,14 @@ $payment_stats = $stmt->fetchAll();
                     <div class="header-subtitle">View and manage all sales transactions</div>
                 </div>
                 <div class="header-actions">
+                    <button class="btn btn-outline-secondary me-2" onclick="showAllRecentSales()" title="Show All Recent Sales">
+                        <i class="bi bi-clock-history"></i>
+                        All Recent
+                    </button>
+                    <button class="btn btn-outline-primary me-2" onclick="manualRefresh()" title="Refresh Data">
+                        <i class="bi bi-arrow-clockwise"></i>
+                        Refresh
+                    </button>
                     <button class="btn export-btn" onclick="exportSales()">
                         <i class="bi bi-download"></i>
                         Export CSV
@@ -483,7 +550,7 @@ $payment_stats = $stmt->fetchAll();
 
             <!-- Filters -->
             <div class="filters-card">
-                <form method="GET" class="row g-3">
+                <form method="GET" class="row g-3" id="filtersForm">
                     <div class="col-md-3">
                         <label class="form-label">Start Date</label>
                         <input type="date" class="form-control" name="start_date" value="<?= htmlspecialchars($start_date) ?>">
@@ -713,8 +780,16 @@ $payment_stats = $stmt->fetchAll();
             <?php if ($total_pages > 1): ?>
             <div class="d-flex justify-content-between align-items-center mt-4">
                 <div class="text-muted">
-                    Showing <?= number_format(($page - 1) * $per_page + 1) ?> to <?= number_format(min($page * $per_page, $total_records)) ?> 
-                    of <?= number_format($total_records) ?> results
+                    <div class="fw-bold text-primary">
+                        Showing <?= number_format(($page - 1) * $per_page + 1) ?> to <?= number_format(min($page * $per_page, $total_records)) ?> 
+                        of <?= number_format($total_records) ?> sales
+                    </div>
+                    <small>
+                        Page <?= $page ?> of <?= $total_pages ?> 
+                        (<?= $per_page ?> records per page)
+                        <br>
+                        Last updated: <span id="lastUpdated"><?= date('M j, Y g:i A') ?></span>
+                    </small>
                 </div>
                 <nav>
                     <ul class="pagination mb-0">
@@ -748,6 +823,28 @@ $payment_stats = $stmt->fetchAll();
                         <?php endif; ?>
                     </ul>
                 </nav>
+            </div>
+            <?php endif; ?>
+            
+            <!-- Show info even when no pagination -->
+            <?php if ($total_pages <= 1): ?>
+            <div class="d-flex justify-content-between align-items-center mt-4">
+                <div class="text-muted">
+                    <div class="fw-bold text-primary">
+                        <?php if ($total_records > 0): ?>
+                            Showing all <?= number_format($total_records) ?> sales
+                        <?php else: ?>
+                            No sales found
+                        <?php endif; ?>
+                    </div>
+                    <small>
+                        <?php if ($total_records > 0): ?>
+                            (<?= $per_page ?> records per page)
+                            <br>
+                        <?php endif; ?>
+                        Last updated: <span id="lastUpdated"><?= date('M j, Y g:i A') ?></span>
+                    </small>
+                </div>
             </div>
             <?php endif; ?>
         </div>
@@ -1010,9 +1107,10 @@ $payment_stats = $stmt->fetchAll();
                     showNotification('Invoice created successfully! Invoice #' + data.invoice_number, 'success');
                     
                     // Optionally redirect to invoice or refresh page
-                    setTimeout(() => {
+                    // Only reload if user wants to see the updated invoice status
+                    if (confirm('Invoice created successfully! Would you like to refresh the page to see the updated status?')) {
                         window.location.reload();
-                    }, 2000);
+                    }
                 } else {
                     showNotification('Error creating invoice: ' + data.error, 'error');
                 }
@@ -1057,16 +1155,118 @@ $payment_stats = $stmt->fetchAll();
             }
         }
         
-        // Auto-refresh every 5 minutes
-        setTimeout(() => {
-            window.location.reload();
-        }, 300000);
+        // Optional auto-refresh (disabled by default to prevent interruptions)
+        // Uncomment the lines below if you want auto-refresh every 5 minutes
+        // setTimeout(() => {
+        //     window.location.reload();
+        // }, 300000);
+        
+        // Show all recent sales (last 30 days, no filters)
+        function showAllRecentSales() {
+            const btn = document.querySelector('button[onclick="showAllRecentSales()"]');
+            const originalContent = btn.innerHTML;
+            
+            // Show loading state
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Loading...';
+            btn.disabled = true;
+            
+            // Clear all filters and show last 30 days
+            const params = new URLSearchParams();
+            params.set('start_date', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+            params.set('end_date', new Date().toISOString().split('T')[0]);
+            params.set('payment_method', 'all');
+            params.set('search', '');
+            params.set('page', '1');
+            
+            window.location.href = `index.php?${params.toString()}`;
+        }
+        
+        // Add manual refresh button functionality
+        function manualRefresh() {
+            const refreshBtn = document.querySelector('button[onclick="manualRefresh()"]');
+            const originalContent = refreshBtn.innerHTML;
+            
+            // Show loading state
+            refreshBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Refreshing...';
+            refreshBtn.disabled = true;
+            
+            // Add a small delay to show the loading state, then reload
+            setTimeout(() => {
+                window.location.reload();
+            }, 500);
+        }
+        
+        // Improve form submission experience
+        document.addEventListener('DOMContentLoaded', function() {
+            const filtersForm = document.getElementById('filtersForm');
+            if (filtersForm) {
+                filtersForm.addEventListener('submit', function(e) {
+                    const submitBtn = this.querySelector('button[type="submit"]');
+                    if (submitBtn) {
+                        const originalContent = submitBtn.innerHTML;
+                        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Applying...';
+                        submitBtn.disabled = true;
+                        
+                        // Re-enable after a delay in case of errors
+                        setTimeout(() => {
+                            submitBtn.innerHTML = originalContent;
+                            submitBtn.disabled = false;
+                        }, 10000);
+                    }
+                });
+            }
+        });
         
         // Initialize tooltips
         document.addEventListener('DOMContentLoaded', function() {
             var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
             var tooltipList = tooltipTriggerList.map(function(tooltipTriggerEl) {
                 return new bootstrap.Tooltip(tooltipTriggerEl);
+            });
+            
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Ctrl/Cmd + R for refresh
+                if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+                    e.preventDefault();
+                    manualRefresh();
+                }
+                
+                // Ctrl/Cmd + Shift + A for show all recent
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'A') {
+                    e.preventDefault();
+                    showAllRecentSales();
+                }
+                
+                // Escape to close modals
+                if (e.key === 'Escape') {
+                    const modals = document.querySelectorAll('.modal.show');
+                    modals.forEach(modal => {
+                        const modalInstance = bootstrap.Modal.getInstance(modal);
+                        if (modalInstance) modalInstance.hide();
+                    });
+                }
+            });
+            
+            // Add scroll to top functionality
+            const scrollToTopBtn = document.createElement('button');
+            scrollToTopBtn.innerHTML = '<i class="bi bi-arrow-up"></i>';
+            scrollToTopBtn.className = 'btn btn-primary position-fixed';
+            scrollToTopBtn.style.cssText = 'bottom: 20px; right: 20px; z-index: 1000; border-radius: 50%; width: 50px; height: 50px; display: none;';
+            scrollToTopBtn.title = 'Scroll to top';
+            document.body.appendChild(scrollToTopBtn);
+            
+            scrollToTopBtn.addEventListener('click', function() {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+            
+            // Show/hide scroll to top button
+            window.addEventListener('scroll', function() {
+                if (window.pageYOffset > 300) {
+                    scrollToTopBtn.style.display = 'block';
+                } else {
+                    scrollToTopBtn.style.display = 'none';
+                }
             });
         });
     </script>

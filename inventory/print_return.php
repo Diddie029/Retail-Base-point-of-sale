@@ -153,6 +153,7 @@ header('Pragma: public');
             --sidebar-color: <?php echo $settings['sidebar_color'] ?? '#1e293b'; ?>;
         }
 
+
         body {
             font-family: 'Inter', sans-serif;
             font-size: 12pt;
@@ -160,7 +161,7 @@ header('Pragma: public');
             color: #212529;
             background: white;
             margin: 0;
-            padding: 20pt;
+            padding: 20pt 35mm; /* increased left/right whitespace by +20mm */
         }
 
         .return-title-full {
@@ -221,7 +222,8 @@ header('Pragma: public');
             flex: 1;
             width: 50%;
             padding-left: 20pt;
-            text-align: right;
+            text-align: left; /* keep lines left-aligned within the block */
+            margin-left: auto; /* push the block to the right side in flex */
         }
 
         .return-items-table {
@@ -329,81 +331,9 @@ header('Pragma: public');
             }
         }
 
-        /* Screen-only elements for customization */
-        @media screen {
-            .customization-panel {
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                background: white;
-                border: 1px solid #dee2e6;
-                border-radius: 5px;
-                padding: 15px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                z-index: 1000;
-                max-width: 300px;
-            }
-
-            .customization-panel h6 {
-                margin-bottom: 10px;
-                font-size: 14px;
-            }
-
-            .customization-panel .form-check {
-                margin-bottom: 8px;
-            }
-        }
     </style>
 </head>
 <body>
-    <!-- Customization Panel (Screen Only) -->
-    <div class="customization-panel no-print">
-        <h6><i class="bi bi-gear me-2"></i>Print Options</h6>
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="showSupplierInfo" checked>
-            <label class="form-check-label" for="showSupplierInfo">
-                Show Supplier Info
-            </label>
-        </div>
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="showReturnNotes" checked>
-            <label class="form-check-label" for="showReturnNotes">
-                Show Return Notes
-            </label>
-        </div>
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="showReturnSummary" checked>
-            <label class="form-check-label" for="showReturnSummary">
-                Show Return Summary
-            </label>
-        </div>
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="showItemReasons" checked>
-            <label class="form-check-label" for="showItemReasons">
-                Show Item Return Reasons
-            </label>
-        </div>
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="showFooter" checked>
-            <label class="form-check-label" for="showFooter">
-                Show Footer Info
-            </label>
-        </div>
-
-        <button onclick="window.print()" class="btn btn-primary btn-sm w-100 mt-3">
-            <i class="bi bi-printer me-2"></i>Print Return
-        </button>
-        <button onclick="window.close()" class="btn btn-outline-secondary btn-sm w-100 mt-2">
-            <i class="bi bi-x me-2"></i>Close Preview
-        </button>
-        <hr class="my-2">
-        <small class="text-muted">
-            <i class="bi bi-printer me-1"></i>
-            Use Ctrl+P or Cmd+P to print<br>
-            <i class="bi bi-info-circle me-1"></i>
-            Customize options above before printing
-        </small>
-    </div>
 
     <!-- Return Title - Full Width -->
     <div class="return-title-full">
@@ -561,40 +491,5 @@ header('Pragma: public');
         <?php endif; ?>
     </div>
 
-    <script>
-        // Auto-print if requested
-        <?php if ($auto_print): ?>
-        window.onload = function() {
-            setTimeout(function() {
-                window.print();
-            }, 500);
-        };
-        <?php endif; ?>
-
-        // Customization panel functionality
-        document.getElementById('showReturnNotes').addEventListener('change', function() {
-            const notesSection = document.querySelector('.notes-section');
-            if (notesSection) {
-                notesSection.style.display = this.checked ? 'block' : 'none';
-            }
-        });
-
-        document.getElementById('showReturnSummary').addEventListener('change', function() {
-            const returnSummary = document.getElementById('returnSummary');
-            returnSummary.style.display = this.checked ? 'flex' : 'none';
-        });
-
-        document.getElementById('showItemReasons').addEventListener('change', function() {
-            const itemReasons = document.querySelectorAll('.return-items-table td div[style*="color: #dc3545"]');
-            itemReasons.forEach(reason => {
-                reason.style.display = this.checked ? 'block' : 'none';
-            });
-        });
-
-        document.getElementById('showFooter').addEventListener('change', function() {
-            const footer = document.getElementById('footerInfo');
-            footer.style.display = this.checked ? 'block' : 'none';
-        });
-    </script>
 </body>
 </html>

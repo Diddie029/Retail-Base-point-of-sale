@@ -1978,7 +1978,7 @@ try {
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="../assets/js/enhanced_payment.js"></script>
+    <script src="../assets/js/enhanced_payment.js?v=<?php echo filemtime(__DIR__ . '/../assets/js/enhanced_payment.js'); ?>"></script>
     <script>
         // POS Configuration
             window.POSConfig = {
@@ -1996,6 +1996,15 @@ try {
             total: <?php echo $total_amount; ?>
         };
 
+        // Function declarations for proper hoisting
+        function processPayment() {
+            // Will be defined later - this ensures proper hoisting
+        }
+        
+        function updateSignOutButton() {
+            // Will be defined later - this ensures proper hoisting  
+        }
+
         // Global error handler for unhandled Promise rejections
         window.addEventListener('unhandledrejection', function(event) {
             console.error('Unhandled promise rejection:', event.reason);
@@ -2007,6 +2016,42 @@ try {
         window.addEventListener('error', function(event) {
             console.error('Global error:', event.error);
         });
+
+        // Lightweight performance monitoring (disabled by default for production performance)
+        function monitorPerformance() {
+            // Only enable if explicitly requested via URL parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            if (!urlParams.has('debug_performance')) {
+                return; // Exit early - no monitoring
+            }
+            
+            // Monitor long tasks (throttled)
+            if ('PerformanceObserver' in window) {
+                try {
+                    let lastLogTime = 0;
+                    const observer = new PerformanceObserver((list) => {
+                        const now = performance.now();
+                        // Only log once per second to prevent spam
+                        if (now - lastLogTime > 1000) {
+                            list.getEntries().forEach((entry) => {
+                                if (entry.duration > 50) {
+                                    console.warn(`Long task detected: ${entry.duration}ms`);
+                                }
+                            });
+                            lastLogTime = now;
+                        }
+                    });
+                    observer.observe({ entryTypes: ['longtask'] });
+                } catch (e) {
+                    // PerformanceObserver not supported
+                }
+            }
+        }
+
+        // Initialize performance monitoring only if explicitly requested
+        if (window.location.hostname === 'localhost' || window.location.hostname.includes('127.0.0.1')) {
+            setTimeout(monitorPerformance, 1000);
+        }
 
         // DOM Ready state checker to prevent deferred DOM node errors
         function isDOMReady() {
@@ -2032,13 +2077,48 @@ try {
         }
 
         // Update time display
+        // Highly optimized time update with caching and visibility detection
+        let lastTimeString = '';
+        let lastDateString = '';
+        let timeElement = null;
+        
         function updateTime() {
+            // Skip if page is not visible to save resources
+            if (document.hidden) {
+                return;
+            }
+            
             const now = new Date();
             const timeString = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+            
+            // Only update DOM if time actually changed
+            if (timeString === lastTimeString) {
+                return;
+            }
+            lastTimeString = timeString;
+            
             const dateString = now.toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric', year: 'numeric'});
-            const timeElement = safeGetElementById('currentTime');
+            
+            // Cache the element reference
+            if (!timeElement) {
+                timeElement = safeGetElementById('currentTime');
+            }
+            
             if (timeElement) {
-                timeElement.textContent = `${timeString} ${dateString}`;
+                // Only update date if it changed (happens once per day)
+                if (dateString !== lastDateString) {
+                    lastDateString = dateString;
+                    timeElement.textContent = `${timeString} ${dateString}`;
+                } else {
+                    // More efficient: only update the time part
+                    const currentText = timeElement.textContent;
+                    const dateIndex = currentText.lastIndexOf(' ');
+                    if (dateIndex > 0) {
+                        timeElement.textContent = timeString + currentText.substring(dateIndex);
+                    } else {
+                        timeElement.textContent = `${timeString} ${dateString}`;
+                    }
+                }
             }
         }
 
@@ -2158,7 +2238,7 @@ try {
             }
         });
 
-        // Enhanced product search function
+        // Enhanced product search function with performance optimizations
         function performProductSearch(searchTerm) {
             // Check if till is selected for non-empty searches
             if (searchTerm.trim() !== '') {
@@ -2172,8 +2252,12 @@ try {
             const searchTermLower = searchTerm.toLowerCase();
             const productCards = document.querySelectorAll('.product-card');
 
-            // Use requestAnimationFrame for smooth UI updates
-            requestAnimationFrame(() => {
+            // Use requestIdleCallback for better performance during busy periods
+            const performSearch = () => {
+                // Batch DOM updates to prevent forced reflows
+                const fragment = document.createDocumentFragment();
+                const updates = [];
+                
                 productCards.forEach(card => {
                     const productName = card.querySelector('h6').textContent.toLowerCase();
                     const categoryName = card.querySelector('p').textContent.toLowerCase();
@@ -2181,16 +2265,28 @@ try {
                     const productBarcode = card.getAttribute('data-product-barcode')?.toLowerCase() || '';
 
                     // Search in name, category, SKU, and barcode
-                    if (productName.includes(searchTermLower) || 
+                    const shouldShow = searchTermLower === '' || 
+                        productName.includes(searchTermLower) || 
                         categoryName.includes(searchTermLower) ||
                         productSku.includes(searchTermLower) ||
-                        productBarcode.includes(searchTermLower)) {
-                        card.style.display = 'block';
-                    } else {
-                        card.style.display = 'none';
-                    }
+                        productBarcode.includes(searchTermLower);
+                    
+                    // Batch the style update to prevent forced reflows
+                    updates.push({ card, shouldShow });
                 });
-            });
+                
+                // Apply all updates in a single batch to minimize reflows
+                updates.forEach(({ card, shouldShow }) => {
+                    card.style.display = shouldShow ? 'block' : 'none';
+                });
+            };
+            
+            // Use requestIdleCallback with fallback for better performance
+            if (window.requestIdleCallback) {
+                requestIdleCallback(performSearch, { timeout: 100 });
+            } else {
+                requestAnimationFrame(performSearch);
+            }
         }
 
         // Handle Enter key for immediate scanning/searching - only after DOM is ready
@@ -2782,6 +2878,13 @@ try {
             return;
             <?php endif; ?>
 
+            // Defer heavy operations to next tick for better UI responsiveness
+            requestAnimationFrame(() => {
+                addToCartDeferred(productId, quantityToAdd);
+            });
+        }
+
+        function addToCartDeferred(productId, quantityToAdd = 1) {
             // Use cached product data if available, otherwise query DOM
             let productData = window.productCache?.[productId];
 
@@ -2873,27 +2976,35 @@ try {
             return cartElements;
         }
 
-        // Debounce function to prevent excessive calls
+        // Optimized cart display with batched updates and caching
+        let lastCartHash = '';
         let updateCartTimeout = null;
         let updateCartFrame = null;
-
-        function debouncedUpdateCartDisplay(cart) {
+        
+        function updateCartDisplay(cart) {
+            // More aggressive debouncing to prevent performance issues
             if (updateCartTimeout) {
                 clearTimeout(updateCartTimeout);
             }
             if (updateCartFrame) {
                 cancelAnimationFrame(updateCartFrame);
             }
-
+            
             updateCartTimeout = setTimeout(() => {
-                updateCartFrame = requestAnimationFrame(() => {
-                    updateCartDisplay(cart);
-                });
-            }, 10); // 10ms debounce
+                // Use requestIdleCallback for better performance during busy periods
+                if (window.requestIdleCallback) {
+                    requestIdleCallback(() => {
+                        updateCartDisplayImmediate(cart);
+                    }, { timeout: 100 });
+                } else {
+                    updateCartFrame = requestAnimationFrame(() => {
+                        updateCartDisplayImmediate(cart);
+                    });
+                }
+            }, 50); // Increased debounce time for better performance
         }
 
-        // Update cart display - optimized version
-        function updateCartDisplay(cart) {
+        function updateCartDisplayImmediate(cart) {
             const elements = getCartElements();
 
             // Check if required elements exist
@@ -2902,10 +3013,17 @@ try {
                 return;
             }
 
-            // Update cart count
-            elements.cartCount.textContent = cart.length;
+            // Create hash of cart to detect changes
+            const cartHash = cart.map(item => `${item.id}-${item.quantity}`).join('|');
+            const cartChanged = cartHash !== lastCartHash;
+            lastCartHash = cartHash;
 
-            // Update totals
+            // Update cart count (always fast)
+            if (elements.cartCount.textContent !== cart.length.toString()) {
+                elements.cartCount.textContent = cart.length;
+            }
+
+            // Calculate totals (cached if cart hasn't changed)
             let subtotal = 0;
             cart.forEach(item => {
                 subtotal += item.price * item.quantity;
@@ -2918,40 +3036,49 @@ try {
             const tax = subtotal * (taxRate / 100);
             const total = subtotal + tax;
 
-            // Update totals display
-            elements.cartSubtotal.textContent = `${currencySymbol} ${subtotal.toFixed(2)}`;
-            elements.cartTax.textContent = `${currencySymbol} ${tax.toFixed(2)}`;
-            elements.cartTotal.textContent = `${currencySymbol} ${total.toFixed(2)}`;
+            // Update totals display only if changed
+            const newSubtotalText = `${currencySymbol} ${subtotal.toFixed(2)}`;
+            const newTaxText = `${currencySymbol} ${tax.toFixed(2)}`;
+            const newTotalText = `${currencySymbol} ${total.toFixed(2)}`;
 
-            // Ensure proper styling
-            elements.cartSubtotal.className = 'fw-bold small';
-            elements.cartTax.className = 'fw-bold small';
-            elements.cartTotal.className = 'fw-bold small text-primary';
+            if (elements.cartSubtotal.textContent !== newSubtotalText) {
+                elements.cartSubtotal.textContent = newSubtotalText;
+            }
+            if (elements.cartTax.textContent !== newTaxText) {
+                elements.cartTax.textContent = newTaxText;
+            }
+            if (elements.cartTotal.textContent !== newTotalText) {
+                elements.cartTotal.textContent = newTotalText;
+            }
 
             // Update payment totals for payment processor
             window.paymentTotals = { subtotal, tax, total };
             window.cartData = cart;
 
             // Enable/disable buttons
-            if (elements.paymentBtn) {
-                elements.paymentBtn.disabled = cart.length === 0;
+            const isEmpty = cart.length === 0;
+            if (elements.paymentBtn && elements.paymentBtn.disabled !== isEmpty) {
+                elements.paymentBtn.disabled = isEmpty;
+            }
+            if (elements.voidCartBtn && elements.voidCartBtn.disabled !== isEmpty) {
+                elements.voidCartBtn.disabled = isEmpty;
             }
 
-            if (elements.voidCartBtn) {
-                elements.voidCartBtn.disabled = cart.length === 0;
+            // Update cart items display only if cart changed
+            if (cartChanged) {
+                requestIdleCallback(() => {
+                    updateCartItemsDisplay(cart, elements.cartItems);
+                }, { timeout: 100 });
             }
 
             // Update Sign Out button based on cart status (debounced)
             if (window.updateSignOutTimeout) {
                 clearTimeout(window.updateSignOutTimeout);
             }
-            window.updateSignOutTimeout = setTimeout(updateSignOutButton, 50);
-
-            // Update cart items display efficiently
-            updateCartItemsDisplay(cart, elements.cartItems);
+            window.updateSignOutTimeout = setTimeout(updateSignOutButton, 100);
         }
 
-        // Optimized cart items display update with instant rendering
+        // Highly optimized cart items display with virtual scrolling
         function updateCartItemsDisplay(cart, cartItemsElement) {
             if (cart.length === 0) {
                 cartItemsElement.innerHTML = `
@@ -2964,6 +3091,17 @@ try {
                 return;
             }
 
+            // For small carts (≤20 items), render all items
+            if (cart.length <= 20) {
+                renderAllCartItems(cart, cartItemsElement);
+                return;
+            }
+
+            // For large carts, use virtual scrolling
+            renderVirtualCartItems(cart, cartItemsElement);
+        }
+
+        function renderAllCartItems(cart, cartItemsElement) {
             // Use DocumentFragment for optimal performance
             const fragment = document.createDocumentFragment();
             const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
@@ -3004,6 +3142,81 @@ try {
             // Single DOM update for maximum performance
             cartItemsElement.innerHTML = '';
             cartItemsElement.appendChild(fragment);
+        }
+
+        // Virtual scrolling for large carts (performance optimization)
+        function renderVirtualCartItems(cart, cartItemsElement) {
+            const itemHeight = 80; // Approximate height of each cart item
+            const visibleItems = Math.ceil(cartItemsElement.clientHeight / itemHeight) + 2; // Buffer
+            const scrollTop = cartItemsElement.scrollTop || 0;
+            const startIndex = Math.floor(scrollTop / itemHeight);
+            const endIndex = Math.min(startIndex + visibleItems, cart.length);
+
+            // Create container with proper height for scrolling
+            const totalHeight = cart.length * itemHeight;
+            const offsetY = startIndex * itemHeight;
+
+            cartItemsElement.innerHTML = `
+                <div style="height: ${totalHeight}px; position: relative;">
+                    <div style="transform: translateY(${offsetY}px);" id="virtualCartItems">
+                    </div>
+                </div>
+            `;
+
+            const virtualContainer = cartItemsElement.querySelector('#virtualCartItems');
+            const fragment = document.createDocumentFragment();
+            const currencySymbol = window.POSConfig?.currencySymbol || 'KES';
+
+            // Render only visible items
+            for (let i = startIndex; i < endIndex; i++) {
+                const item = cart[i];
+                const cartItemDiv = document.createElement('div');
+                cartItemDiv.className = 'cart-item cart-item-scanned';
+                cartItemDiv.setAttribute('data-index', i);
+                cartItemDiv.setAttribute('data-product-id', item.id || item.product_id);
+                cartItemDiv.style.height = itemHeight + 'px';
+
+                cartItemDiv.innerHTML = `
+                    <div class="flex-grow-1 d-flex align-items-center">
+                        <span class="product-number">${i + 1}.</span>
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between align-items-start mb-1">
+                                <div class="product-name">${item.name}</div>
+                                ${item.sku ? `<span class="product-sku">${item.sku}</span>` : ''}
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small class="product-price">
+                                    ${currencySymbol} ${parseFloat(item.price).toFixed(2)} × ${item.quantity} = ${currencySymbol} ${(parseFloat(item.price) * item.quantity).toFixed(2)}
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="quantity-controls">
+                        <span class="quantity-badge">${item.quantity}</span>
+                        <button class="btn btn-outline-danger btn-sm ms-2" onclick="voidProduct(${i})" title="Remove Item">
+                            <i class="bi bi-x-circle"></i>
+                        </button>
+                    </div>
+                `;
+
+                fragment.appendChild(cartItemDiv);
+            }
+
+            virtualContainer.appendChild(fragment);
+
+            // Add scroll listener for virtual scrolling updates (debounced)
+            if (!cartItemsElement.hasVirtualScrollListener) {
+                let scrollTimeout = null;
+                cartItemsElement.addEventListener('scroll', () => {
+                    if (scrollTimeout) clearTimeout(scrollTimeout);
+                    scrollTimeout = setTimeout(() => {
+                        requestAnimationFrame(() => {
+                            renderVirtualCartItems(cart, cartItemsElement);
+                        });
+                    }, 16); // ~60fps
+                }, { passive: true });
+                cartItemsElement.hasVirtualScrollListener = true;
+            }
         }
 
 
@@ -3345,8 +3558,8 @@ try {
             }
         });
 
-        // Process payment
-        function processPayment() {
+        // Process payment implementation
+        processPayment = function() {
             // Prevent double-clicking
             const button = event.target;
             if (button.disabled) return;
@@ -4568,7 +4781,7 @@ try {
 
         // Update Sign Out button based on cart status - optimized
         let lastCartState = null;
-        function updateSignOutButton() {
+        updateSignOutButton = function() {
             const signOutBtn = document.getElementById('signOutBtn');
             if (!signOutBtn) return;
             
@@ -4610,11 +4823,32 @@ try {
             window.location.reload();
         }
 
-        // Auto-sync every 10 minutes
+        // Optimized auto-sync with idle detection
+        let lastActivityTime = Date.now();
+        let autoSyncInterval = null;
+        
         function initializeAutoSync() {
-            setInterval(() => {
-                window.location.reload();
-            }, 10 * 60 * 1000); // 10 minutes in milliseconds
+            // Track user activity
+            ['click', 'keypress', 'mousemove', 'scroll'].forEach(event => {
+                document.addEventListener(event, () => {
+                    lastActivityTime = Date.now();
+                }, { passive: true });
+            });
+            
+            // Check every 5 minutes, but only reload if user has been idle
+            autoSyncInterval = setInterval(() => {
+                const idleTime = Date.now() - lastActivityTime;
+                const fiveMinutes = 5 * 60 * 1000;
+                const tenMinutes = 10 * 60 * 1000;
+                
+                // Only reload if user has been idle for 5+ minutes and it's been 10+ minutes since last reload
+                if (idleTime > fiveMinutes && performance.now() > tenMinutes) {
+                    // Check if cart is empty before reloading
+                    if (!window.cartData || window.cartData.length === 0) {
+                        window.location.reload();
+                    }
+                }
+            }, 5 * 60 * 1000); // Check every 5 minutes
         }
 
         // Start auto-sync on page load

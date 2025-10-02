@@ -195,32 +195,17 @@ try {
                 error_log("Item data: " . json_encode($item));
                 error_log("Processed data: sale_id=$sale_id, product_id=" . ($product_id ?? 'NULL') . ", product_name=$product_name, quantity=$quantity, unit_price=$unit_price, total_price=$total_price");
                 
-                // Check if it's a constraint violation
+                // Check if it's a constraint violation related to product_id
                 if (strpos($e->getMessage(), 'product_id') !== false && strpos($e->getMessage(), 'cannot be null') !== false) {
-                    error_log("Database constraint error detected. Attempting to fix product_id column...");
-                    
-                    // Try to fix the database constraint
-                    try {
-                        $conn->exec("ALTER TABLE sale_items DROP FOREIGN KEY IF EXISTS sale_items_ibfk_2");
-                        $conn->exec("ALTER TABLE sale_items MODIFY COLUMN product_id INT NULL");
-                        $conn->exec("ALTER TABLE sale_items ADD CONSTRAINT fk_sale_items_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL");
-                        error_log("Database constraint fixed. Retrying insert...");
-                        
-                        // Retry the insert
-                        $stmt->execute([
-                            $sale_id,
-                            $product_id,
-                            $product_name,
-                            $quantity,
-                            $unit_price,
-                            $unit_price,
-                            $total_price
-                        ]);
-                        error_log("Successfully inserted sale item after constraint fix");
-                    } catch (Exception $fixError) {
-                        error_log("Failed to fix database constraint: " . $fixError->getMessage());
-                        throw new Exception("Failed to add item to sale: " . $e->getMessage());
-                    }
+                    error_log("Database constraint violation: product_id cannot be null");
+                    error_log("This usually means the database schema wasn't updated properly.");
+                    error_log("Please run the fix_sale_items_constraint.php script to resolve this issue.");
+
+                    throw new Exception(
+                        "Database configuration error: The sale_items table doesn't allow NULL product_id values. " .
+                        "This prevents adding custom/manual items to sales. " .
+                        "Please contact your system administrator to run the database fix script."
+                    );
                 } else {
                     throw new Exception("Failed to add item to sale: " . $e->getMessage());
                 }
