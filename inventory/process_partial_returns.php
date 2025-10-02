@@ -31,7 +31,7 @@ if ($role_id) {
 
 // Check if user has permission to manage returns
 if (!in_array('manage_products', $permissions) && !in_array('process_sales', $permissions)) {
-    header("Location: returns_list.php?error=permission_denied");
+    header("Location: view_returns.php?error=permission_denied");
     exit();
 }
 
@@ -51,7 +51,7 @@ if (isset($_GET['return_ids'])) {
 }
 
 if (empty($return_ids)) {
-    header("Location: returns_list.php?error=no_returns_selected");
+    header("Location: view_returns.php?error=no_returns_selected");
     exit();
 }
 
@@ -70,7 +70,7 @@ try {
     $stmt->execute($return_ids);
     $returns = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    header("Location: returns_list.php?error=db_error");
+    header("Location: view_returns.php?error=db_error");
     exit();
 }
 
@@ -260,7 +260,7 @@ $page_title = "Process Partial Returns";
                     <p class="text-muted">Handle partial returns and item-specific actions</p>
                 </div>
                 <div>
-                    <a href="returns_list.php" class="btn btn-outline-secondary">
+                    <a href="view_returns.php" class="btn btn-outline-secondary">
                         <i class="bi bi-arrow-left me-2"></i>Back to Returns
                     </a>
                 </div>
@@ -369,7 +369,7 @@ $page_title = "Process Partial Returns";
                         <i class="bi bi-check-circle me-2"></i>
                         Process Partial Returns
                     </button>
-                    <a href="returns_list.php" class="btn btn-outline-secondary btn-lg ms-2">
+                    <a href="view_returns.php" class="btn btn-outline-secondary btn-lg ms-2">
                         <i class="bi bi-x-circle me-2"></i>
                         Cancel
                     </a>

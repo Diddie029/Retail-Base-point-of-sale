@@ -104,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':return_id' => $return_id
                     ]);
 
-                    // Add approval info if approving
+                    // Add approval info and handle stock reduction if approving
                     if ($new_status === 'approved') {
                         $stmt = $conn->prepare("
                             UPDATE returns
@@ -115,6 +115,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ':approved_by' => $user_id,
                             ':return_id' => $return_id
                         ]);
+
+                        // Get system settings for stock handling
+                        $settings_stmt = $conn->prepare("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('return_allow_negative_stock')");
+                        $settings_stmt->execute();
+                        $return_settings = [];
+                        while ($setting = $settings_stmt->fetch(PDO::FETCH_ASSOC)) {
+                            $return_settings[$setting['setting_key']] = $setting['setting_value'];
+                        }
+
+                        // Reduce stock for all return items when approved
+                        $items_stmt = $conn->prepare("
+                            SELECT ri.product_id, ri.quantity, p.quantity as current_stock
+                            FROM return_items ri
+                            JOIN products p ON ri.product_id = p.id
+                            WHERE ri.return_id = :return_id
+                        ");
+                        $items_stmt->execute([':return_id' => $return_id]);
+                        $return_items = $items_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                        foreach ($return_items as $item) {
+                            $return_quantity = abs($item['quantity']); // Use absolute value for stock reduction
+                            $new_stock = $item['current_stock'] - $return_quantity;
+
+                            // Check if negative stock is allowed
+                            $allow_negative = isset($return_settings['return_allow_negative_stock']) && $return_settings['return_allow_negative_stock'] == '1';
+                            if (!$allow_negative && $new_stock < 0) {
+                                throw new Exception("Insufficient stock for product ID {$item['product_id']}. Current stock: {$item['current_stock']}, Required: {$return_quantity}");
+                            }
+
+                            // Update product stock
+                            $stock_stmt = $conn->prepare("
+                                UPDATE products
+                                SET quantity = :new_quantity, updated_at = NOW()
+                                WHERE id = :product_id
+                            ");
+                            $stock_stmt->execute([
+                                ':new_quantity' => $new_stock,
+                                ':product_id' => $item['product_id']
+                            ]);
+                        }
                     }
 
                     // Set timestamps for other statuses
@@ -411,6 +451,7 @@ function logReturnStatusChange($conn, $return_id, $new_status, $changed_by, $rea
 function restoreInventoryForReturn($conn, $return_id) {
     try {
         // Get return items and restore inventory
+        // Since quantities are stored as negative for returns, we add them back (which effectively subtracts the negative)
         $stmt = $conn->prepare("
             SELECT product_id, quantity
             FROM return_items
@@ -420,14 +461,15 @@ function restoreInventoryForReturn($conn, $return_id) {
         $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         foreach ($items as $item) {
+            // Since quantity is negative, adding it back effectively restores the stock
             $stmt = $conn->prepare("
                 UPDATE products
-                SET quantity = quantity + :quantity,
+                SET quantity = quantity + ABS(:quantity),
                     updated_at = NOW()
                 WHERE id = :product_id
             ");
             $stmt->execute([
-                ':quantity' => $item['quantity'],
+                ':quantity' => $item['quantity'], // This is negative, so ABS() gives positive value
                 ':product_id' => $item['product_id']
             ]);
         }

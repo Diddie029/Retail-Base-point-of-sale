@@ -318,11 +318,14 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
                             <i class="bi bi-lock me-2"></i>Password
                         </label>
                         <div class="input-group">
-                            <input type="password" class="form-control" id="password" name="password" required
-                                   autocomplete="current-password" maxlength="255">
-                            <span class="password-toggle" onclick="togglePassword()">
-                                <i class="bi bi-eye" id="toggleIcon"></i>
-                            </span>
+                            <div class="input-with-icon" style="flex: 1;">
+                                <input type="password" class="form-control" id="password" name="password" required
+                                       autocomplete="current-password" maxlength="255">
+                                <i class="bi bi-lock input-field-icon"></i>
+                            </div>
+                            <button class="btn btn-outline-secondary password-toggle" type="button" id="passwordToggle" aria-label="Show password">
+                                <i class="bi bi-eye" id="passwordIcon"></i>
+                            </button>
                         </div>
                     </div>
                     <div class="d-grid mb-3">
@@ -360,7 +363,7 @@ if($_SERVER["REQUEST_METHOD"] == "POST" && $show_form) {
     </div>
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="../assets/js/auth.js"></script>
+    <script src="../assets/js/auth.js?v=<?php echo filemtime(__DIR__ . '/../assets/js/auth.js'); ?>"></script>
     <script>
     // Login method detection and visual feedback
     document.addEventListener('DOMContentLoaded', function() {

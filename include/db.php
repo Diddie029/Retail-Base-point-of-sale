@@ -15,7 +15,12 @@ try {
     $isStarterPage = ($currentScript === 'starter.php' || strpos($requestUri, 'starter.php') !== false);
     
     $conn = new PDO("mysql:host=$host", $username, $password);
+    // Robust PDO settings
     $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    // Enable emulated prepares to support parameter binding in LIMIT/OFFSET across MySQL versions
+    $conn->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
+    // Default fetch associative
+    $conn->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
     
     // Store connection in global scope for accessibility
     $GLOBALS['conn'] = $conn;
@@ -26,6 +31,8 @@ try {
     // Create database if not exists
     $conn->exec("CREATE DATABASE IF NOT EXISTS `$dbname`");
     $conn->exec("USE `$dbname`");
+    // Ensure proper charset/collation
+    $conn->exec("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
     
     // Disable foreign key checks temporarily to avoid dependency issues
     $conn->exec("SET FOREIGN_KEY_CHECKS = 0");
@@ -1420,7 +1427,7 @@ try {
         notes TEXT,
         condition_status ENUM('new', 'used', 'damaged', 'defective') DEFAULT 'new',
         accepted_quantity INT DEFAULT 0 COMMENT 'Quantity of items accepted for return (0 = none, NULL = not processed)',
-        action_taken ENUM('pending', 'accepted', 'partial_accept', 'rejected', 'exchange', 'refund') DEFAULT 'pending' COMMENT 'Action taken on this return item',
+        action_taken ENUM('draft', 'pending', 'accepted', 'partial_accept', 'rejected', 'exchange', 'refund') DEFAULT 'pending' COMMENT 'Action taken on this return item',
         action_notes TEXT COMMENT 'Notes about the action taken on this item',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'When this item was last updated',
@@ -1795,24 +1802,56 @@ try {
         $conn->exec("ALTER TABLE users ADD COLUMN login_count INT DEFAULT 0");
     }
 
-    // Update returns table status enum if needed (for new 'processed' status)
+    // Check and fix returns table structure
     try {
-        $stmt = $conn->query("DESCRIBE returns status");
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        $current_enum = $result['Type'];
+        $stmt = $conn->query("SHOW TABLES LIKE 'returns'");
+        if ($stmt->rowCount() > 0) {
+            // Table exists, check if status column exists
+            $stmt = $conn->query("DESCRIBE returns");
+            $columns = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            
+            if (!in_array('status', $columns)) {
+                // Add missing status column
+                $conn->exec("ALTER TABLE returns ADD COLUMN status ENUM('draft', 'pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed') NOT NULL DEFAULT 'pending' AFTER total_amount");
+                error_log("Added missing status column to returns table");
+            } else {
+                // Status column exists, check if enum includes 'draft' and 'processed' values
+                $stmt = $conn->query("DESCRIBE returns status");
+                $result = $stmt->fetch(PDO::FETCH_ASSOC);
+                $current_enum = $result['Type'];
 
-        // Check if the enum includes our new 'processed' value
-        if (strpos($current_enum, 'processed') === false) {
-            try {
-                $conn->exec("ALTER TABLE returns MODIFY COLUMN status ENUM('pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed') DEFAULT 'pending'");
-                error_log("Updated returns status enum to include 'processed' status");
-            } catch (PDOException $alterError) {
-                error_log("Failed to alter returns status enum: " . $alterError->getMessage());
+                if (strpos($current_enum, 'draft') === false || strpos($current_enum, 'processed') === false) {
+                    try {
+                        // First, let's check what the current enum values are
+                        error_log("Current status enum: " . $current_enum);
+                        
+                        // Update the enum to include all required values
+                        $conn->exec("ALTER TABLE returns MODIFY COLUMN status ENUM('draft', 'pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed') DEFAULT 'pending'");
+                        error_log("Updated returns status enum to include 'draft' and 'processed' status");
+                        
+                        // Verify the update worked
+                        $stmt = $conn->query("DESCRIBE returns status");
+                        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+                        error_log("New status enum: " . $result['Type']);
+                        
+                    } catch (PDOException $alterError) {
+                        error_log("Failed to alter returns status enum: " . $alterError->getMessage());
+                        
+                        // If the alter fails, try to add the missing values one by one
+                        try {
+                            if (strpos($current_enum, 'draft') === false) {
+                                $conn->exec("ALTER TABLE returns MODIFY COLUMN status ENUM('draft', 'pending', 'approved', 'shipped', 'received', 'completed', 'cancelled', 'processed') DEFAULT 'pending'");
+                                error_log("Added 'draft' to status enum");
+                            }
+                        } catch (PDOException $e2) {
+                            error_log("Failed to add draft to enum: " . $e2->getMessage());
+                        }
+                    }
+                }
             }
         }
     } catch (PDOException $e) {
-        // Table might not exist yet, that's okay
-        error_log("Could not update returns status enum: " . $e->getMessage());
+        error_log("Could not check/fix returns table: " . $e->getMessage());
     }
 
     // Update return_items table with new columns if they don't exist
@@ -1826,8 +1865,22 @@ try {
         }
 
         if (!in_array('action_taken', $columns)) {
-            $conn->exec("ALTER TABLE return_items ADD COLUMN action_taken ENUM('pending', 'accepted', 'partial_accept', 'rejected', 'exchange', 'refund') DEFAULT 'pending' COMMENT 'Action taken on this return item'");
+            $conn->exec("ALTER TABLE return_items ADD COLUMN action_taken ENUM('draft', 'pending', 'accepted', 'partial_accept', 'rejected', 'exchange', 'refund') DEFAULT 'pending' COMMENT 'Action taken on this return item'");
             error_log("Added action_taken column to return_items");
+        } else {
+            // Check if action_taken enum includes 'draft'
+            $stmt = $conn->query("DESCRIBE return_items action_taken");
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            $current_enum = $result['Type'];
+
+            if (strpos($current_enum, 'draft') === false) {
+                try {
+                    $conn->exec("ALTER TABLE return_items MODIFY COLUMN action_taken ENUM('draft', 'pending', 'accepted', 'partial_accept', 'rejected', 'exchange', 'refund') DEFAULT 'pending' COMMENT 'Action taken on this return item'");
+                    error_log("Updated return_items action_taken enum to include 'draft'");
+                } catch (PDOException $e) {
+                    error_log("Failed to update action_taken enum: " . $e->getMessage());
+                }
+            }
         }
 
         if (!in_array('action_notes', $columns)) {

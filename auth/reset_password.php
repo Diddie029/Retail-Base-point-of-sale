@@ -152,7 +152,15 @@ if(isset($_GET['token'])) {
                             <label for="password" class="form-label">
                                 <i class="bi bi-lock me-2"></i>New Password
                             </label>
-                            <input type="password" class="form-control" id="password" name="password" required>
+                            <div class="input-group">
+                                <div class="input-with-icon" style="flex: 1;">
+                                    <input type="password" class="form-control" id="password" name="password" required>
+                                    <i class="bi bi-lock input-field-icon"></i>
+                                </div>
+                                <button class="btn btn-outline-secondary password-toggle" type="button" id="passwordToggle" aria-label="Show password">
+                                    <i class="bi bi-eye" id="passwordIcon"></i>
+                                </button>
+                            </div>
                             <div id="passwordStrength" class="password-strength"></div>
                         </div>
 
@@ -160,7 +168,15 @@ if(isset($_GET['token'])) {
                             <label for="confirm_password" class="form-label">
                                 <i class="bi bi-lock-fill me-2"></i>Confirm New Password
                             </label>
-                            <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                            <div class="input-group">
+                                <div class="input-with-icon" style="flex: 1;">
+                                    <input type="password" class="form-control" id="confirm_password" name="confirm_password" required>
+                                    <i class="bi bi-lock-fill input-field-icon"></i>
+                                </div>
+                                <button class="btn btn-outline-secondary password-toggle" type="button" id="confirmPasswordToggle" aria-label="Show password">
+                                    <i class="bi bi-eye" id="confirmPasswordIcon"></i>
+                                </button>
+                            </div>
                         </div>
 
                         <div class="d-grid mb-3">
@@ -183,6 +199,6 @@ if(isset($_GET['token'])) {
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="../assets/js/auth.js"></script>
+    <script src="../assets/js/auth.js?v=<?php echo filemtime(__DIR__ . '/../assets/js/auth.js'); ?>"></script>
 </body>
 </html>

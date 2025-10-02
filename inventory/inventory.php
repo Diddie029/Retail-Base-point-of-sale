@@ -491,7 +491,7 @@ if (hasPermission('manage_inventory', $permissions)) {
                             <i class="bi bi-arrow-return-left"></i>
                             Create Return
                         </a>
-                        <div class="action-btn" onclick="window.location.href='returns_list.php'" style="cursor: pointer;">
+                        <div class="action-btn" onclick="window.location.href='view_returns.php'" style="cursor: pointer;">
                             <i class="bi bi-arrow-return-left"></i>
                             Returns Management
                         </div>

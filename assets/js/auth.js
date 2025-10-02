@@ -275,6 +275,9 @@ function validateEmail() {
 }
 
 function validatePassword() {
+    // Only validate on signup page; login/reset should not show composition hints
+    if (!document.querySelector('.signup-card')) return;
+
     const password = document.getElementById('password');
     if (!password) return;
 
@@ -512,7 +515,9 @@ function setupAutoRedirect(delay = 5000) {
 
 // Initialize all functionality when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    // Setup password toggles
+    const isSignupPage = !!document.querySelector('.signup-card');
+
+    // Setup password toggles (available on both login and signup)
     const passwordToggle = document.getElementById('passwordToggle');
     if (passwordToggle) {
         passwordToggle.addEventListener('click', toggleMainPassword);
@@ -523,55 +528,68 @@ document.addEventListener('DOMContentLoaded', function() {
         confirmPasswordToggle.addEventListener('click', toggleConfirmPassword);
     }
 
-    // Setup password generator
-    const generatePasswordBtn = document.getElementById('generatePassword');
-    if (generatePasswordBtn) {
-        generatePasswordBtn.addEventListener('click', generatePassword);
-    }
+    if (isSignupPage) {
+        // Signup-only: password generator
+        const generatePasswordBtn = document.getElementById('generatePassword');
+        if (generatePasswordBtn) {
+            generatePasswordBtn.addEventListener('click', generatePassword);
+        }
 
-    // Setup password strength checker
-    const passwordInputStrength = document.getElementById('password');
-    if (passwordInputStrength) {
-        passwordInputStrength.addEventListener('input', checkPasswordStrength);
+        // Signup-only: password strength checker and focus behavior
+        const passwordInputStrength = document.getElementById('password');
+        if (passwordInputStrength) {
+            passwordInputStrength.addEventListener('input', checkPasswordStrength);
 
-        // Auto-focus on password if email is already filled
+            // Auto-focus on password if email is already filled (signup)
+            const emailInput = document.getElementById('email');
+            if (emailInput && emailInput.value) {
+                passwordInputStrength.focus();
+            } else if (emailInput) {
+                emailInput.focus();
+            }
+        }
+
+        // Signup-only: confirm password validation
+        const confirmPassword = document.getElementById('confirm_password');
+        if (confirmPassword) {
+            confirmPassword.addEventListener('input', validateConfirmPassword);
+        }
+
+        // Signup-only: real-time validation for username, email, and password composition
+        const usernameInput = document.getElementById('username');
+        if (usernameInput) {
+            usernameInput.addEventListener('input', validateUsername);
+            usernameInput.addEventListener('blur', validateUsername);
+        }
+
         const emailInput = document.getElementById('email');
-        if (emailInput && emailInput.value) {
-            passwordInputStrength.focus();
-        } else if (emailInput) {
-            emailInput.focus();
+        if (emailInput) {
+            emailInput.addEventListener('input', validateEmail);
+            emailInput.addEventListener('blur', validateEmail);
+        }
+
+        const passwordInputValidation = document.getElementById('password');
+        if (passwordInputValidation) {
+            passwordInputValidation.addEventListener('input', function() {
+                validatePassword();
+                validateConfirmPassword(); // Re-validate confirm password when main password changes
+            });
+            passwordInputValidation.addEventListener('blur', validatePassword);
+        }
+    } else {
+        // Non-signup pages (e.g., login): cleanup and focus
+        const identifier = document.getElementById('identifier');
+        if (identifier && !identifier.value) {
+            identifier.focus();
+        }
+        // Ensure any residual validation UI is cleared on login/reset
+        const pw = document.getElementById('password');
+        if (pw) {
+            clearFieldValidation(pw);
         }
     }
 
-    // Setup confirm password validation
-    const confirmPassword = document.getElementById('confirm_password');
-    if (confirmPassword) {
-        confirmPassword.addEventListener('input', validateConfirmPassword);
-    }
-
-    // Setup real-time validation
-    const usernameInput = document.getElementById('username');
-    if (usernameInput) {
-        usernameInput.addEventListener('input', validateUsername);
-        usernameInput.addEventListener('blur', validateUsername);
-    }
-
-    const emailInput = document.getElementById('email');
-    if (emailInput) {
-        emailInput.addEventListener('input', validateEmail);
-        emailInput.addEventListener('blur', validateEmail);
-    }
-
-    const passwordInputValidation = document.getElementById('password');
-    if (passwordInputValidation) {
-        passwordInputValidation.addEventListener('input', function() {
-            validatePassword();
-            validateConfirmPassword(); // Re-validate confirm password when main password changes
-        });
-        passwordInputValidation.addEventListener('blur', validatePassword);
-    }
-
-    // Setup OTP input
+    // Setup OTP input (if present)
     setupOTPInput();
 
     // Setup form animations

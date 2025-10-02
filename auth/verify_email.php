@@ -103,7 +103,7 @@ POS System";
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="../assets/js/auth.js"></script>
+    <script src="../assets/js/auth.js?v=<?php echo filemtime(__DIR__ . '/../assets/js/auth.js'); ?>"></script>
 
     <?php if($messageType === 'success' && $showLoginButton): ?>
     <script>

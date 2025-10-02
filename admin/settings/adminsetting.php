@@ -155,6 +155,16 @@ $defaults = [
     'bom_cost_calculation_method' => 'standard',
     'bom_default_waste_percentage' => '5.0',
 
+    // Return Order Settings
+    'auto_generate_return_number' => '1',
+    'return_number_prefix' => 'RTN',
+    'return_number_length' => '6',
+    'return_number_separator' => '-',
+    'return_number_format' => 'prefix-date-number',
+    'return_default_status' => 'pending',
+    'return_auto_approve' => '0',
+    'return_allow_negative_stock' => '1',
+
 
     // Receipt Settings
     'receipt_header' => '',
@@ -427,11 +437,36 @@ function generateTransactionIdPreview($settings) {
 function generateQuotationNumberPreview($settings) {
     $prefix = $settings['quotation_prefix'] ?? 'QUO';
     $length = intval($settings['quotation_number_length'] ?? 6);
-    
+
     // Generate sample number
     $sampleNumber = str_pad('1', $length, '0', STR_PAD_LEFT);
-    
+
     return $prefix . $sampleNumber;
+}
+
+// Function to generate return number preview
+function generateReturnNumberPreview($settings) {
+    $prefix = $settings['return_number_prefix'] ?? 'RTN';
+    $length = intval($settings['return_number_length'] ?? 6);
+    $separator = $settings['return_number_separator'] ?? '-';
+    $format = $settings['return_number_format'] ?? 'prefix-date-number';
+
+    // Generate sample number
+    $sampleNumber = str_pad('1', $length, '0', STR_PAD_LEFT);
+    $currentDate = date('Ymd');
+
+    switch ($format) {
+        case 'prefix-date-number':
+            return $prefix . $separator . $currentDate . $separator . $sampleNumber;
+        case 'prefix-number':
+            return $prefix . $separator . $sampleNumber;
+        case 'date-prefix-number':
+            return $currentDate . $separator . $prefix . $separator . $sampleNumber;
+        case 'number-only':
+            return $sampleNumber;
+        default:
+            return $prefix . $separator . $currentDate . $separator . $sampleNumber;
+    }
 }
 
 
@@ -448,7 +483,8 @@ $valid_tabs = [
     'security' => $can_manage_security,
     'receipt' => $can_manage_receipts,
     'quotation' => $can_manage_quotations,
-    'invoice' => $can_manage_invoices
+    'invoice' => $can_manage_invoices,
+    'returns' => $can_manage_inventory || $can_manage_system // Return settings under inventory/system management
 ];
 
 if (!isset($valid_tabs[$active_tab]) || !$valid_tabs[$active_tab]) {
@@ -750,13 +786,38 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Quotation validity days must be between 1 and 365.";
         }
     }
+
+    // Return Order Settings Validation
+    if (isset($_POST['return_number_prefix'])) {
+        $return_prefix = trim($_POST['return_number_prefix']);
+        if (strlen($return_prefix) > 10) {
+            $errors[] = "Return number prefix cannot exceed 10 characters.";
+        }
+        if (!preg_match('/^[A-Za-z0-9_-]*$/', $return_prefix)) {
+            $errors[] = "Return number prefix can only contain letters, numbers, hyphens, and underscores.";
+        }
+    }
+
+    if (isset($_POST['return_number_length'])) {
+        $return_length = intval($_POST['return_number_length']);
+        if ($return_length < 3 || $return_length > 10) {
+            $errors[] = "Return number length must be between 3 and 10 digits.";
+        }
+    }
+
+    if (isset($_POST['return_number_separator'])) {
+        $return_separator = trim($_POST['return_number_separator']);
+        if (strlen($return_separator) > 5) {
+            $errors[] = "Return number separator cannot exceed 5 characters.";
+        }
+    }
     
     if (empty($errors)) {
         try {
             $conn->beginTransaction();
             
             // Handle checkbox values
-            $checkbox_fields = ['enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_customer_number', 'receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'auto_close_print_window', 'auto_generate_receipt_number'];
+            $checkbox_fields = ['enable_sound', 'allow_negative_stock', 'auto_generate_sku', 'auto_generate_order_number', 'invoice_auto_generate', 'auto_generate_customer_number', 'receipt_show_tax', 'receipt_show_discount', 'auto_print_receipt', 'auto_close_print_window', 'auto_generate_receipt_number', 'auto_generate_return_number', 'return_auto_approve', 'return_allow_negative_stock'];
             foreach($checkbox_fields as $field) {
                 if (!isset($_POST[$field])) {
                     $_POST[$field] = '0';
@@ -1320,6 +1381,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <a href="?tab=invoice" class="nav-link <?php echo $active_tab == 'invoice' ? 'active' : ''; ?>">
                         <i class="bi bi-file-earmark-text me-2"></i>
                         Invoice Settings
+                    </a>
+                    <?php endif; ?>
+                    <?php if ($can_manage_inventory || $can_manage_system): ?>
+                    <a href="?tab=returns" class="nav-link <?php echo $active_tab == 'returns' ? 'active' : ''; ?>">
+                        <i class="bi bi-arrow-return-left me-2"></i>
+                        Return Settings
                     </a>
                     <?php endif; ?>
                 </div>
@@ -3518,6 +3585,166 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </form>
                 </div>
                 <?php endif; ?>
+
+                <!-- Return Settings Tab -->
+                <?php if ($active_tab == 'returns' && ($can_manage_inventory || $can_manage_system)): ?>
+                <div class="data-section">
+                    <div class="section-header">
+                        <h3 class="section-title">
+                            <i class="bi bi-arrow-return-left me-2"></i>
+                            Return Order Settings
+                        </h3>
+                        <p class="section-subtitle text-muted">Configure return order numbering, approval workflow, and stock management settings</p>
+                    </div>
+
+                    <form method="POST" action="" class="settings-form" id="returnForm">
+                        <!-- Return Number Settings Section -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-hash me-2"></i>
+                                    Return Number Settings
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-group mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="auto_generate_return_number" name="auto_generate_return_number" value="1"
+                                               <?php echo (isset($settings['auto_generate_return_number']) && $settings['auto_generate_return_number'] == '1') ? 'checked' : ''; ?>>
+                                        <label class="form-check-label fw-semibold" for="auto_generate_return_number">
+                                            <i class="bi bi-gear-fill me-1"></i>Auto-generate Return Numbers
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Automatically generate sequential return numbers when creating returns.</div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="return_number_prefix" class="form-label fw-semibold">Return Number Prefix</label>
+                                            <input type="text" class="form-control" id="return_number_prefix" name="return_number_prefix"
+                                                   value="<?php echo htmlspecialchars($settings['return_number_prefix'] ?? 'RTN'); ?>"
+                                                   placeholder="RTN" maxlength="10">
+                                            <div class="form-text">Prefix for all return numbers (e.g., RTN, RET, R).</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="return_number_length" class="form-label fw-semibold">Number Length</label>
+                                            <input type="number" min="3" max="10" class="form-control" id="return_number_length" name="return_number_length"
+                                                   value="<?php echo htmlspecialchars($settings['return_number_length'] ?? '6'); ?>"
+                                                   placeholder="6">
+                                            <div class="form-text">Number of digits in the return number (3-10).</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="return_number_separator" class="form-label fw-semibold">Separator</label>
+                                            <input type="text" class="form-control" id="return_number_separator" name="return_number_separator"
+                                                   value="<?php echo htmlspecialchars($settings['return_number_separator'] ?? '-'); ?>"
+                                                   placeholder="-" maxlength="5">
+                                            <div class="form-text">Character between prefix, date, and number (e.g., -, _, #).</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="return_number_format" class="form-label fw-semibold">Number Format</label>
+                                            <select class="form-select" id="return_number_format" name="return_number_format">
+                                                <option value="prefix-date-number" <?php echo ($settings['return_number_format'] ?? 'prefix-date-number') === 'prefix-date-number' ? 'selected' : ''; ?>>
+                                                    Prefix + Date + Number (RTN-20241201-000001)
+                                                </option>
+                                                <option value="prefix-number" <?php echo ($settings['return_number_format'] ?? '') === 'prefix-number' ? 'selected' : ''; ?>>
+                                                    Prefix + Number (RTN-000001)
+                                                </option>
+                                                <option value="date-prefix-number" <?php echo ($settings['return_number_format'] ?? '') === 'date-prefix-number' ? 'selected' : ''; ?>>
+                                                    Date + Prefix + Number (20241201-RTN-000001)
+                                                </option>
+                                                <option value="number-only" <?php echo ($settings['return_number_format'] ?? '') === 'number-only' ? 'selected' : ''; ?>>
+                                                    Number Only (000001)
+                                                </option>
+                                            </select>
+                                            <div class="form-text">Choose how return numbers are formatted.</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-group mb-3">
+                                    <label for="return_number_preview" class="form-label fw-semibold">Number Preview</label>
+                                    <div class="alert alert-info">
+                                        <i class="bi bi-eye me-2"></i>
+                                        <strong>Preview:</strong>
+                                        <span id="returnNumberPreview"><?php echo generateReturnNumberPreview($settings); ?></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Return Workflow Settings -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-success text-white">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-diagram-3 me-2"></i>
+                                    Return Workflow Settings
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <label for="return_default_status" class="form-label fw-semibold">Default Return Status</label>
+                                            <select class="form-select" id="return_default_status" name="return_default_status">
+                                                <option value="pending" <?php echo ($settings['return_default_status'] ?? 'pending') == 'pending' ? 'selected' : ''; ?>>Pending Approval</option>
+                                                <option value="approved" <?php echo ($settings['return_default_status'] ?? 'pending') == 'approved' ? 'selected' : ''; ?>>Auto-Approved</option>
+                                                <option value="draft" <?php echo ($settings['return_default_status'] ?? 'pending') == 'draft' ? 'selected' : ''; ?>>Draft</option>
+                                            </select>
+                                            <div class="form-text">Default status for new returns (requires approval workflow).</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-group mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="return_auto_approve" name="return_auto_approve" value="1"
+                                                       <?php echo (isset($settings['return_auto_approve']) && $settings['return_auto_approve'] == '1') ? 'checked' : ''; ?>>
+                                                <label class="form-check-label fw-semibold" for="return_auto_approve">
+                                                    <i class="bi bi-check-circle-fill me-1"></i>Auto-approve Returns
+                                                </label>
+                                            </div>
+                                            <div class="form-text">Automatically approve returns upon creation (bypasses approval workflow).</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-group mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="return_allow_negative_stock" name="return_allow_negative_stock" value="1"
+                                               <?php echo (isset($settings['return_allow_negative_stock']) && $settings['return_allow_negative_stock'] == '1') ? 'checked' : ''; ?>>
+                                        <label class="form-check-label fw-semibold" for="return_allow_negative_stock">
+                                            <i class="bi bi-dash-circle me-1"></i>Allow Negative Stock for Returns
+                                        </label>
+                                    </div>
+                                    <div class="form-text">Allow returning products even if it results in negative stock quantities.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="d-flex gap-3">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-save me-2"></i>
+                                    Save Return Settings
+                                </button>
+                                <button type="reset" class="btn btn-outline-secondary">
+                                    <i class="bi bi-arrow-clockwise me-2"></i>
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -4195,6 +4422,52 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // Initial quotation number preview update
         updateQuotationNumberPreview();
+
+        // Return Number Preview Functionality (only if return tab is active)
+        if (document.getElementById('return_number_prefix')) {
+            function updateReturnNumberPreview() {
+                const prefix = document.getElementById('return_number_prefix').value || 'RTN';
+                const separator = document.getElementById('return_number_separator').value || '-';
+                const length = parseInt(document.getElementById('return_number_length').value) || 6;
+                const format = document.getElementById('return_number_format').value || 'prefix-date-number';
+
+                // Generate sample number
+                let sampleNumber = str_pad('1', length, '0', 'STR_PAD_LEFT');
+                const currentDate = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+
+                let preview = '';
+                switch(format) {
+                    case 'prefix-date-number':
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                        break;
+                    case 'prefix-number':
+                        preview = prefix + separator + sampleNumber;
+                        break;
+                    case 'date-prefix-number':
+                        preview = currentDate + separator + prefix + separator + sampleNumber;
+                        break;
+                    case 'number-only':
+                        preview = sampleNumber;
+                        break;
+                    default:
+                        preview = prefix + separator + currentDate + separator + sampleNumber;
+                }
+
+                document.getElementById('returnNumberPreview').textContent = preview;
+            }
+
+            // Add event listeners for return number preview updates
+            const returnNumberInputs = ['return_number_prefix', 'return_number_separator', 'return_number_length', 'return_number_format'];
+            returnNumberInputs.forEach(inputId => {
+                const input = document.getElementById(inputId);
+                if (input) {
+                    input.addEventListener('input', updateReturnNumberPreview);
+                    input.addEventListener('change', updateReturnNumberPreview);
+                }
+            });
+
+            // Initial return number preview update
+            updateReturnNumberPreview();
         });
     </script>
 </body>
