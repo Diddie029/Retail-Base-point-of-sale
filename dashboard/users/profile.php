@@ -97,7 +97,7 @@ if ($_POST) {
                 $stmt->execute();
 
                 // Update session email if changed
-                if ($_SESSION['email'] !== $email) {
+                if (!isset($_SESSION['email']) || $_SESSION['email'] !== $email) {
                     $_SESSION['email'] = $email;
                 }
 
