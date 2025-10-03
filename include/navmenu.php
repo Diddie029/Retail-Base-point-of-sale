@@ -36,24 +36,14 @@ if ($isAdmin) {
         $showSections[$sectionKey] = true; // Admin sees everything
         $prioritySections[] = $sectionKey; // All sections are priority for admin
     }
-    
-        // Ensure critical sections are always visible for admin (hardcoded fallback)
-        $showSections['dashboard'] = true;
-        $showSections['pos'] = true;
-        $showSections['quotations'] = true;
-        $showSections['reports'] = true;
 
-    if (!in_array('dashboard', $prioritySections)) {
-        $prioritySections[] = 'dashboard';
-    }
-    if (!in_array('pos', $prioritySections)) {
-        $prioritySections[] = 'pos';
-    }
-    if (!in_array('quotations', $prioritySections)) {
-        $prioritySections[] = 'quotations';
-    }
-    if (!in_array('reports', $prioritySections)) {
-        $prioritySections[] = 'reports';
+    // Ensure all critical sections are always visible for admin (hardcoded fallback)
+    $criticalSections = ['dashboard', 'pos_management', 'quotations', 'reports', 'reception', 'customer_crm', 'inventory', 'expiry', 'bom', 'finance', 'expenses', 'analytics', 'admin', 'shelf_labels'];
+    foreach ($criticalSections as $section) {
+        $showSections[$section] = true;
+        if (!in_array($section, $prioritySections)) {
+            $prioritySections[] = $section;
+        }
     }
 } elseif ($role_id) {
     $stmt = $conn->prepare("
@@ -233,15 +223,15 @@ if ($totalVisibleSections == 0 && (
     
     // Ensure critical sections are always visible for admin (emergency fallback)
     $showSections['dashboard'] = true;
-    $showSections['pos'] = true;
+    $showSections['pos_management'] = true;
     $showSections['quotations'] = true;
     $showSections['reports'] = true;
 
     if (!in_array('dashboard', $prioritySections)) {
         $prioritySections[] = 'dashboard';
     }
-    if (!in_array('pos', $prioritySections)) {
-        $prioritySections[] = 'pos';
+    if (!in_array('pos_management', $prioritySections)) {
+        $prioritySections[] = 'pos_management';
     }
     if (!in_array('quotations', $prioritySections)) {
         $prioritySections[] = 'quotations';
@@ -277,15 +267,7 @@ if ($totalVisibleSections == 0 && (
         </div>
         <?php endif; ?>
 
-        <!-- POS - Always visible for admin -->
-        <?php if (isset($showSections['pos']) && $showSections['pos']): ?>
-        <div class="nav-item">
-            <a href="<?php echo url('pos/sale.php'); ?>" class="nav-link <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? 'active' : ''; ?>" style="background-color: <?php echo strpos($_SERVER['REQUEST_URI'], '/pos/') !== false ? ($settings['theme_color'] ?? '#6366f1') : 'transparent'; ?>">
-                <i class="bi bi-cart-plus"></i>
-                POS
-            </a>
-        </div>
-        <?php endif; ?>
+
 
 
         <!-- Dynamic Navigation Sections -->

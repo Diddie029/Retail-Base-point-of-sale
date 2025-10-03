@@ -10,6 +10,11 @@
  * @return string The base URL (e.g., '/pointofsale' or '' for root)
  */
 function getBaseUrl() {
+    // If we're accessing via pointofsale.web domain, use root path
+    if (isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] === 'pointofsale.web') {
+        return '';
+    }
+    
     // For development environments like Laragon, XAMPP, etc.
     // Check if we're in a subdirectory by examining the current working directory
     $currentDir = getcwd();
@@ -814,6 +819,14 @@ function sanitizeInput($data) {
  * @return string Formatted currency string
  */
 function formatCurrency($amount, $settings = null) {
+    // Handle null or non-numeric amounts
+    if ($amount === null || !is_numeric($amount)) {
+        $amount = 0;
+    }
+
+    // Convert to float to ensure proper handling
+    $amount = (float) $amount;
+
     // If no settings provided, get from database
     if ($settings === null) {
         global $conn;

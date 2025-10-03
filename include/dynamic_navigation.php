@@ -7,9 +7,15 @@ $sectionContentMappings = [
     'dashboard' => [
         [url('dashboard/dashboard.php'), 'bi-speedometer2', 'Dashboard']
     ],
-    'pos' => [
+    'pos_management' => [
         [url('pos/sale.php'), 'bi-cart-plus', 'Point of Sale'],
-        [url('pos/void_reports.php'), 'bi-x-circle', 'Void Reports']
+        [url('pos/void_reports.php'), 'bi-x-circle', 'Void Reports'],
+        [url('sales/salesdashboard.php'), 'bi-cash-register', 'Sales Dashboard'],
+        [url('sales/index.php'), 'bi-graph-up', 'Sales Analytics'],
+        [url('sales/export_sales.php'), 'bi-download', 'Export Sales'],
+        [url('sales/tills.php'), 'bi-calculator', 'Till Management'],
+        [url('sales/cash-drop.php'), 'bi-cash-stack', 'Cash Drop Management'],
+        [url('pos/till_details.php'), 'bi-clipboard-data', 'Till Details & Reports']
     ],
     'quotations' => [
         [url('quotations/quotations.php'), 'bi-file-earmark-text', 'All Quotations'],
@@ -66,19 +72,7 @@ $sectionContentMappings = [
     'analytics' => [
         [url('analytics/index.php'), 'bi-graph-up', 'Analytics Dashboard']
     ],
-    'pos_management' => [
-        [url('sales/salesdashboard.php'), 'bi-cash-register', 'POS Management Dashboard'],
-        [url('sales/tills.php'), 'bi-calculator', 'Till Management'],
-        [url('sales/cash-drop.php'), 'bi-cash-stack', 'Cash Drop Management'],
-        [url('pos/till_details.php'), 'bi-clipboard-data', 'Till Details & Reports']
-    ],
-    'sales' => [
-        [url('sales/index.php'), 'bi-graph-up', 'Sales Dashboard'],
-        [url('sales/salesdashboard.php'), 'bi-speedometer2', 'Sales Overview'],
-        [url('sales/export_sales.php'), 'bi-download', 'Export Sales'],
-        [url('sales/tills.php'), 'bi-calculator', 'Till Management'],
-        [url('sales/cash-drop.php'), 'bi-cash-stack', 'Cash Drop Management']
-    ],
+
     'shelf_labels' => [
         [url('shelf_label/index.php'), 'bi-tags', 'Shelf Labels'],
         [url('shelf_label/shelf_labels.php'), 'bi-tags', 'Manage Labels'],
@@ -150,25 +144,30 @@ function generateNavSection($sectionKey, $sectionName, $sectionIcon, $isVisible,
 
 // Generate dynamic sections based on database
 if (isset($menuAccess) && !empty($menuAccess)) {
-    foreach ($menuAccess as $access) {
-        $sectionKey = $access['section_key'];
-        $isVisible = $access['is_visible'] ?? 1; // Default to visible for admin
+    $allSectionKeys = array_keys($sectionContentMappings);
+    foreach ($allSectionKeys as $sectionKey) {
+        // Find menuAccess entry for this section
+        $access = null;
+        foreach ($menuAccess as $a) {
+            if ($a['section_key'] === $sectionKey) {
+                $access = $a;
+                break;
+            }
+        }
+        $isVisible = $access['is_visible'] ?? 1;
         $isPriority = $access['is_priority'] ?? 0;
-        $sectionName = $access['section_name'];
-        $sectionIcon = $access['section_icon'];
-        
-        $sectionItems = isset($sectionContentMappings[$sectionKey]) ? $sectionContentMappings[$sectionKey] : [];
-        
+        $sectionName = $access['section_name'] ?? ucfirst(str_replace('_', ' ', $sectionKey));
+        $sectionIcon = $access['section_icon'] ?? 'bi-circle';
+        $sectionItems = $sectionContentMappings[$sectionKey];
         echo generateNavSection($sectionKey, $sectionName, $sectionIcon, $isVisible, $isPriority, $sectionItems);
     }
 } else {
     // Fallback for users without roles - use hardcoded sections
     $sectionConfig = [
         'dashboard' => ['Dashboard', 'bi-speedometer2', $sectionContentMappings['dashboard'] ?? []],
-        'pos' => ['Point of Sale', 'bi-cart-plus', $sectionContentMappings['pos'] ?? []],
+        'pos_management' => ['POS Management', 'bi-cash-register', $sectionContentMappings['pos_management'] ?? []],
         'quotations' => ['Quotations', 'bi-file-earmark-text', $sectionContentMappings['quotations'] ?? []],
         'reception' => ['Reception', 'bi-person-workspace', $sectionContentMappings['reception'] ?? []],
-        'pos_management' => ['POS Management', 'bi-cash-register', $sectionContentMappings['pos_management'] ?? []],
         'customer_crm' => ['Customer CRM', 'bi-people', $sectionContentMappings['customer_crm'] ?? []],
         'inventory' => ['Inventory', 'bi-boxes', $sectionContentMappings['inventory'] ?? []],
         'expiry' => ['Expiry Management', 'bi-clock-history', $sectionContentMappings['expiry'] ?? []],
@@ -176,7 +175,6 @@ if (isset($menuAccess) && !empty($menuAccess)) {
         'finance' => ['Finance', 'bi-calculator', $sectionContentMappings['finance'] ?? []],
         'expenses' => ['Expense Management', 'bi-cash-stack', $sectionContentMappings['expenses'] ?? []],
         'analytics' => ['Analytics', 'bi-graph-up', $sectionContentMappings['analytics'] ?? []],
-        'sales' => ['Sales Management', 'bi-graph-up', $sectionContentMappings['sales'] ?? []],
         'shelf_labels' => ['Shelf Labels', 'bi-tags', $sectionContentMappings['shelf_labels'] ?? []],
         'reports' => ['Reports', 'bi-graph-up', $sectionContentMappings['reports'] ?? []],
         'admin' => ['Administration', 'bi-shield', $sectionContentMappings['admin'] ?? []]

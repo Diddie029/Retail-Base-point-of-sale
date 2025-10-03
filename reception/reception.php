@@ -209,13 +209,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 FROM customers c
                 LEFT JOIN (
                     SELECT customer_id, SUM(points_earned) as total_earned
-                    FROM loyalty_transactions 
+                    FROM loyalty_points
                     WHERE transaction_type = 'earned'
                     GROUP BY customer_id
                 ) loyalty_earned ON c.id = loyalty_earned.customer_id
                 LEFT JOIN (
                     SELECT customer_id, SUM(points_redeemed) as total_redeemed
-                    FROM loyalty_transactions 
+                    FROM loyalty_points
                     WHERE transaction_type = 'redeemed'
                     GROUP BY customer_id
                 ) loyalty_redeemed ON c.id = loyalty_redeemed.customer_id
@@ -2234,10 +2234,15 @@ $stats['sales_amount_today'] = $sales_today_result['total_amount'] ?? 0;
          }, 300000); // Refresh every 5 minutes
 
         // Global function to handle reception authentication errors
-        function handleReceptionAuthError(response) {
+        async function handleReceptionAuthError(response) {
             if (response.status === 401) {
                 try {
-                    const data = response.json ? response.json() : JSON.parse(response.responseText || '{}');
+                    let data;
+                    if (response.json) {
+                        data = await response.json();
+                    } else {
+                        data = JSON.parse(response.responseText || '{}');
+                    }
                     if (data.error === 'Reception authentication required') {
                         alert(data.message || 'Please authenticate for reception access.');
                         // Reload the page to show authentication modal

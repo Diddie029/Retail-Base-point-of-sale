@@ -1064,6 +1064,24 @@ if (empty($errors)) {
             )
         ");
         echo "<p>✓ Created permissions table</p>";
+
+        // Create loyalty_transactions table
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS loyalty_transactions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                customer_id INT DEFAULT NULL,
+                points INT NOT NULL,
+                transaction_type ENUM('earn','redeem','adjust','expire') NOT NULL,
+                description TEXT,
+                reference VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (customer_id) REFERENCES customers(id)
+            )
+        ");
+        echo "<p>✓ Created loyalty_transactions table</p>";
         
         // Create role_permissions table
         $conn->exec("
@@ -1091,6 +1109,54 @@ if (empty($errors)) {
         ");
         echo "<p>✓ Created settings table</p>";
         
+        // Create default permissions
+        $default_permissions = [
+            // Reception permissions
+            ['name' => 'manage_reception', 'description' => 'Manage reception desk operations', 'category' => 'Reception'],
+            ['name' => 'view_reception', 'description' => 'View reception dashboard', 'category' => 'Reception'],
+            ['name' => 'process_returns', 'description' => 'Process customer returns and refunds', 'category' => 'Reception'],
+            ['name' => 'manage_customer_service', 'description' => 'Handle customer service requests', 'category' => 'Reception'],
+            // Other core permissions...
+            ['name' => 'manage_products', 'description' => 'Create and manage products', 'category' => 'Products'],
+            ['name' => 'view_products', 'description' => 'View product listings', 'category' => 'Products'],
+            ['name' => 'manage_categories', 'description' => 'Create and manage categories', 'category' => 'Products'],
+            ['name' => 'process_sales', 'description' => 'Process sales transactions', 'category' => 'Sales'],
+            ['name' => 'view_sales', 'description' => 'View sales reports', 'category' => 'Sales'],
+            ['name' => 'manage_inventory', 'description' => 'Manage inventory levels', 'category' => 'Inventory'],
+            ['name' => 'view_reports', 'description' => 'View system reports', 'category' => 'Reports'],
+            ['name' => 'manage_users', 'description' => 'Manage user accounts', 'category' => 'Administration'],
+            ['name' => 'manage_roles', 'description' => 'Manage user roles', 'category' => 'Administration']
+        ];
+
+        $perm_stmt = $conn->prepare("
+            INSERT IGNORE INTO permissions (name, description, category) 
+            VALUES (:name, :description, :category)
+        ");
+        foreach ($default_permissions as $permission) {
+            $perm_stmt->bindParam(':name', $permission['name']);
+            $perm_stmt->bindParam(':description', $permission['description']);
+            $perm_stmt->bindParam(':category', $permission['category']);
+            $perm_stmt->execute();
+        }
+        echo "<p>✓ Inserted default permissions</p>";
+
+        // Create role_permissions table
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS role_menu_access (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                role_id INT NOT NULL,
+                menu_section_id INT NOT NULL,
+                is_visible TINYINT(1) NOT NULL DEFAULT 1,
+                is_priority TINYINT(1) NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY role_section (role_id, menu_section_id),
+                FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+                FOREIGN KEY (menu_section_id) REFERENCES menu_sections(id) ON DELETE CASCADE
+            )
+        ");
+        echo "<p>✓ Created role_menu_access table</p>";
+
         // Insert default categories
         $default_categories = [
             ['General', 'General products category'],
@@ -1106,6 +1172,48 @@ if (empty($errors)) {
         }
         echo "<p>✓ Inserted default categories</p>";
         
+        // Create menu sections table if it doesn't exist
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS menu_sections (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                section_key VARCHAR(50) NOT NULL UNIQUE,
+                section_name VARCHAR(100) NOT NULL,
+                section_description TEXT,
+                section_icon VARCHAR(50) NOT NULL DEFAULT 'bi-circle',
+                sort_order INT NOT NULL DEFAULT 10,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        ");
+        echo "<p>✓ Created menu_sections table</p>";
+
+        // Insert default menu sections
+        $default_sections = [
+            ['dashboard', 'Dashboard', 'System dashboard and overview', 'bi-speedometer2', 1],
+            ['pos_management', 'POS Management', 'Point of Sale, Sales Management, Till operations, and Cash drops', 'bi-cash-register', 2],
+            ['reception', 'Reception', 'Reception desk operations', 'bi-person-workspace', 3],
+            ['customer_crm', 'Customer CRM', 'Customer relationship management', 'bi-people', 4],
+            ['inventory', 'Inventory', 'Inventory and stock management', 'bi-boxes', 5],
+            ['expiry', 'Expiry Management', 'Product expiry tracking', 'bi-clock-history', 6],
+            ['bom', 'Bill of Materials', 'BOM management', 'bi-file-earmark-text', 7],
+            ['finance', 'Finance', 'Financial operations', 'bi-calculator', 8],
+            ['expenses', 'Expenses', 'Expense management', 'bi-cash-stack', 9],
+            ['analytics', 'Analytics', 'Business analytics', 'bi-graph-up', 10],
+            ['admin', 'Administration', 'System administration', 'bi-shield', 11],
+            ['reports', 'Reports', 'System reports', 'bi-file-text', 12]
+        ];
+
+        $section_stmt = $conn->prepare("
+            INSERT IGNORE INTO menu_sections 
+            (section_key, section_name, section_description, section_icon, sort_order) 
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        foreach ($default_sections as $section) {
+            $section_stmt->execute($section);
+        }
+        echo "<p>✓ Inserted default menu sections</p>";
+
         // Insert default roles
         $default_roles = [
             ['Admin', 'System administrator with full access'],

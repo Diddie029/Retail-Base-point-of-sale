@@ -1020,10 +1020,10 @@ try {
         if ($result['count'] == 0) {
             // Insert default menu sections
             $menu_sections = [
-                ['quotations', 'Quotations', 'bi-file-earmark-text', 'Create and manage customer quotations', 2],
-                ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 3],
-                ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 4],
-                ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 5],
+                ['pos_management', 'POS Management', 'bi-cash-register', 'Point of Sale, Sales Management, Till operations, and Cash drops', 2],
+                ['quotations', 'Quotations', 'bi-file-earmark-text', 'Create and manage customer quotations', 3],
+                ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 4],
+                ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 5],
                 ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 6],
                 ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 7],
                 ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 8],
@@ -1045,19 +1045,18 @@ try {
 
         // Ensure all required sections exist (for existing databases)
         $required_sections = [
-            ['pos_management', 'POS Management', 'bi-cash-register', 'Till management, cash drops, and POS operations', 2],
+            ['pos_management', 'POS Management', 'bi-cash-register', 'Point of Sale, Sales Management, Till operations, and Cash drops', 2],
             ['quotations', 'Quotations', 'bi-file-earmark-text', 'Create and manage customer quotations', 3],
             ['customer_crm', 'Customer CRM', 'bi-people', 'Customer relationship management and loyalty programs', 4],
             ['analytics', 'Analytics', 'bi-graph-up', 'Comprehensive analytics and reporting dashboard', 5],
             ['reports', 'Reports', 'bi-graph-up', 'Comprehensive reporting and analytics dashboard', 6],
-            ['sales', 'Sales Management', 'bi-graph-up', 'Sales dashboard, analytics, and management tools', 7],
-            ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 8],
-            ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 9],
-            ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 10],
-            ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 11],
-            ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 12],
-            ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 13],
-            ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 14]
+            ['inventory', 'Inventory', 'bi-boxes', 'Manage products, categories, brands, suppliers, and inventory', 7],
+            ['shelf_labels', 'Shelf Labels', 'bi-tags', 'Generate and manage shelf labels for products', 8],
+            ['expiry', 'Expiry Management', 'bi-clock-history', 'Track and manage product expiry dates', 9],
+            ['bom', 'Bill of Materials', 'bi-file-earmark-text', 'Create and manage bills of materials and production', 10],
+            ['finance', 'Finance', 'bi-calculator', 'Financial reports, budgets, and analysis', 11],
+            ['expenses', 'Expense Management', 'bi-cash-stack', 'Track and manage business expenses', 12],
+            ['admin', 'Administration', 'bi-shield', 'User management, settings, and system administration', 13]
         ];
 
         $stmt = $conn->prepare("
@@ -1078,6 +1077,21 @@ try {
 
         foreach ($required_sections as $section) {
             $stmt->execute([$section[1], $section[2], $section[3], $section[4], $section[0]]);
+        }
+
+        // Clean up old separate sections that are now combined into POS Management
+        try {
+            // Remove old 'pos' and 'sales' sections if they exist
+            $stmt = $conn->prepare("DELETE FROM menu_sections WHERE section_key IN ('pos', 'sales')");
+            $stmt->execute();
+
+            // Remove role assignments for old sections
+            $stmt = $conn->prepare("DELETE FROM role_menu_access WHERE menu_section_id IN (SELECT id FROM menu_sections WHERE section_key IN ('pos', 'sales'))");
+            $stmt->execute();
+
+            error_log("Cleaned up old POS and Sales menu sections - now combined into POS Management");
+        } catch (PDOException $e) {
+            error_log("Warning: Could not clean up old menu sections: " . $e->getMessage());
         }
 
     } catch (PDOException $e) {
@@ -5588,8 +5602,58 @@ try {
     $GLOBALS['db_error'] = $e->getMessage();
 }
 
+    // Create loyalty_transactions table
+    try {
+        $conn->exec("
+            CREATE TABLE IF NOT EXISTS loyalty_transactions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                customer_id INT DEFAULT NULL,
+                points INT NOT NULL,
+                transaction_type ENUM('earn','redeem','adjust','expire') NOT NULL,
+                description TEXT,
+                reference VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (customer_id) REFERENCES customers(id),
+                INDEX idx_user_id (user_id),
+                INDEX idx_customer_id (customer_id),
+                INDEX idx_transaction_type (transaction_type),
+                INDEX idx_created_at (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    } catch (PDOException $e) {
+        // Log error but continue
+        error_log('Failed to create loyalty_transactions table: ' . $e->getMessage());
+    }
+
     // Add new columns to existing loyalty_points table if they don't exist
     try {
+        // Check if points_earned column exists (core column)
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'points_earned'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN points_earned INT DEFAULT 0 AFTER customer_id");
+        }
+
+        // Check if points_redeemed column exists (core column)
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'points_redeemed'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN points_redeemed INT DEFAULT 0 AFTER points_earned");
+        }
+
+        // Check if points_balance column exists (core column)
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'points_balance'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN points_balance INT DEFAULT 0 AFTER points_redeemed");
+        }
+
+        // Check if transaction_type column exists (core column)
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'transaction_type'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN transaction_type ENUM('earned', 'redeemed', 'expired', 'adjusted') NOT NULL DEFAULT 'earned' AFTER points_balance");
+        }
+
         // Check if approval_status column exists
         $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'approval_status'");
         if ($result->rowCount() == 0) {
@@ -5618,6 +5682,36 @@ try {
         $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'source'");
         if ($result->rowCount() == 0) {
             $conn->exec("ALTER TABLE loyalty_points ADD COLUMN source ENUM('purchase', 'manual', 'welcome', 'bonus', 'adjustment') DEFAULT 'manual'");
+        }
+
+        // Check if transaction_reference column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'transaction_reference'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN transaction_reference VARCHAR(100) AFTER transaction_type");
+        }
+
+        // Check if description column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'description'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN description TEXT AFTER transaction_reference");
+        }
+
+        // Check if expiry_date column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'expiry_date'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN expiry_date DATE NULL AFTER description");
+        }
+
+        // Check if created_at column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'created_at'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        }
+
+        // Check if updated_at column exists
+        $result = $conn->query("SHOW COLUMNS FROM loyalty_points LIKE 'updated_at'");
+        if ($result->rowCount() == 0) {
+            $conn->exec("ALTER TABLE loyalty_points ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
         }
 
         // Add foreign key constraint for approved_by if it doesn't exist

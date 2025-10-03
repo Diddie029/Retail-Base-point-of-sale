@@ -182,7 +182,12 @@ class UnitConverter {
      * Format quantity with unit for display
      */
     public static function formatQuantity($quantity, $unit, $decimals = 2) {
-        $formatted_quantity = number_format($quantity, $decimals);
+        // Handle null or non-numeric quantities
+        if ($quantity === null || !is_numeric($quantity)) {
+            $quantity = 0;
+        }
+
+        $formatted_quantity = number_format((float) $quantity, $decimals);
         return $formatted_quantity . ' ' . $unit;
     }
 

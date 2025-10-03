@@ -257,6 +257,14 @@ $sales_stats = getSalesStatistics($conn, date('Y-m-01'), date('Y-m-d'));
 
 // Function to format large numbers
 function formatLargeNumber($number) {
+    // Handle null or non-numeric values
+    if ($number === null || !is_numeric($number)) {
+        $number = 0;
+    }
+
+    // Convert to float to ensure proper handling
+    $number = (float) $number;
+
     if ($number >= 1000000000) {
         return number_format($number / 1000000000, 1) . 'B';
     } elseif ($number >= 1000000) {
