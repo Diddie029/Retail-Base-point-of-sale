@@ -1718,7 +1718,7 @@ try {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
-        // Create expiry_alerts table - for notification settings and history
+        // Create expiry_alerts table
         $conn->exec("
             CREATE TABLE IF NOT EXISTS expiry_alerts (
                 id INT PRIMARY KEY AUTO_INCREMENT,
@@ -2401,9 +2401,6 @@ try {
         ['view_user_performance_metrics', 'View user performance and productivity metrics', 'User Management'],
         ['analyze_user_behavior', 'Analyze user behavior patterns and trends', 'User Management'],
 
-        // User Communication
-        ['send_user_notifications', 'Send notifications and messages to users', 'User Management'],
-        ['manage_user_announcements', 'Send announcements and system messages to users', 'User Management'],
 
         // User Compliance and Audit
         ['audit_user_activities', 'View user activity logs and audit trails', 'User Management'],
@@ -2603,7 +2600,6 @@ try {
 
         // Low Stock & Alerts
         ['manage_low_stock_alerts', 'Manage low stock alert settings', 'Inventory Management'],
-        ['view_low_stock_alerts', 'View low stock alerts and notifications', 'Inventory Management'],
         ['manage_overstock_alerts', 'Manage overstock alert settings', 'Inventory Management'],
         ['auto_reorder_management', 'Manage automatic reorder functionality', 'Inventory Management'],
 
@@ -2802,7 +2798,6 @@ try {
         ['terminate_supplier_contracts', 'Terminate supplier contracts', 'Supplier Management'],
         ['track_contract_compliance', 'Track supplier contract compliance', 'Supplier Management'],
         ['manage_contract_terms', 'Manage supplier contract terms and conditions', 'Supplier Management'],
-        ['alert_contract_expiry', 'Manage contract expiry alerts and notifications', 'Supplier Management'],
 
         // Supplier Document Management
         ['view_supplier_documents', 'View supplier documents and attachments', 'Supplier Management'],
@@ -2904,8 +2899,6 @@ try {
         ['configure_payment_methods', 'Configure accepted payment methods', 'System Settings'],
         ['manage_barcode_settings', 'Configure barcode generation and scanning settings', 'System Settings'],
 
-        // Communication Settings
-        ['manage_notification_settings', 'Manage system notification preferences', 'System Settings'],
         ['configure_sms_settings', 'Configure SMS gateway and messaging settings', 'System Settings'],
 
         // Security and Authentication Settings
@@ -2954,7 +2947,6 @@ try {
         // Integration and API Settings
         ['configure_api_settings', 'Configure API access and integration settings', 'System Settings'],
         ['manage_external_integrations', 'Manage third-party service integrations', 'System Settings'],
-        ['configure_webhook_settings', 'Configure webhooks and external notifications', 'System Settings'],
         ['manage_sync_settings', 'Configure data synchronization settings', 'System Settings'],
 
         // Theme and Appearance Settings
@@ -2990,7 +2982,6 @@ try {
         // System Monitoring and Health
         ['view_system_status', 'View system health and status information', 'System Settings'],
         ['monitor_system_performance', 'Monitor system performance metrics', 'System Settings'],
-        ['manage_system_alerts', 'Configure system health alerts and notifications', 'System Settings'],
         ['view_system_logs', 'View system logs and error reports', 'System Settings'],
 
         // Emergency and Recovery Settings
@@ -3314,7 +3305,6 @@ try {
         ['order_expiry_days', '30'],
         ['order_auto_approve', '1'],
         ['order_require_approval', '0'],
-        ['order_notification_sms', '0'],
         ['order_show_cost_price', '1'],
         ['order_show_profit_margin', '0'],
         ['order_allow_partial_receipt', '1'],
@@ -3756,7 +3746,6 @@ try {
         ['expense_auto_approval', '0'],
         ['expense_approval_required', '1'],
         ['expense_max_amount_auto_approval', '1000'],
-        ['expense_notification_email', ''],
         ['expense_receipt_required', '1'],
         ['expense_tax_deductible_default', '0'],
         ['expense_number_prefix', 'EXP'],
@@ -3769,6 +3758,7 @@ try {
     foreach ($expense_settings as $setting) {
         $stmt->execute($setting);
     }
+
 
     // Create BOM (Bill of Materials) tables
     $conn->exec("
@@ -6866,93 +6856,38 @@ try {
     // Ignore if connection doesn't exist
 }
 
-// Function to show database connection error message (for post-installation issues)
-if (!function_exists('showDatabaseErrorMessage')) {
-function showDatabaseErrorMessage() {
-    $errorMessage = $GLOBALS['db_error'] ?? 'Unknown database error';
-    $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
-    $host = $_SERVER['HTTP_HOST'];
-    $currentScript = $_SERVER['SCRIPT_NAME'];
-
-    echo '<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Database Connection Error - POS System</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
-    <style>
-        body { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); min-height: 100vh; display: flex; align-items: center; }
-        .error-card { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); }
-        .btn-danger { background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); border: none; }
-        .btn-danger:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(220, 53, 69, 0.3); }
-        .error-icon { animation: pulse 2s infinite; }
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.1); }
-            100% { transform: scale(1); }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="row justify-content-center">
-            <div class="col-md-6">
-                <div class="error-card p-5 text-center">
-                    <div class="mb-4">
-                        <i class="bi bi-exclamation-triangle-fill text-danger error-icon" style="font-size: 4rem;"></i>
-                    </div>
-                    <h1 class="h2 mb-4 text-danger">Database Connection Error</h1>
-                    <p class="lead text-muted mb-4">The system encountered a database connection problem and cannot continue.</p>
-                    <div class="alert alert-danger" role="alert">
-                        <i class="bi bi-bug me-2"></i>
-                        <strong>Error Details:</strong><br>
-                        <code class="mt-2 d-block">' . htmlspecialchars($errorMessage) . '</code>
-                    </div>
-                    <div class="d-grid gap-2 mb-4">
-                        <button onclick="window.history.back()" class="btn btn-secondary btn-lg">
-                            <i class="bi bi-arrow-left me-2"></i>Go Back
-                        </button>
-                        <button onclick="window.location.reload()" class="btn btn-danger btn-lg">
-                            <i class="bi bi-arrow-clockwise me-2"></i>Try Again
-                        </button>
-                    </div>
-                    <div class="mt-4">
-                        <small class="text-muted">
-                            <i class="bi bi-info-circle me-1"></i>
-                            If this problem persists, please contact your system administrator.
-                        </small>
-                    </div>
-                    <div class="mt-3">
-                        <small class="text-muted">
-                            <i class="bi bi-gear me-1"></i>
-                            Need technical help? Contact: <a href="mailto:support@thiarara.co.ke" class="text-decoration-none">support@thiarara.co.ke</a>
-                        </small>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>';
-        exit();
-    }
-}
-
 } catch (PDOException $e) {
     // Database connection or table creation failed
     $GLOBALS['db_error'] = $e->getMessage();
     $GLOBALS['db_connected'] = false;
-    
+
     // Check if we're accessing from starter.php to avoid redirect loop
     $currentScript = basename($_SERVER['SCRIPT_NAME']);
     $isStarterPage = ($currentScript === 'starter.php' || strpos($_SERVER['REQUEST_URI'], 'starter.php') !== false);
-    
+
     if (!$isStarterPage) {
         // Show database error message instead of installer (system already installed)
-        showDatabaseErrorMessage();
+        $errorMessage = $GLOBALS['db_error'] ?? 'Unknown database error';
+        echo '<!DOCTYPE html><html><head><title>Database Error</title></head><body>';
+        echo '<h1>Database Connection Error</h1>';
+        echo '<p>' . htmlspecialchars($errorMessage) . '</p>';
+        echo '<p><a href="javascript:history.back()">Go Back</a></p>';
+        echo '</body></html>';
+        exit();
+    }
+}
+
+// Function to show database connection error message (for post-installation issues)
+if (!function_exists('showDatabaseErrorMessage')) {
+    function showDatabaseErrorMessage() {
+        $errorMessage = $GLOBALS['db_error'] ?? 'Unknown database error';
+
+        echo '<!DOCTYPE html><html><head><title>Database Error</title></head><body>';
+        echo '<h1>Database Connection Error</h1>';
+        echo '<p>' . htmlspecialchars($errorMessage) . '</p>';
+        echo '<p><a href="javascript:history.back()">Go Back</a></p>';
+        echo '</body></html>';
+        exit();
     }
 }
 
@@ -7079,8 +7014,17 @@ if (!function_exists('getInventoryStatistics')) {
             $stmt = $conn->query("SELECT COUNT(*) as count FROM products WHERE quantity > 0");
             $stats['total_products'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
 
-            // Low Stock Products (quantity <= minimum_stock)
-            $stmt = $conn->prepare("SELECT COUNT(*) as count FROM products WHERE quantity <= minimum_stock AND quantity > 0");
+            // Low Stock Products - fixed logic to check against minimum_stock and reorder_point
+            $stmt = $conn->prepare("
+                SELECT COUNT(*) as count 
+                FROM products 
+                WHERE track_inventory = 1 
+                AND (
+                    (minimum_stock > 0 AND quantity <= minimum_stock) 
+                    OR (reorder_point > 0 AND quantity <= reorder_point)
+                    OR (minimum_stock = 0 AND reorder_point = 0 AND quantity < 10)
+                )
+            ");
             $stmt->execute();
             $stats['low_stock'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
 
@@ -7123,14 +7067,14 @@ if (!function_exists('getSalesStatistics')) {
         try {
             $stats = [];
             
-            // Build date filter
+            // Build date filter - use sale_date column instead of created_at
             $date_filter = "";
             if ($start_date && $end_date) {
-                $date_filter = "WHERE DATE(created_at) BETWEEN :start_date AND :end_date";
+                $date_filter = "WHERE DATE(sale_date) BETWEEN :start_date AND :end_date";
             } elseif ($start_date) {
-                $date_filter = "WHERE DATE(created_at) >= :start_date";
+                $date_filter = "WHERE DATE(sale_date) >= :start_date";
             } elseif ($end_date) {
-                $date_filter = "WHERE DATE(created_at) <= :end_date";
+                $date_filter = "WHERE DATE(sale_date) <= :end_date";
             }
             
             // Total Sales Count
@@ -7141,8 +7085,8 @@ if (!function_exists('getSalesStatistics')) {
             $stmt->execute();
             $stats['total_sales'] = $stmt->fetch(PDO::FETCH_ASSOC)['count'];
             
-            // Total Revenue
-            $query = "SELECT COALESCE(SUM(total_amount), 0) as total FROM sales " . $date_filter;
+            // Total Revenue - use final_amount instead of total_amount
+            $query = "SELECT COALESCE(SUM(final_amount), 0) as total FROM sales " . $date_filter;
             $stmt = $conn->prepare($query);
             if ($start_date) $stmt->bindParam(':start_date', $start_date);
             if ($end_date) $stmt->bindParam(':end_date', $end_date);
@@ -7150,15 +7094,15 @@ if (!function_exists('getSalesStatistics')) {
             $stats['total_revenue'] = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
             
             // Average Sale Amount
-            $query = "SELECT COALESCE(AVG(total_amount), 0) as avg FROM sales " . $date_filter;
+            $query = "SELECT COALESCE(AVG(final_amount), 0) as avg FROM sales " . $date_filter;
             $stmt = $conn->prepare($query);
             if ($start_date) $stmt->bindParam(':start_date', $start_date);
             if ($end_date) $stmt->bindParam(':end_date', $end_date);
             $stmt->execute();
             $stats['avg_sale_amount'] = $stmt->fetch(PDO::FETCH_ASSOC)['avg'];
             
-            // Unique Customers
-            $query = "SELECT COUNT(DISTINCT customer_id) as count FROM sales " . $date_filter;
+            // Unique Customers - use customer_name instead of customer_id
+            $query = "SELECT COUNT(DISTINCT customer_name) as count FROM sales " . $date_filter . " AND customer_name != 'Walking Customer'";
             $stmt = $conn->prepare($query);
             if ($start_date) $stmt->bindParam(':start_date', $start_date);
             if ($end_date) $stmt->bindParam(':end_date', $end_date);
@@ -8335,5 +8279,6 @@ if (!function_exists('updateInvoiceStatus')) {
     }
 
 }
+
 
 ?>

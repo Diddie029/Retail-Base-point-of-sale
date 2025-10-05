@@ -194,11 +194,13 @@ try {
     $quick_stats['total_categories'] = (int)($stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0);
 } catch (Exception $e) { $quick_stats['total_categories'] = 0; }
 
-// Total Suppliers
+// Total Suppliers - Fixed column name from 'status' to 'is_active'
 try {
-    $stmt = $conn->query("SELECT COUNT(*) as count FROM suppliers WHERE status = 'active'");
+    $stmt = $conn->query("SELECT COUNT(*) as count FROM suppliers WHERE is_active = 1");
     $quick_stats['total_suppliers'] = (int)($stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0);
-} catch (Exception $e) { $quick_stats['total_suppliers'] = 0; }
+} catch (Exception $e) { 
+    $quick_stats['total_suppliers'] = 0; 
+}
 
 // Total Brands
 try {
@@ -212,9 +214,9 @@ try {
     $quick_stats['pending_quotations'] = (int)($stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0);
 } catch (Exception $e) { $quick_stats['pending_quotations'] = 0; }
 
-// Total Expenses This Month
+// Total Expenses This Month - Fixed column name from 'amount' to 'total_amount'
 try {
-    $stmt = $conn->prepare("SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total FROM expenses WHERE MONTH(expense_date) = MONTH(CURDATE()) AND YEAR(expense_date) = YEAR(CURDATE())");
+    $stmt = $conn->prepare("SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total FROM expenses WHERE MONTH(expense_date) = MONTH(CURDATE()) AND YEAR(expense_date) = YEAR(CURDATE())");
     $stmt->execute();
     $expense_data = $stmt->fetch(PDO::FETCH_ASSOC);
     $quick_stats['month_expenses_count'] = (int)($expense_data['count'] ?? 0);
@@ -224,11 +226,13 @@ try {
     $quick_stats['month_expenses_total'] = 0; 
 }
 
-// Active BOMs
+// Active BOMs - Fixed table name from 'boms' to 'bom_headers'
 try {
-    $stmt = $conn->query("SELECT COUNT(*) as count FROM boms WHERE status = 'active'");
+    $stmt = $conn->query("SELECT COUNT(*) as count FROM bom_headers WHERE status = 'active'");
     $quick_stats['active_boms'] = (int)($stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0);
-} catch (Exception $e) { $quick_stats['active_boms'] = 0; }
+} catch (Exception $e) { 
+    $quick_stats['active_boms'] = 0; 
+}
 
 // Near Expiry Count (30 days)
 try {
@@ -254,6 +258,28 @@ $inventory_stats = getInventoryStatistics($conn);
 
 // Get sales statistics for this month using the function from db.php
 $sales_stats = getSalesStatistics($conn, date('Y-m-01'), date('Y-m-d'));
+
+
+// Provide fallback values if data fetching fails
+if (empty($inventory_stats) || !isset($inventory_stats['total_products_count'])) {
+    $inventory_stats = [
+        'total_products' => 0,
+        'low_stock' => 0,
+        'out_of_stock' => 0,
+        'total_inventory_value' => 0,
+        'total_retail_value' => 0,
+        'total_products_count' => 0
+    ];
+}
+
+if (empty($sales_stats) || !isset($sales_stats['total_sales'])) {
+    $sales_stats = [
+        'total_sales' => 0,
+        'total_revenue' => 0,
+        'avg_sale_amount' => 0,
+        'unique_customers' => 0
+    ];
+}
 
 // Function to format large numbers
 function formatLargeNumber($number) {
@@ -803,39 +829,14 @@ function formatLargeNumber($number) {
             gap: 0.75rem;
         }
 
-        /* Notification Bell */
-        .notification-bell {
-            position: relative;
-            cursor: pointer;
-            padding: 0.5rem;
-            border-radius: 8px;
-            transition: background-color 0.2s ease;
-        }
 
-        .notification-bell:hover {
-            background-color: #f3f4f6;
-        }
 
-        .notification-icon {
-            position: relative;
-            font-size: 1.25rem;
-            color: #6b7280;
-        }
 
-        .notification-badge {
-            position: absolute;
-            top: -8px;
-            right: -8px;
-            background: #ef4444;
-            color: white;
-            font-size: 0.7rem;
-            font-weight: 600;
-            padding: 0.125rem 0.375rem;
-            border-radius: 10px;
-            min-width: 18px;
-            text-align: center;
-            line-height: 1;
-        }
+
+
+
+
+
 
         /* Date Time Display */
         .datetime-display {
@@ -1054,15 +1055,6 @@ function formatLargeNumber($number) {
                 <!-- Right Section: User Info & Actions -->
                 <div class="header-right">
                     <div class="header-actions">
-                        <!-- Notifications -->
-                        <div class="action-item notification-bell">
-                            <div class="notification-icon">
-                                <i class="bi bi-bell"></i>
-                                <?php if (($inventory_stats['low_stock'] + $stats['on_hold_count'] + $quick_stats['near_expiry_count']) > 0): ?>
-                                <span class="notification-badge"><?php echo ($inventory_stats['low_stock'] + $stats['on_hold_count'] + $quick_stats['near_expiry_count']); ?></span>
-                                <?php endif; ?>
-                            </div>
-                        </div>
 
                         <!-- Current Date & Time -->
                         <div class="action-item datetime-display">
@@ -1630,25 +1622,10 @@ function formatLargeNumber($number) {
         updateTime();
         setInterval(updateTime, 1000);
 
-        // Add click handler for notification bell
-        document.addEventListener('DOMContentLoaded', function() {
-            const notificationBell = document.querySelector('.notification-bell');
-            if (notificationBell) {
-                notificationBell.addEventListener('click', function() {
-                    // You can add notification dropdown functionality here
-                    console.log('Notifications clicked');
-                });
-            }
-
-            // Add click handler for user profile
-            const userProfile = document.querySelector('.user-profile');
-            if (userProfile) {
-                userProfile.addEventListener('click', function() {
-                    // You can add user menu dropdown functionality here
-                    console.log('User profile clicked');
-                });
-            }
-        });
+        
+        
+        
+        
     </script>
 </body>
 </html>
