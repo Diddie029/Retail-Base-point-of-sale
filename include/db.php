@@ -6856,21 +6856,6 @@ try {
     // Ignore if connection doesn't exist
 }
 
-} catch (PDOException $e) {
-    // Database connection or table creation failed
-    $GLOBALS['db_error'] = $e->getMessage();
-    $GLOBALS['db_connected'] = false;
-    
-    // Check if we're accessing from starter.php to avoid redirect loop
-    $currentScript = basename($_SERVER['SCRIPT_NAME']);
-    $isStarterPage = ($currentScript === 'starter.php' || strpos($_SERVER['REQUEST_URI'], 'starter.php') !== false);
-    
-    if (!$isStarterPage) {
-        // Show database error message instead of installer (system already installed)
-        showDatabaseErrorMessage();
-    }
-}
-
 // Function to show database connection error message (for post-installation issues)
 if (!function_exists('showDatabaseErrorMessage')) {
 function showDatabaseErrorMessage() {
@@ -6943,6 +6928,21 @@ function showDatabaseErrorMessage() {
 </body>
 </html>';
         exit();
+    }
+}
+
+} catch (PDOException $e) {
+    // Database connection or table creation failed
+    $GLOBALS['db_error'] = $e->getMessage();
+    $GLOBALS['db_connected'] = false;
+    
+    // Check if we're accessing from starter.php to avoid redirect loop
+    $currentScript = basename($_SERVER['SCRIPT_NAME']);
+    $isStarterPage = ($currentScript === 'starter.php' || strpos($_SERVER['REQUEST_URI'], 'starter.php') !== false);
+    
+    if (!$isStarterPage) {
+        // Show database error message instead of installer (system already installed)
+        showDatabaseErrorMessage();
     }
 }
 
