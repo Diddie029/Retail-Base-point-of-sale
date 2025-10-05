@@ -553,7 +553,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
     
     <script>
         function selectStatus(status) {
-            console.log('selectStatus called with:', status); // Debug log
             
             // Remove selected class from all status cards
             document.querySelectorAll('.status-card').forEach(card => {
@@ -565,7 +564,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
             
             // Select the radio button
             const radioButton = document.getElementById('status_' + status);
-            console.log('Radio button found:', radioButton); // Debug log
             
             if (radioButton) {
                 // Uncheck all other radio buttons first
@@ -575,7 +573,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
                 
                 // Check the selected radio button
                 radioButton.checked = true;
-                console.log('Radio button checked:', radioButton.checked); // Debug log
                 
                 // Trigger change event
                 radioButton.dispatchEvent(new Event('change'));
@@ -585,13 +582,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_status'])) {
         }
 
         function handleStatusFilterChange(selectedStatus) {
-            console.log('Status filter changed to:', selectedStatus); // Debug log
             
             if (selectedStatus && selectedStatus !== '') {
                 // Find the corresponding status card and select it
                 const statusCard = document.querySelector(`[onclick="selectStatus('${selectedStatus}')"]`);
                 if (statusCard) {
-                    console.log('Found status card for:', selectedStatus); // Debug log
                     
                     // Remove selected class from all status cards
                     document.querySelectorAll('.status-card').forEach(card => {

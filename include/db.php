@@ -1327,6 +1327,16 @@ try {
         UNIQUE KEY unique_invoice_number (invoice_number)
     )");
 
+    // Add paid_amount column if it doesn't exist
+    try {
+        $stmt = $conn->query("SHOW COLUMNS FROM inventory_orders LIKE 'paid_amount'");
+        if ($stmt->rowCount() == 0) {
+            $conn->exec("ALTER TABLE inventory_orders ADD COLUMN paid_amount DECIMAL(10, 2) DEFAULT 0 AFTER total_amount");
+        }
+    } catch (Exception $e) {
+        // Column might already exist, ignore error
+    }
+
     // Update existing inventory_orders table enum if needed
     try {
         $stmt = $conn->query("DESCRIBE inventory_orders status");
@@ -7850,6 +7860,480 @@ if (!function_exists('generateReturnNumber')) {
             return 'RFD-' . str_pad(time() % 9999999, 7, '0', STR_PAD_LEFT);
         }
     }
+}
+
+// ========================================
+// PAYABLES MANAGEMENT TABLES
+// ========================================
+
+// Create supplier_invoices table for detailed invoice tracking
+$conn->exec("
+    CREATE TABLE IF NOT EXISTS supplier_invoices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        invoice_number VARCHAR(100) NOT NULL UNIQUE,
+        supplier_id INT NOT NULL,
+        order_id INT DEFAULT NULL COMMENT 'Reference to inventory_orders table',
+        invoice_date DATE NOT NULL,
+        due_date DATE NOT NULL,
+        subtotal DECIMAL(10,2) DEFAULT 0,
+        tax_amount DECIMAL(10,2) DEFAULT 0,
+        discount_amount DECIMAL(10,2) DEFAULT 0,
+        total_amount DECIMAL(10,2) NOT NULL,
+        paid_amount DECIMAL(10,2) DEFAULT 0,
+        credit_applied DECIMAL(10,2) DEFAULT 0,
+        balance_due DECIMAL(10,2) GENERATED ALWAYS AS (total_amount - paid_amount - credit_applied) STORED,
+        status ENUM('pending', 'partial', 'paid', 'overdue', 'cancelled') DEFAULT 'pending',
+        payment_terms VARCHAR(100) DEFAULT 'Net 30',
+        notes TEXT,
+        created_by INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+        FOREIGN KEY (order_id) REFERENCES inventory_orders(id) ON DELETE SET NULL,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        INDEX idx_invoice_number (invoice_number),
+        INDEX idx_supplier_id (supplier_id),
+        INDEX idx_order_id (order_id),
+        INDEX idx_status (status),
+        INDEX idx_due_date (due_date),
+        INDEX idx_invoice_date (invoice_date)
+    )
+");
+
+// Create supplier_payments table for payment tracking
+$conn->exec("
+    CREATE TABLE IF NOT EXISTS supplier_payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        payment_number VARCHAR(50) NOT NULL UNIQUE,
+        supplier_id INT NOT NULL,
+        invoice_id INT DEFAULT NULL,
+        payment_date DATE NOT NULL,
+        payment_method ENUM('cash', 'check', 'bank_transfer', 'credit_card', 'other') NOT NULL,
+        payment_amount DECIMAL(10,2) NOT NULL,
+        reference_number VARCHAR(100) DEFAULT '',
+        notes TEXT,
+        status ENUM('pending', 'completed', 'cancelled') DEFAULT 'completed',
+        created_by INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+        FOREIGN KEY (invoice_id) REFERENCES supplier_invoices(id) ON DELETE SET NULL,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        INDEX idx_payment_number (payment_number),
+        INDEX idx_supplier_id (supplier_id),
+        INDEX idx_invoice_id (invoice_id),
+        INDEX idx_payment_date (payment_date),
+        INDEX idx_status (status)
+    )
+");
+
+// Create supplier_credits table for credit management
+$conn->exec("
+    CREATE TABLE IF NOT EXISTS supplier_credits (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        credit_number VARCHAR(50) NOT NULL UNIQUE,
+        supplier_id INT NOT NULL,
+        credit_type ENUM('return', 'discount', 'overpayment', 'adjustment', 'other') NOT NULL,
+        credit_date DATE NOT NULL,
+        credit_amount DECIMAL(10,2) NOT NULL,
+        applied_amount DECIMAL(10,2) DEFAULT 0,
+        available_amount DECIMAL(10,2) GENERATED ALWAYS AS (credit_amount - applied_amount) STORED,
+        reason TEXT,
+        reference_invoice VARCHAR(100) DEFAULT '',
+        status ENUM('available', 'partially_applied', 'fully_applied', 'expired') DEFAULT 'available',
+        expiry_date DATE DEFAULT NULL,
+        created_by INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id),
+        INDEX idx_credit_number (credit_number),
+        INDEX idx_supplier_id (supplier_id),
+        INDEX idx_credit_date (credit_date),
+        INDEX idx_status (status),
+        INDEX idx_expiry_date (expiry_date)
+    )
+");
+
+// Create credit_applications table to track credit usage
+$conn->exec("
+    CREATE TABLE IF NOT EXISTS credit_applications (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        credit_id INT NOT NULL,
+        invoice_id INT NOT NULL,
+        applied_amount DECIMAL(10,2) NOT NULL,
+        applied_date DATE NOT NULL,
+        applied_by INT NOT NULL,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (credit_id) REFERENCES supplier_credits(id) ON DELETE CASCADE,
+        FOREIGN KEY (invoice_id) REFERENCES supplier_invoices(id) ON DELETE CASCADE,
+        FOREIGN KEY (applied_by) REFERENCES users(id),
+        INDEX idx_credit_id (credit_id),
+        INDEX idx_invoice_id (invoice_id),
+        INDEX idx_applied_date (applied_date)
+    )
+");
+
+// Create payable_transactions table for audit trail
+$conn->exec("
+    CREATE TABLE IF NOT EXISTS payable_transactions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        transaction_type ENUM('invoice_created', 'payment_made', 'credit_applied', 'status_changed', 'amount_adjusted') NOT NULL,
+        reference_id INT NOT NULL,
+        reference_table ENUM('supplier_invoices', 'supplier_payments', 'supplier_credits') NOT NULL,
+        old_value DECIMAL(10,2) DEFAULT NULL,
+        new_value DECIMAL(10,2) DEFAULT NULL,
+        description TEXT,
+        user_id INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        INDEX idx_transaction_type (transaction_type),
+        INDEX idx_reference_id (reference_id),
+        INDEX idx_reference_table (reference_table),
+        INDEX idx_created_at (created_at)
+    )
+");
+
+// Function to generate supplier invoice number
+if (!function_exists('generateSupplierInvoiceNumber')) {
+    function generateSupplierInvoiceNumber($conn, $settings) {
+        $prefix = $settings['supplier_invoice_prefix'] ?? 'SI';
+        $year = date('Y');
+        $month = date('m');
+        
+        // Get the last invoice number for this month
+        $stmt = $conn->prepare("
+            SELECT invoice_number 
+            FROM supplier_invoices 
+            WHERE invoice_number LIKE ? 
+            ORDER BY invoice_number DESC 
+            LIMIT 1
+        ");
+        $pattern = $prefix . $year . $month . '%';
+        $stmt->execute([$pattern]);
+        $last_invoice = $stmt->fetchColumn();
+        
+        if ($last_invoice) {
+            // Extract the number part and increment
+            $number = intval(substr($last_invoice, -4)) + 1;
+        } else {
+            $number = 1;
+        }
+        
+        return $prefix . $year . $month . str_pad($number, 4, '0', STR_PAD_LEFT);
+    }
+}
+
+// Function to generate payment number
+if (!function_exists('generatePaymentNumber')) {
+    function generatePaymentNumber($conn, $settings) {
+        $prefix = 'Pay ';
+        
+        // Get the last payment number
+        $stmt = $conn->prepare("
+            SELECT payment_number 
+            FROM supplier_payments 
+            WHERE payment_number LIKE ? 
+            ORDER BY payment_number DESC 
+            LIMIT 1
+        ");
+        $pattern = $prefix . '%';
+        $stmt->execute([$pattern]);
+        $last_payment = $stmt->fetchColumn();
+        
+        if ($last_payment) {
+            // Extract the number part and increment
+            $number = intval(substr($last_payment, strlen($prefix))) + 1;
+        } else {
+            $number = 1;
+        }
+        
+        return $prefix . str_pad($number, 6, '0', STR_PAD_LEFT);
+    }
+}
+
+// Function to generate credit number
+if (!function_exists('generateCreditNumber')) {
+    function generateCreditNumber($conn, $settings) {
+        $prefix = 'CRE ';
+        
+        // Get the last credit number
+        $stmt = $conn->prepare("
+            SELECT credit_number 
+            FROM supplier_credits 
+            WHERE credit_number LIKE ? 
+            ORDER BY credit_number DESC 
+            LIMIT 1
+        ");
+        $pattern = $prefix . '%';
+        $stmt->execute([$pattern]);
+        $last_credit = $stmt->fetchColumn();
+        
+        if ($last_credit) {
+            // Extract the number part and increment
+            $number = intval(substr($last_credit, strlen($prefix))) + 1;
+        } else {
+            $number = 1;
+        }
+        
+        return $prefix . str_pad($number, 6, '0', STR_PAD_LEFT);
+    }
+}
+
+// Function to log payable transactions
+if (!function_exists('logPayableTransaction')) {
+    function logPayableTransaction($conn, $type, $reference_id, $reference_table, $old_value, $new_value, $description, $user_id) {
+        $stmt = $conn->prepare("
+            INSERT INTO payable_transactions 
+            (transaction_type, reference_id, reference_table, old_value, new_value, description, user_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ");
+        return $stmt->execute([$type, $reference_id, $reference_table, $old_value, $new_value, $description, $user_id]);
+    }
+}
+
+// Function to update invoice status based on payments and credits
+if (!function_exists('updateInvoiceStatus')) {
+    function updateInvoiceStatus($conn, $invoice_id) {
+        // Get invoice details
+        $stmt = $conn->prepare("
+            SELECT total_amount, paid_amount, credit_applied, due_date 
+            FROM supplier_invoices 
+            WHERE id = ?
+        ");
+        $stmt->execute([$invoice_id]);
+        $invoice = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$invoice) return false;
+        
+        $balance_due = $invoice['total_amount'] - $invoice['paid_amount'] - $invoice['credit_applied'];
+        $due_date = $invoice['due_date'];
+        $today = date('Y-m-d');
+        
+        // Determine new status
+        $new_status = 'pending';
+        if ($balance_due <= 0) {
+            $new_status = 'paid';
+        } elseif ($invoice['paid_amount'] > 0) {
+            $new_status = 'partial';
+        } elseif ($due_date < $today) {
+            $new_status = 'overdue';
+        }
+        
+        // Update status
+        $stmt = $conn->prepare("
+            UPDATE supplier_invoices 
+            SET status = ? 
+            WHERE id = ?
+        ");
+        return $stmt->execute([$new_status, $invoice_id]);
+    }
+
+    // Generate invoice number for inventory orders
+    function generateInventoryInvoiceNumber($conn, $settings) {
+        $prefix = $settings['inventory_invoice_prefix'] ?? 'INV';
+        $year = date('Y');
+        $month = date('m');
+        
+        // Get the last invoice number for this month
+        $stmt = $conn->prepare("
+            SELECT invoice_number 
+            FROM inventory_orders 
+            WHERE invoice_number LIKE ? 
+            ORDER BY invoice_number DESC 
+            LIMIT 1
+        ");
+        $pattern = $prefix . $year . $month . '%';
+        $stmt->execute([$pattern]);
+        $last_invoice = $stmt->fetchColumn();
+        
+        if ($last_invoice) {
+            // Extract the number part and increment
+            $number_part = substr($last_invoice, strlen($prefix . $year . $month));
+            $next_number = intval($number_part) + 1;
+        } else {
+            $next_number = 1;
+        }
+        
+        // Format with leading zeros (4 digits)
+        $formatted_number = str_pad($next_number, 4, '0', STR_PAD_LEFT);
+        
+        return $prefix . $year . $month . $formatted_number;
+    }
+
+    /**
+     * Get comprehensive profit analysis data
+     */
+    function getProfitAnalysisData($conn, $start_date, $end_date) {
+        try {
+            $data = [
+                'revenue' => [
+                    'total_sales' => 0,
+                    'cash_sales' => 0,
+                    'credit_sales' => 0,
+                    'average_transaction' => 0,
+                    'total_transactions' => 0
+                ],
+                'costs' => [
+                    'cost_of_goods_sold' => 0,
+                    'operating_expenses' => 0,
+                    'total_costs' => 0
+                ],
+                'profit' => [
+                    'gross_profit' => 0,
+                    'net_profit' => 0,
+                    'gross_margin' => 0,
+                    'net_margin' => 0
+                ],
+                'top_products' => [],
+                'category_performance' => []
+            ];
+
+            // Get revenue data using existing function
+            $sales_stats = getSalesStatistics($conn, $start_date, $end_date);
+            $data['revenue']['total_sales'] = floatval($sales_stats['total_revenue'] ?? 0);
+            $data['revenue']['total_transactions'] = intval($sales_stats['total_sales'] ?? 0);
+            $data['revenue']['average_transaction'] = floatval($sales_stats['avg_sale_amount'] ?? 0);
+
+            // Fallback: If sales_stats is empty, try direct query
+            if ($data['revenue']['total_sales'] == 0) {
+                $stmt = $conn->prepare("
+                    SELECT 
+                        COALESCE(SUM(final_amount), 0) as total_revenue,
+                        COUNT(*) as total_transactions,
+                        COALESCE(AVG(final_amount), 0) as avg_transaction
+                    FROM sales 
+                    WHERE DATE(created_at) BETWEEN ? AND ?
+                ");
+                $stmt->execute([$start_date, $end_date]);
+                $fallback_data = $stmt->fetch(PDO::FETCH_ASSOC);
+                
+                if ($fallback_data) {
+                    $data['revenue']['total_sales'] = floatval($fallback_data['total_revenue'] ?? 0);
+                    $data['revenue']['total_transactions'] = intval($fallback_data['total_transactions'] ?? 0);
+                    $data['revenue']['average_transaction'] = floatval($fallback_data['avg_transaction'] ?? 0);
+                }
+            }
+
+            // Get cash vs credit sales breakdown
+            $stmt = $conn->prepare("
+                SELECT 
+                    payment_method,
+                    COALESCE(SUM(final_amount), 0) as amount
+                FROM sales 
+                WHERE DATE(created_at) BETWEEN ? AND ?
+                GROUP BY payment_method
+            ");
+            $stmt->execute([$start_date, $end_date]);
+            $payment_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            foreach ($payment_data as $payment) {
+                if (in_array($payment['payment_method'], ['cash', 'mpesa', 'bank_transfer'])) {
+                    $data['revenue']['cash_sales'] += floatval($payment['amount']);
+                } else {
+                    $data['revenue']['credit_sales'] += floatval($payment['amount']);
+                }
+            }
+
+            // Get cost of goods sold
+            $stmt = $conn->prepare("
+                SELECT COALESCE(SUM(si.quantity * COALESCE(p.cost_price, 0)), 0) as cogs
+                FROM sale_items si
+                JOIN sales s ON si.sale_id = s.id
+                JOIN products p ON si.product_id = p.id
+                WHERE DATE(s.created_at) BETWEEN ? AND ?
+            ");
+            $stmt->execute([$start_date, $end_date]);
+            $cogs_data = $stmt->fetch(PDO::FETCH_ASSOC);
+            $data['costs']['cost_of_goods_sold'] = floatval($cogs_data['cogs'] ?? 0);
+
+            // Get operating expenses
+            $stmt = $conn->prepare("
+                SELECT COALESCE(SUM(total_amount), 0) as total_expenses
+                FROM expenses e
+                WHERE DATE(e.expense_date) BETWEEN ? AND ? 
+                AND e.approval_status = 'approved'
+            ");
+            $stmt->execute([$start_date, $end_date]);
+            $expenses_data = $stmt->fetch(PDO::FETCH_ASSOC);
+            $data['costs']['operating_expenses'] = floatval($expenses_data['total_expenses'] ?? 0);
+
+            // Calculate totals and margins
+            $data['costs']['total_costs'] = $data['costs']['cost_of_goods_sold'] + $data['costs']['operating_expenses'];
+            $data['profit']['gross_profit'] = $data['revenue']['total_sales'] - $data['costs']['cost_of_goods_sold'];
+            $data['profit']['net_profit'] = $data['revenue']['total_sales'] - $data['costs']['total_costs'];
+
+            $data['profit']['gross_margin'] = $data['revenue']['total_sales'] > 0 ? 
+                ($data['profit']['gross_profit'] / $data['revenue']['total_sales']) * 100 : 0;
+
+            $data['profit']['net_margin'] = $data['revenue']['total_sales'] > 0 ? 
+                ($data['profit']['net_profit'] / $data['revenue']['total_sales']) * 100 : 0;
+
+            // Get top performing products
+            $stmt = $conn->prepare("
+                SELECT 
+                    p.name,
+                    SUM(si.quantity) as total_sold,
+                    SUM(si.quantity * si.price) as total_revenue,
+                    SUM(si.quantity * COALESCE(p.cost_price, 0)) as total_cost,
+                    (SUM(si.quantity * si.price) - SUM(si.quantity * COALESCE(p.cost_price, 0))) as profit,
+                    CASE 
+                        WHEN SUM(si.quantity * si.price) > 0 
+                        THEN ((SUM(si.quantity * si.price) - SUM(si.quantity * COALESCE(p.cost_price, 0))) / SUM(si.quantity * si.price)) * 100 
+                        ELSE 0 
+                    END as profit_margin
+                FROM products p
+                JOIN sale_items si ON p.id = si.product_id
+                JOIN sales s ON si.sale_id = s.id
+                WHERE DATE(s.created_at) BETWEEN ? AND ?
+                GROUP BY p.id, p.name
+                ORDER BY profit DESC
+                LIMIT 10
+            ");
+            $stmt->execute([$start_date, $end_date]);
+            $data['top_products'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // Get category performance
+            $stmt = $conn->prepare("
+                SELECT 
+                    c.name as category_name,
+                    SUM(si.quantity) as total_sold,
+                    SUM(si.quantity * si.price) as total_revenue,
+                    SUM(si.quantity * COALESCE(p.cost_price, 0)) as total_cost,
+                    (SUM(si.quantity * si.price) - SUM(si.quantity * COALESCE(p.cost_price, 0))) as profit,
+                    CASE 
+                        WHEN SUM(si.quantity * si.price) > 0 
+                        THEN ((SUM(si.quantity * si.price) - SUM(si.quantity * COALESCE(p.cost_price, 0))) / SUM(si.quantity * si.price)) * 100 
+                        ELSE 0 
+                    END as profit_margin
+                FROM categories c
+                LEFT JOIN products p ON c.id = p.category_id
+                LEFT JOIN sale_items si ON p.id = si.product_id
+                LEFT JOIN sales s ON si.sale_id = s.id
+                WHERE DATE(s.created_at) BETWEEN ? AND ?
+                GROUP BY c.id, c.name
+                HAVING total_revenue > 0
+                ORDER BY profit DESC
+                LIMIT 10
+            ");
+            $stmt->execute([$start_date, $end_date]);
+            $data['category_performance'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            return $data;
+
+        } catch (PDOException $e) {
+            error_log("Error getting profit analysis data: " . $e->getMessage());
+            return [
+                'revenue' => ['total_sales' => 0, 'cash_sales' => 0, 'credit_sales' => 0, 'average_transaction' => 0, 'total_transactions' => 0],
+                'costs' => ['cost_of_goods_sold' => 0, 'operating_expenses' => 0, 'total_costs' => 0],
+                'profit' => ['gross_profit' => 0, 'net_profit' => 0, 'gross_margin' => 0, 'net_margin' => 0],
+                'top_products' => [],
+                'category_performance' => []
+            ];
+        }
+    }
+
 }
 
 ?>

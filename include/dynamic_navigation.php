@@ -49,10 +49,10 @@ $sectionContentMappings = [
         [url('bom/add.php'), 'bi-plus-circle', 'Create BOM'],
         [url('bom/production.php'), 'bi-gear', 'Production Orders'],
         [url('bom/reports.php'), 'bi-graph-up', 'BOM Reports'],
-        [url('bom/demo_multilevel.php'), 'bi-diagram-3', 'Multi-Level Demo']
     ],
     'finance' => [
-        [url('finance/index.php'), 'bi-speedometer2', 'Finance Dashboard']
+        [url('finance/index.php'), 'bi-speedometer2', 'Finance Dashboard'],
+        [url('finance/payables/payables.php'), 'bi-credit-card', 'Payable Dashboard']
     ],
     'expenses' => [
         [url('expenses/index.php'), 'bi-list-ul', 'All Expenses'],

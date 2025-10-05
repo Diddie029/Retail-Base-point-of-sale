@@ -44,7 +44,7 @@ while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
 // Get selected period
 $start_date = $_GET['start_date'] ?? date('Y-m-01');
 $end_date = $_GET['end_date'] ?? date('Y-m-t');
-$period_type = $_GET['period'] ?? 'monthly';
+$period_type = $_GET['period'] ?? 'yearly';
 
 // Auto-set dates based on period
 if (isset($_GET['period']) && !isset($_GET['start_date'])) {
@@ -58,9 +58,22 @@ if (isset($_GET['period']) && !isset($_GET['start_date'])) {
             $end_date = date('Y-m-t');
             break;
         case 'quarterly':
-            $quarter_start = date('Y-m-01', strtotime('first day of -2 month'));
+            $current_month = date('n');
+            if ($current_month <= 3) {
+                $quarter_start = date('Y-01-01');
+                $quarter_end = date('Y-03-31');
+            } elseif ($current_month <= 6) {
+                $quarter_start = date('Y-04-01');
+                $quarter_end = date('Y-06-30');
+            } elseif ($current_month <= 9) {
+                $quarter_start = date('Y-07-01');
+                $quarter_end = date('Y-09-30');
+            } else {
+                $quarter_start = date('Y-10-01');
+                $quarter_end = date('Y-12-31');
+            }
             $start_date = $quarter_start;
-            $end_date = date('Y-m-t');
+            $end_date = $quarter_end;
             break;
         case 'yearly':
             $start_date = date('Y-01-01');
@@ -69,162 +82,9 @@ if (isset($_GET['period']) && !isset($_GET['start_date'])) {
     }
 }
 
-// Initialize profit analysis data
-$profit_analysis = [
-    'revenue' => [
-        'total_sales' => 0,
-        'cash_sales' => 0,
-        'credit_sales' => 0,
-        'average_transaction' => 0,
-        'total_transactions' => 0
-    ],
-    'costs' => [
-        'cost_of_goods_sold' => 0,
-        'operating_expenses' => 0,
-        'total_costs' => 0
-    ],
-    'profit' => [
-        'gross_profit' => 0,
-        'net_profit' => 0,
-        'gross_margin' => 0,
-        'net_margin' => 0
-    ],
-    'top_products' => [],
-    'category_performance' => []
-];
+// Get comprehensive profit analysis data using the database function
+$profit_analysis = getProfitAnalysisData($conn, $start_date, $end_date);
 
-// Get revenue data
-try {
-    // Total sales revenue
-    $stmt = $conn->prepare("
-        SELECT 
-            COALESCE(SUM(final_amount), 0) as total_revenue,
-            COUNT(*) as total_transactions,
-            AVG(final_amount) as avg_transaction
-        FROM sales 
-        WHERE sale_date BETWEEN ? AND ?
-    ");
-    $stmt->execute([$start_date, $end_date]);
-    $revenue_data = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    $profit_analysis['revenue']['total_sales'] = $revenue_data['total_revenue'];
-    $profit_analysis['revenue']['total_transactions'] = $revenue_data['total_transactions'];
-    $profit_analysis['revenue']['average_transaction'] = $revenue_data['avg_transaction'];
-    
-    // Cash vs Credit sales
-    $stmt = $conn->prepare("
-        SELECT 
-            payment_method,
-            COALESCE(SUM(final_amount), 0) as amount
-        FROM sales 
-        WHERE sale_date BETWEEN ? AND ?
-        GROUP BY payment_method
-    ");
-    $stmt->execute([$start_date, $end_date]);
-    $payment_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    foreach ($payment_data as $payment) {
-        if (in_array($payment['payment_method'], ['cash', 'mpesa', 'bank_transfer'])) {
-            $profit_analysis['revenue']['cash_sales'] += $payment['amount'];
-        } else {
-            $profit_analysis['revenue']['credit_sales'] += $payment['amount'];
-        }
-    }
-} catch (Exception $e) {
-    // Handle error silently
-}
-
-// Get cost of goods sold
-try {
-    $stmt = $conn->prepare("
-        SELECT COALESCE(SUM(si.quantity * p.cost_price), 0) as cogs
-        FROM sale_items si
-        JOIN sales s ON si.sale_id = s.id
-        JOIN products p ON si.product_id = p.id
-        WHERE s.sale_date BETWEEN ? AND ?
-    ");
-    $stmt->execute([$start_date, $end_date]);
-    $cogs_data = $stmt->fetch(PDO::FETCH_ASSOC);
-    $profit_analysis['costs']['cost_of_goods_sold'] = $cogs_data['cogs'];
-} catch (Exception $e) {
-    // Handle error silently
-}
-
-// Get operating expenses
-try {
-    $stmt = $conn->prepare("
-        SELECT COALESCE(SUM(total_amount), 0) as total_expenses
-        FROM expenses e
-        WHERE e.expense_date BETWEEN ? AND ? 
-        AND e.approval_status = 'approved'
-    ");
-    $stmt->execute([$start_date, $end_date]);
-    $expenses_data = $stmt->fetch(PDO::FETCH_ASSOC);
-    $profit_analysis['costs']['operating_expenses'] = $expenses_data['total_expenses'];
-} catch (Exception $e) {
-    // Handle error silently
-}
-
-// Calculate totals and margins
-$profit_analysis['costs']['total_costs'] = $profit_analysis['costs']['cost_of_goods_sold'] + $profit_analysis['costs']['operating_expenses'];
-$profit_analysis['profit']['gross_profit'] = $profit_analysis['revenue']['total_sales'] - $profit_analysis['costs']['cost_of_goods_sold'];
-$profit_analysis['profit']['net_profit'] = $profit_analysis['revenue']['total_sales'] - $profit_analysis['costs']['total_costs'];
-
-$profit_analysis['profit']['gross_margin'] = $profit_analysis['revenue']['total_sales'] > 0 ? 
-    ($profit_analysis['profit']['gross_profit'] / $profit_analysis['revenue']['total_sales']) * 100 : 0;
-
-$profit_analysis['profit']['net_margin'] = $profit_analysis['revenue']['total_sales'] > 0 ? 
-    ($profit_analysis['profit']['net_profit'] / $profit_analysis['revenue']['total_sales']) * 100 : 0;
-
-// Get top performing products for profit analysis
-try {
-    $stmt = $conn->prepare("
-        SELECT 
-            p.name,
-            SUM(si.quantity) as total_sold,
-            SUM(si.quantity * si.price) as total_revenue,
-            SUM(si.quantity * p.cost_price) as total_cost,
-            (SUM(si.quantity * si.price) - SUM(si.quantity * p.cost_price)) as profit,
-            ((SUM(si.quantity * si.price) - SUM(si.quantity * p.cost_price)) / SUM(si.quantity * si.price)) * 100 as profit_margin
-        FROM products p
-        JOIN sale_items si ON p.id = si.product_id
-        JOIN sales s ON si.sale_id = s.id
-        WHERE s.sale_date BETWEEN ? AND ?
-        GROUP BY p.id, p.name
-        ORDER BY profit DESC
-        LIMIT 10
-    ");
-    $stmt->execute([$start_date, $end_date]);
-    $profit_analysis['top_products'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) {
-    $profit_analysis['top_products'] = [];
-}
-
-// Get category performance
-try {
-    $stmt = $conn->prepare("
-        SELECT 
-            c.name as category_name,
-            SUM(si.quantity) as total_sold,
-            SUM(si.quantity * si.price) as total_revenue,
-            SUM(si.quantity * p.cost_price) as total_cost,
-            (SUM(si.quantity * si.price) - SUM(si.quantity * p.cost_price)) as profit,
-            ((SUM(si.quantity * si.price) - SUM(si.quantity * p.cost_price)) / SUM(si.quantity * si.price)) * 100 as profit_margin
-        FROM categories c
-        LEFT JOIN products p ON c.id = p.category_id
-        LEFT JOIN sale_items si ON p.id = si.product_id
-        LEFT JOIN sales s ON si.sale_id = s.id
-        WHERE s.sale_date BETWEEN ? AND ?
-        GROUP BY c.id, c.name
-        HAVING total_revenue > 0
-        ORDER BY profit DESC
-        LIMIT 10
-    ");
-    $stmt->execute([$start_date, $end_date]);
-    $profit_analysis['category_performance'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) {
-    $profit_analysis['category_performance'] = [];
-}
 ?>
 
 <!DOCTYPE html>
@@ -449,7 +309,7 @@ try {
                                 <form method="GET" class="row g-3 align-items-end">
                                     <div class="col-md-4">
                                         <label for="period" class="form-label">Period</label>
-                                        <select class="form-select" id="period" name="period" onchange="this.form.submit()">
+                                        <select class="form-select" id="period" name="period" onchange="updateDateFields()">
                                             <option value="weekly" <?php echo $period_type == 'weekly' ? 'selected' : ''; ?>>This Week</option>
                                             <option value="monthly" <?php echo $period_type == 'monthly' ? 'selected' : ''; ?>>This Month</option>
                                             <option value="quarterly" <?php echo $period_type == 'quarterly' ? 'selected' : ''; ?>>This Quarter</option>
@@ -479,16 +339,16 @@ try {
                             <div class="row">
                                 <div class="col-6">
                                     <div class="text-center">
-                                        <div class="metric-value profit-<?php echo $profit_analysis['profit']['net_profit'] >= 0 ? 'positive' : 'negative'; ?>">
-                                            <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['profit']['net_profit'], 2); ?>
+                                        <div class="metric-value profit-<?php echo ($profit_analysis['profit']['net_profit'] ?? 0) >= 0 ? 'positive' : 'negative'; ?>">
+                                            <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['profit']['net_profit'] ?? 0, 2); ?>
                                         </div>
                                         <div class="metric-label">Net Profit</div>
                                     </div>
                                 </div>
                                 <div class="col-6">
                                     <div class="text-center">
-                                        <div class="metric-value profit-<?php echo $profit_analysis['profit']['net_margin'] >= 0 ? 'positive' : 'negative'; ?>">
-                                            <?php echo number_format($profit_analysis['profit']['net_margin'], 1); ?>%
+                                        <div class="metric-value profit-<?php echo ($profit_analysis['profit']['net_margin'] ?? 0) >= 0 ? 'positive' : 'negative'; ?>">
+                                            <?php echo number_format($profit_analysis['profit']['net_margin'] ?? 0, 1); ?>%
                                         </div>
                                         <div class="metric-label">Net Margin</div>
                                     </div>
@@ -506,9 +366,9 @@ try {
                                 <div class="profit-icon mx-auto mb-3">
                                     <i class="bi bi-currency-dollar"></i>
                                 </div>
-                                <h5 class="text-success fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['revenue']['total_sales'], 2); ?></h5>
+                                <h5 class="text-success fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['revenue']['total_sales'] ?? 0, 2); ?></h5>
                                 <p class="text-muted mb-0">Total Revenue</p>
-                                <small class="text-muted"><?php echo number_format($profit_analysis['revenue']['total_transactions']); ?> transactions</small>
+                                <small class="text-muted"><?php echo number_format($profit_analysis['revenue']['total_transactions'] ?? 0); ?> transactions</small>
                             </div>
                         </div>
                     </div>
@@ -518,7 +378,7 @@ try {
                                 <div class="profit-icon mx-auto mb-3">
                                     <i class="bi bi-cart"></i>
                                 </div>
-                                <h5 class="text-danger fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['costs']['cost_of_goods_sold'], 2); ?></h5>
+                                <h5 class="text-danger fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['costs']['cost_of_goods_sold'] ?? 0, 2); ?></h5>
                                 <p class="text-muted mb-0">Cost of Goods Sold</p>
                                 <small class="text-muted">Direct costs</small>
                             </div>
@@ -530,9 +390,9 @@ try {
                                 <div class="profit-icon mx-auto mb-3">
                                     <i class="bi bi-graph-up"></i>
                                 </div>
-                                <h5 class="text-info fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['profit']['gross_profit'], 2); ?></h5>
+                                <h5 class="text-info fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['profit']['gross_profit'] ?? 0, 2); ?></h5>
                                 <p class="text-muted mb-0">Gross Profit</p>
-                                <small class="text-muted"><?php echo number_format($profit_analysis['profit']['gross_margin'], 1); ?>% margin</small>
+                                <small class="text-muted"><?php echo number_format($profit_analysis['profit']['gross_margin'] ?? 0, 1); ?>% margin</small>
                             </div>
                         </div>
                     </div>
@@ -542,7 +402,7 @@ try {
                                 <div class="profit-icon mx-auto mb-3">
                                     <i class="bi bi-pie-chart"></i>
                                 </div>
-                                <h5 class="text-warning fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['costs']['operating_expenses'], 2); ?></h5>
+                                <h5 class="text-warning fw-bold"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['costs']['operating_expenses'] ?? 0, 2); ?></h5>
                                 <p class="text-muted mb-0">Operating Expenses</p>
                                 <small class="text-muted">Indirect costs</small>
                             </div>
@@ -562,7 +422,7 @@ try {
                                     <div class="col-6">
                                         <div class="d-flex justify-content-between align-items-center mb-3">
                                             <span>Cash Sales</span>
-                                            <span class="fw-bold text-success"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['revenue']['cash_sales'], 2); ?></span>
+                                            <span class="fw-bold text-success"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['revenue']['cash_sales'] ?? 0, 2); ?></span>
                                         </div>
                                         <div class="progress mb-3" style="height: 8px;">
                                             <div class="progress-bar bg-success" style="width: <?php echo $profit_analysis['revenue']['total_sales'] > 0 ? ($profit_analysis['revenue']['cash_sales'] / $profit_analysis['revenue']['total_sales']) * 100 : 0; ?>%"></div>
@@ -571,7 +431,7 @@ try {
                                     <div class="col-6">
                                         <div class="d-flex justify-content-between align-items-center mb-3">
                                             <span>Credit Sales</span>
-                                            <span class="fw-bold text-info"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['revenue']['credit_sales'], 2); ?></span>
+                                            <span class="fw-bold text-info"><?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['revenue']['credit_sales'] ?? 0, 2); ?></span>
                                         </div>
                                         <div class="progress mb-3" style="height: 8px;">
                                             <div class="progress-bar bg-info" style="width: <?php echo $profit_analysis['revenue']['total_sales'] > 0 ? ($profit_analysis['revenue']['credit_sales'] / $profit_analysis['revenue']['total_sales']) * 100 : 0; ?>%"></div>
@@ -579,7 +439,7 @@ try {
                                     </div>
                                 </div>
                                 <div class="text-center">
-                                    <small class="text-muted">Average Transaction: <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['revenue']['average_transaction'], 2); ?></small>
+                                    <small class="text-muted">Average Transaction: <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($profit_analysis['revenue']['average_transaction'] ?? 0, 2); ?></small>
                                 </div>
                             </div>
                         </div>
@@ -593,13 +453,13 @@ try {
                                 <div class="row">
                                     <div class="col-6">
                                         <div class="text-center">
-                                            <div class="h4 text-info"><?php echo number_format($profit_analysis['profit']['gross_margin'], 1); ?>%</div>
+                                            <div class="h4 text-info"><?php echo number_format($profit_analysis['profit']['gross_margin'] ?? 0, 1); ?>%</div>
                                             <small class="text-muted">Gross Margin</small>
                                         </div>
                                     </div>
                                     <div class="col-6">
                                         <div class="text-center">
-                                            <div class="h4 profit-<?php echo $profit_analysis['profit']['net_margin'] >= 0 ? 'positive' : 'negative'; ?>"><?php echo number_format($profit_analysis['profit']['net_margin'], 1); ?>%</div>
+                                            <div class="h4 profit-<?php echo ($profit_analysis['profit']['net_margin'] ?? 0) >= 0 ? 'positive' : 'negative'; ?>"><?php echo number_format($profit_analysis['profit']['net_margin'] ?? 0, 1); ?>%</div>
                                             <small class="text-muted">Net Margin</small>
                                         </div>
                                     </div>
@@ -644,20 +504,20 @@ try {
                                                         </div>
                                                     </td>
                                                     <td class="text-end">
-                                                        <span class="badge bg-info"><?php echo number_format($product['total_sold']); ?></span>
+                                                        <span class="badge bg-info"><?php echo number_format($product['total_sold'] ?? 0); ?></span>
                                                     </td>
                                                     <td class="text-end text-success fw-bold">
-                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($product['total_revenue'], 2); ?>
+                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($product['total_revenue'] ?? 0, 2); ?>
                                                     </td>
                                                     <td class="text-end text-danger">
-                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($product['total_cost'], 2); ?>
+                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($product['total_cost'] ?? 0, 2); ?>
                                                     </td>
                                                     <td class="text-end profit-<?php echo $product['profit'] >= 0 ? 'positive' : 'negative'; ?> fw-bold">
-                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($product['profit'], 2); ?>
+                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($product['profit'] ?? 0, 2); ?>
                                                     </td>
                                                     <td class="text-end">
-                                                        <span class="badge bg-<?php echo $product['profit_margin'] > 20 ? 'success' : ($product['profit_margin'] > 10 ? 'warning' : 'danger'); ?>">
-                                                            <?php echo number_format($product['profit_margin'], 1); ?>%
+                                                        <span class="badge bg-<?php echo ($product['profit_margin'] ?? 0) > 20 ? 'success' : (($product['profit_margin'] ?? 0) > 10 ? 'warning' : 'danger'); ?>">
+                                                            <?php echo number_format($product['profit_margin'] ?? 0, 1); ?>%
                                                         </span>
                                                     </td>
                                                 </tr>
@@ -713,20 +573,20 @@ try {
                                                         </div>
                                                     </td>
                                                     <td class="text-end">
-                                                        <span class="badge bg-primary"><?php echo number_format($category['total_sold']); ?></span>
+                                                        <span class="badge bg-primary"><?php echo number_format($category['total_sold'] ?? 0); ?></span>
                                                     </td>
                                                     <td class="text-end text-success fw-bold">
-                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($category['total_revenue'], 2); ?>
+                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($category['total_revenue'] ?? 0, 2); ?>
                                                     </td>
                                                     <td class="text-end text-danger">
-                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($category['total_cost'], 2); ?>
+                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($category['total_cost'] ?? 0, 2); ?>
                                                     </td>
                                                     <td class="text-end profit-<?php echo $category['profit'] >= 0 ? 'positive' : 'negative'; ?> fw-bold">
-                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($category['profit'], 2); ?>
+                                                        <?php echo htmlspecialchars($settings['currency_symbol'] ?? 'KES'); ?> <?php echo number_format($category['profit'] ?? 0, 2); ?>
                                                     </td>
                                                     <td class="text-end">
-                                                        <span class="badge bg-<?php echo $category['profit_margin'] > 20 ? 'success' : ($category['profit_margin'] > 10 ? 'warning' : 'danger'); ?>">
-                                                            <?php echo number_format($category['profit_margin'], 1); ?>%
+                                                        <span class="badge bg-<?php echo ($category['profit_margin'] ?? 0) > 20 ? 'success' : (($category['profit_margin'] ?? 0) > 10 ? 'warning' : 'danger'); ?>">
+                                                            <?php echo number_format($category['profit_margin'] ?? 0, 1); ?>%
                                                         </span>
                                                     </td>
                                                 </tr>
@@ -780,6 +640,80 @@ try {
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+        }
+        
+        // Function to update date fields based on period selection
+        function updateDateFields() {
+            const periodSelect = document.getElementById('period');
+            const startDateInput = document.getElementById('start_date');
+            const endDateInput = document.getElementById('end_date');
+            const form = document.querySelector('form');
+            
+            const period = periodSelect.value;
+            const today = new Date();
+            let startDate, endDate;
+            
+            switch (period) {
+                case 'weekly':
+                    // Get Monday of this week
+                    const monday = new Date(today);
+                    monday.setDate(today.getDate() - today.getDay() + 1);
+                    startDate = monday.toISOString().split('T')[0];
+                    
+                    // Get Sunday of this week
+                    const sunday = new Date(monday);
+                    sunday.setDate(monday.getDate() + 6);
+                    endDate = sunday.toISOString().split('T')[0];
+                    break;
+                    
+                case 'monthly':
+                    // First day of current month
+                    startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+                    // Last day of current month
+                    endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+                    break;
+                    
+                case 'quarterly':
+                    const currentMonth = today.getMonth() + 1; // getMonth() returns 0-11
+                    let quarterStart, quarterEnd;
+                    
+                    if (currentMonth <= 3) {
+                        quarterStart = new Date(today.getFullYear(), 0, 1); // Jan 1
+                        quarterEnd = new Date(today.getFullYear(), 2, 31); // Mar 31
+                    } else if (currentMonth <= 6) {
+                        quarterStart = new Date(today.getFullYear(), 3, 1); // Apr 1
+                        quarterEnd = new Date(today.getFullYear(), 5, 30); // Jun 30
+                    } else if (currentMonth <= 9) {
+                        quarterStart = new Date(today.getFullYear(), 6, 1); // Jul 1
+                        quarterEnd = new Date(today.getFullYear(), 8, 30); // Sep 30
+                    } else {
+                        quarterStart = new Date(today.getFullYear(), 9, 1); // Oct 1
+                        quarterEnd = new Date(today.getFullYear(), 11, 31); // Dec 31
+                    }
+                    
+                    startDate = quarterStart.toISOString().split('T')[0];
+                    endDate = quarterEnd.toISOString().split('T')[0];
+                    break;
+                    
+                case 'yearly':
+                    // January 1st to December 31st of current year
+                    startDate = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0];
+                    endDate = new Date(today.getFullYear(), 11, 31).toISOString().split('T')[0];
+                    break;
+                    
+                case 'custom':
+                    // Don't change dates for custom range
+                    return;
+            }
+            
+            // Update the date inputs
+            if (startDate && endDate) {
+                startDateInput.value = startDate;
+                endDateInput.value = endDate;
+                
+                // Auto-submit the form to update the data
+                form.submit();
+            }
         }
         
         // Add loading animation on page load

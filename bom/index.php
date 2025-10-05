@@ -519,7 +519,6 @@ try {
                 <i class="bi bi-diagram-3 me-2"></i>
                 <strong>Multi-Level BOM Support:</strong> Your system supports complex manufacturing hierarchies!
                 Components can have their own BOMs (like Flour made from Wheat), and costs automatically roll up through all levels.
-                <a href="demo_multilevel.php" class="alert-link">Learn more about multi-level BOMs</a>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
 
@@ -611,9 +610,6 @@ try {
                     <?php endif; ?>
                     <a href="auto_bom_products.php" class="btn btn-outline-primary" style="border-color: var(--primary-color); color: var(--primary-color);">
                         <i class="bi bi-list-ul me-2"></i>Auto BOM Products
-                    </a>
-                    <a href="demo_multilevel.php" class="btn btn-outline-primary" style="border-color: var(--primary-color); color: var(--primary-color);">
-                        <i class="bi bi-diagram-3 me-2"></i>Multi-Level Demo
                     </a>
                     <a href="reports.php" class="btn btn-outline-primary" style="border-color: var(--primary-color); color: var(--primary-color);">
                         <i class="bi bi-graph-up me-2"></i>Reports

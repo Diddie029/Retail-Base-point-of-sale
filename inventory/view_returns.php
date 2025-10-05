@@ -3,7 +3,6 @@ session_start();
 
 // Debug session configuration
 error_log("Session save path: " . session_save_path());
-error_log("Session cookie params: " . print_r(session_get_cookie_params(), true));
 error_log("Session status: " . session_status());
 
 // Ensure session is working properly
@@ -313,12 +312,10 @@ if ($status_filter === 'draft') {
     // Also check if there are any draft returns at all
     $debug_stmt = $conn->query("SELECT COUNT(*) as count FROM returns WHERE status = 'draft'");
     $debug_result = $debug_stmt->fetch(PDO::FETCH_ASSOC);
-    error_log("Total draft returns in database: " . $debug_result['count']);
     
     // Check what statuses exist
     $debug_stmt = $conn->query("SELECT DISTINCT status FROM returns ORDER BY status");
     $debug_statuses = $debug_stmt->fetchAll(PDO::FETCH_COLUMN);
-    error_log("Available statuses in database: " . implode(', ', $debug_statuses));
 }
 
 // Get suppliers for filter dropdown
