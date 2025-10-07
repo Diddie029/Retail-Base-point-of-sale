@@ -829,7 +829,7 @@ $page_title = "Add Expiry Date";
 <body>
     <?php include '../include/navmenu.php'; ?>
     
-    <div class="container">
+    <div class="container" style="width: 100%; padding: 0 32px; position: relative;">
         <div class="header">
             <h1><i class="fas fa-plus"></i> <?php echo $page_title; ?></h1>
             <div class="header-actions">
@@ -845,7 +845,57 @@ $page_title = "Add Expiry Date";
             </div>
         <?php endif; ?>
 
-        <div class="form-container">
+    <div class="form-container" style="width: 100%; margin: 0; margin-right: 340px;">
+        <!-- Right Sidebar -->
+        <aside id="right-sidebar" style="position: fixed; top: 70px; right: 0; width: 320px; height: calc(100vh - 70px); background: #f8fafc; border-left: 1px solid #e2e8f0; box-shadow: -2px 0 8px rgba(0,0,0,0.04); padding: 24px 18px; z-index: 1000; overflow-y: auto;">
+            <nav style="margin-bottom: 2rem;">
+                <h5 style="color: #1e293b; font-weight: 700; margin-bottom: 1rem;">Expiry Navigation</h5>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.75rem;"><a href="expiry_tracker.php" class="btn btn-outline-primary w-100"><i class="bi bi-clock-history"></i> Expiry Tracker</a></li>
+                    <li style="margin-bottom: 0.75rem;"><a href="view_expiry_item.php" class="btn btn-outline-secondary w-100"><i class="bi bi-eye"></i> View Expiry Items</a></li>
+                    <li style="margin-bottom: 0.75rem;"><a href="add_expiry_date.php" class="btn btn-outline-secondary w-100"><i class="bi bi-plus-circle"></i> Add Expiry Date</a></li>
+                </ul>
+            </nav>
+
+            <div>
+                <h5 style="color: #1e293b; font-weight: 700; margin-bottom: 1rem;">Info / Stats</h5>
+                <div style="background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); padding: 1rem; margin-bottom: 1rem;">
+                    <div style="font-size: 1.1rem; color: #374151; margin-bottom: 0.5rem;"><i class="bi bi-collection"></i> Total Batches</div>
+                    <div style="font-weight: 700; color: #059669; font-size: 1.3rem;">--</div>
+                </div>
+                <div style="background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); padding: 1rem; margin-bottom: 1rem;">
+                    <div style="font-size: 1.1rem; color: #374151; margin-bottom: 0.5rem;"><i class="bi bi-calendar-exclamation"></i> Upcoming Expiries</div>
+                    <div style="font-weight: 700; color: #f59e0b; font-size: 1.3rem;">--</div>
+                </div>
+                <div style="background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); padding: 1rem;">
+                    <div style="font-size: 1.1rem; color: #374151; margin-bottom: 0.5rem;"><i class="bi bi-bell"></i> Alerts</div>
+                    <div style="font-weight: 700; color: #ef4444; font-size: 1.3rem;">--</div>
+                </div>
+            </div>
+        </aside>
+            <style>
+                .form-container .form-row {
+                    display: flex;
+                    gap: 32px;
+                }
+                .form-container .form-group {
+                    flex: 1;
+                    min-width: 300px;
+                }
+                .form-container .form-group input,
+                .form-container .form-group select,
+                .form-container .form-group textarea {
+                    width: 100%;
+                }
+                .product-section {
+                    width: 100%;
+                    min-width: 0;
+                }
+                .selected-products-container {
+                    width: 100%;
+                    min-width: 0;
+                }
+            </style>
             <form method="POST" class="expiry-form">
                 <!-- Company Selection -->
                 <div class="form-row">
@@ -863,7 +913,7 @@ $page_title = "Add Expiry Date";
                     </div>
                     
                 <!-- Product Section -->
-                <div class="product-section">
+                <div class="product-section" style="width: 100%;">
                     <div class="section-header">
                         <div class="header-content">
                             <div class="header-icon">
@@ -949,7 +999,7 @@ $page_title = "Add Expiry Date";
                 </div>
 
                 <!-- Selected Products List -->
-                <div id="selected-products-container" class="selected-products-container" style="display: none;">
+                <div id="selected-products-container" class="selected-products-container" style="display: none; width: 100%;">
                     <div class="selected-products-header">
                         <h5><i class="bi bi-list-check"></i> Selected Products</h5>
                         <span id="selected-count" class="badge bg-primary">0 products</span>
