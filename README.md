@@ -394,11 +394,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Contact
 
-**Project Lead**: Thiarara
-**Email**: contact@thiarara.co.ke
-**Website**: https://thiarara.co.ke
-**GitHub**: https://github.com/Thiararapeter/pointofsale
+**Project Lead**: JEE
+**Email**: kiprotichsawe99@gmail.com
+**Website**: diddie029.github.io/Personal-Portfolio/
+**GitHub**: https://github.com/Diddie029/Retail-Base-point-of-sale
 
----
-
-**Made with ❤️ for retail businesses worldwide**
